@@ -111,10 +111,11 @@ fn find_wow_installations() -> Vec<WowInstallation> {
     }
 
     let flavors = [
-        ("_forever_", "经典怀旧 (永久60)"),
+        ("_forever_", "无限服 (WoW Forever)"),
         ("_retail_", "正式服 (The War Within)"),
-        ("_classic_", "大灾变怀旧 (Classic)"),
+        ("_classic_", "经典怀旧服 (Classic)"),
         ("_classic_era_", "经典旧世 (Era)"),
+        ("_classic_titan_", "怀旧泰坦 (Titan)"),
         ("_ptr_", "测试服 (PTR)"),
     ];
 

@@ -1,4 +1,4 @@
-export type GameFlavor = 'retail' | 'classic' | 'vanilla' | 'cata' | 'ptr' | 'unknown';
+export type GameFlavor = 'retail' | 'forever' | 'classic' | 'vanilla' | 'cata' | 'ptr' | 'unknown';
 
 export interface AddonInfo {
   id: string; // Folder name

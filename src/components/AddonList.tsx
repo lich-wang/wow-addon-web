@@ -72,6 +72,7 @@ export const AddonList: React.FC<AddonListProps> = ({
 
   const flavorLabels: Record<string, string> = {
     all: '全部版本',
+    forever: '无限服 (WoW Forever)',
     retail: '正式服 (The War Within)',
     classic: '经典怀旧 (Classic)',
     cata: '大灾变 (Cataclysm)',

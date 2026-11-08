@@ -132,24 +132,35 @@ export async function resolveAddOnsDirectory(
   if (interfaceHandle) {
     const addonsInside = await findSubdirectory(interfaceHandle, 'addons');
     if (addonsInside) {
-      const flavor: GameFlavor = rootName.includes('classic') || rootName.includes('forever') ? 'classic' : 'retail';
+      const flavor: GameFlavor = rootName.includes('forever')
+        ? 'forever'
+        : rootName.includes('classic')
+        ? 'classic'
+        : 'retail';
       return { handle: addonsInside, pathHint: `${pickedHandle.name}/Interface/AddOns`, flavor };
     }
   }
 
   // 4. WoW Root folder containing _retail_, _classic_, _forever_, etc.
-  for (const flavorSub of ['_retail_', '_classic_', '_classic_era_', '_forever_', '_era_', '_ptr_']) {
+  for (const flavorSub of ['_forever_', '_retail_', '_classic_', '_classic_era_', '_classic_titan_', '_ptr_']) {
     const subFlavorHandle = await findSubdirectory(pickedHandle, flavorSub);
     if (subFlavorHandle) {
       const iface = await findSubdirectory(subFlavorHandle, 'interface');
       if (iface) {
         const addonsInside = await findSubdirectory(iface, 'addons');
         if (addonsInside) {
-          const isVanilla = flavorSub.includes('forever') || flavorSub.includes('era');
+          const isForever = flavorSub.includes('forever');
+          const isVanilla = flavorSub.includes('era');
           return {
             handle: addonsInside,
             pathHint: `${pickedHandle.name}/${flavorSub}/Interface/AddOns`,
-            flavor: isVanilla ? 'vanilla' : flavorSub.includes('classic') ? 'classic' : 'retail',
+            flavor: isForever
+              ? 'forever'
+              : isVanilla
+              ? 'vanilla'
+              : flavorSub.includes('classic')
+              ? 'classic'
+              : 'retail',
           };
         }
       }
