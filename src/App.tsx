@@ -120,9 +120,8 @@ export function App() {
       setNeedsResumeAuth(false);
       await loadAddons(resolved.handle);
     } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        alert(err.message || '选择目录失败');
-      }
+      console.error('Directory pick error:', err);
+      alert(err.message || '选择目录失败，请重试');
     }
   };
 

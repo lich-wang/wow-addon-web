@@ -55,7 +55,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({ onPickDirector
         )}
 
         {/* Action Button */}
-        <div className="flex flex-wrap items-center gap-4 mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
           <button
             onClick={onPickDirectory}
             disabled={!isSupported}
@@ -68,10 +68,17 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({ onPickDirector
             <FolderOpen className="w-5 h-5" />
             <span>选择魔兽世界 AddOns 目录</span>
           </button>
+        </div>
 
-          <span className="text-xs text-slate-400 font-mono">
-            提示：可选择根目录、_retail_ 或直接选择 AddOns 文件夹
-          </span>
+        {/* Directory Selection Guide Alert */}
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 leading-relaxed mb-8">
+          <p className="font-semibold text-amber-300 mb-1">💡 文件夹选择指引：</p>
+          <p>
+            • <strong>推荐直接选中【AddOns】文件夹</strong>（例如：<code className="text-amber-300 bg-slate-950/60 px-1 py-0.5 rounded">_retail_/Interface/AddOns</code>）。
+          </p>
+          <p className="mt-1 text-slate-300">
+            • <strong>注意</strong>：如果您的魔兽安装在 <code className="text-slate-200 bg-slate-950/60 px-1 py-0.5 rounded">C:\Program Files (x86)</code>，由于浏览器系统安全保护机制，不允许直接选择外层父目录。<strong>请在弹出的窗口中双击点进去，直接选中里面的【AddOns】文件夹</strong>并点击“选择文件夹”。
+          </p>
         </div>
 
         {/* 3 Pillars / Feature Highlights */}

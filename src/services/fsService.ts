@@ -87,8 +87,29 @@ export function parseTocFile(content: string, folderName: string): Partial<Addon
 }
 
 /**
+ * Case-insensitive search for a subdirectory inside parent handle
+ */
+async function findSubdirectory(
+  parent: FileSystemDirectoryHandle,
+  targetName: string
+): Promise<FileSystemDirectoryHandle | null> {
+  const target = targetName.toLowerCase();
+  try {
+    const iter = (parent as any).entries ? (parent as any).entries() : parent;
+    for await (const [name, handle] of iter) {
+      if (handle.kind === 'directory' && name.toLowerCase() === target) {
+        return handle as FileSystemDirectoryHandle;
+      }
+    }
+  } catch {
+    // Ignore permission or read error
+  }
+  return null;
+}
+
+/**
  * Resolve target AddOns directory handle
- * Gracefully navigates if user selected root WoW folder, _retail_, or Interface
+ * Gracefully navigates case-insensitively if user selected root WoW folder, _retail_, or Interface
  */
 export async function resolveAddOnsDirectory(
   pickedHandle: FileSystemDirectoryHandle
@@ -100,41 +121,41 @@ export async function resolveAddOnsDirectory(
     return { handle: pickedHandle, pathHint: '.../Interface/AddOns', flavor: 'retail' };
   }
 
-  // 2. Interface folder
-  try {
-    const addonsHandle = await pickedHandle.getDirectoryHandle('AddOns');
-    return { handle: addonsHandle, pathHint: `${pickedHandle.name}/AddOns`, flavor: 'retail' };
-  } catch {
-    // Continue checking
+  // 2. Interface folder: check if contains addons folder
+  const directAddons = await findSubdirectory(pickedHandle, 'addons');
+  if (directAddons) {
+    return { handle: directAddons, pathHint: `${pickedHandle.name}/AddOns`, flavor: 'retail' };
   }
 
-  // 3. Flavor folder like _retail_, _classic_, etc.
-  try {
-    const interfaceHandle = await pickedHandle.getDirectoryHandle('Interface');
-    const addonsHandle = await interfaceHandle.getDirectoryHandle('AddOns');
-    const flavor: GameFlavor = rootName.includes('classic') ? 'classic' : 'retail';
-    return { handle: addonsHandle, pathHint: `${pickedHandle.name}/Interface/AddOns`, flavor };
-  } catch {
-    // Continue checking
-  }
-
-  // 4. WoW Root folder containing _retail_
-  for (const flavorSub of ['_retail_', '_classic_', '_era_', '_ptr_']) {
-    try {
-      const subHandle = await pickedHandle.getDirectoryHandle(flavorSub);
-      const interfaceHandle = await subHandle.getDirectoryHandle('Interface');
-      const addonsHandle = await interfaceHandle.getDirectoryHandle('AddOns');
-      return {
-        handle: addonsHandle,
-        pathHint: `${pickedHandle.name}/${flavorSub}/Interface/AddOns`,
-        flavor: flavorSub.includes('classic') ? 'classic' : 'retail',
-      };
-    } catch {
-      // ignore
+  // 3. Folder containing Interface: check if contains interface -> addons
+  const interfaceHandle = await findSubdirectory(pickedHandle, 'interface');
+  if (interfaceHandle) {
+    const addonsInside = await findSubdirectory(interfaceHandle, 'addons');
+    if (addonsInside) {
+      const flavor: GameFlavor = rootName.includes('classic') ? 'classic' : 'retail';
+      return { handle: addonsInside, pathHint: `${pickedHandle.name}/Interface/AddOns`, flavor };
     }
   }
 
-  // If none matched, assume the user picked their custom AddOns folder directly
+  // 4. WoW Root folder containing _retail_, _classic_, etc.
+  for (const flavorSub of ['_retail_', '_classic_', '_era_', '_ptr_']) {
+    const subFlavorHandle = await findSubdirectory(pickedHandle, flavorSub);
+    if (subFlavorHandle) {
+      const iface = await findSubdirectory(subFlavorHandle, 'interface');
+      if (iface) {
+        const addonsInside = await findSubdirectory(iface, 'addons');
+        if (addonsInside) {
+          return {
+            handle: addonsInside,
+            pathHint: `${pickedHandle.name}/${flavorSub}/Interface/AddOns`,
+            flavor: flavorSub.includes('classic') ? 'classic' : 'retail',
+          };
+        }
+      }
+    }
+  }
+
+  // 5. Default fallback: user selected custom addons folder directly
   return { handle: pickedHandle, pathHint: pickedHandle.name, flavor: 'retail' };
 }
 
@@ -150,15 +171,43 @@ export async function pickAddOnsDirectory(): Promise<{
     throw new Error('当前浏览器不支持本地文件系统访问，请使用 Chrome、Edge 或 Brave 浏览器');
   }
 
-  // @ts-expect-error showDirectoryPicker is standard in Chromium
-  const rawHandle: FileSystemDirectoryHandle = await window.showDirectoryPicker({
-    mode: 'readwrite',
-    id: 'wow-addons-dir',
-    startIn: 'desktop',
-  });
+  let rawHandle: FileSystemDirectoryHandle;
+  try {
+    // Open directory picker with standard options
+    // @ts-expect-error showDirectoryPicker is standard in Chromium
+    rawHandle = await window.showDirectoryPicker({
+      id: 'wow-addons-dir',
+      startIn: 'desktop',
+    });
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error(
+        '未完成文件夹选择。提示：如果您的魔兽世界在系统盘 C:\\Program Files (x86)，由于系统安全限制，请在选择框中双击进入到 Interface 文件夹，直接选中【AddOns】文件夹。'
+      );
+    }
+    throw err;
+  }
+
+  // Request readwrite permission explicitly if supported
+  try {
+    // @ts-expect-error requestPermission
+    if (rawHandle.requestPermission) {
+      // @ts-expect-error requestPermission
+      await rawHandle.requestPermission({ mode: 'readwrite' });
+    }
+  } catch (permErr) {
+    console.warn('Permission request error:', permErr);
+  }
 
   const resolved = await resolveAddOnsDirectory(rawHandle);
-  await set(IDB_HANDLE_KEY, resolved.handle);
+
+  // Safely persist handle in IndexedDB
+  try {
+    await set(IDB_HANDLE_KEY, resolved.handle);
+  } catch (idbErr) {
+    console.warn('Could not save handle to IndexedDB (e.g. private mode):', idbErr);
+  }
+
   return resolved;
 }
 
@@ -178,7 +227,11 @@ export async function getSavedDirectoryHandle(): Promise<FileSystemDirectoryHand
  * Clear stored handle
  */
 export async function clearSavedDirectoryHandle(): Promise<void> {
-  await del(IDB_HANDLE_KEY);
+  try {
+    await del(IDB_HANDLE_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -188,24 +241,31 @@ export async function verifyPermission(
   handle: FileSystemDirectoryHandle,
   mode: 'read' | 'readwrite' = 'readwrite'
 ): Promise<boolean> {
-  // @ts-expect-error queryPermission exists on handle
-  if ((await handle.queryPermission({ mode })) === 'granted') {
-    return true;
-  }
-  // @ts-expect-error requestPermission exists on handle
-  if ((await handle.requestPermission({ mode })) === 'granted') {
-    return true;
+  try {
+    // @ts-expect-error queryPermission exists on handle
+    if ((await handle.queryPermission({ mode })) === 'granted') {
+      return true;
+    }
+    // @ts-expect-error requestPermission exists on handle
+    if ((await handle.requestPermission({ mode })) === 'granted') {
+      return true;
+    }
+  } catch {
+    // ignore
   }
   return false;
 }
 
 /**
  * Scan all addons inside the AddOns directory
+ * High-performance: iterates entries and only reads .toc files
  */
 export async function scanAddOns(dirHandle: FileSystemDirectoryHandle): Promise<AddonInfo[]> {
   const addons: AddonInfo[] = [];
 
-  for await (const [entryName, entryHandle] of (dirHandle as any).entries()) {
+  const iter = (dirHandle as any).entries ? (dirHandle as any).entries() : dirHandle;
+
+  for await (const [entryName, entryHandle] of iter) {
     if (entryHandle.kind !== 'directory') continue;
 
     const subDirHandle = entryHandle as FileSystemDirectoryHandle;
@@ -215,40 +275,44 @@ export async function scanAddOns(dirHandle: FileSystemDirectoryHandle): Promise<
     let totalSize = 0;
     let latestModified = 0;
 
-    const tocCandidates: { name: string; file: File }[] = [];
+    const tocHandles: { name: string; handle: FileSystemFileHandle }[] = [];
 
     try {
-      for await (const [childName, childHandle] of (subDirHandle as any).entries()) {
+      const childIter = (subDirHandle as any).entries
+        ? (subDirHandle as any).entries()
+        : subDirHandle;
+
+      for await (const [childName, childHandle] of childIter) {
         if (childHandle.kind === 'file') {
           fileCount++;
-          try {
-            const file = await (childHandle as FileSystemFileHandle).getFile();
-            totalSize += file.size;
-            if (file.lastModified > latestModified) {
-              latestModified = file.lastModified;
-            }
-            if (childName.toLowerCase().endsWith('.toc')) {
-              tocCandidates.push({ name: childName, file });
-            }
-          } catch {
-            // ignore unreadable file
+          if (childName.toLowerCase().endsWith('.toc')) {
+            tocHandles.push({ name: childName, handle: childHandle as FileSystemFileHandle });
           }
         }
       }
 
-      if (tocCandidates.length > 0) {
+      // Read only the matched .toc file for maximum performance
+      if (tocHandles.length > 0) {
         tocFound = true;
-        const exactMatch = tocCandidates.find(
+        const exactMatch = tocHandles.find(
           (t) => t.name.toLowerCase() === `${entryName.toLowerCase()}.toc`
         );
-        const mainlineMatch = tocCandidates.find((t) =>
+        const mainlineMatch = tocHandles.find((t) =>
           t.name.toLowerCase().includes('mainline')
         );
-        const chosen = exactMatch || mainlineMatch || tocCandidates[0];
-        tocContent = await chosen.file.text();
+        const chosen = exactMatch || mainlineMatch || tocHandles[0];
+
+        try {
+          const file = await chosen.handle.getFile();
+          latestModified = file.lastModified;
+          totalSize = file.size;
+          tocContent = await file.text();
+        } catch (readErr) {
+          console.warn(`Could not read TOC file for ${entryName}:`, readErr);
+        }
       }
-    } catch {
-      // Cannot read directory
+    } catch (e) {
+      console.warn(`Error scanning folder ${entryName}:`, e);
     }
 
     if (tocFound && tocContent) {
