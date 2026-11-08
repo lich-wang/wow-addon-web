@@ -1,0 +1,131 @@
+name: Build Native Agent (Windows & macOS)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/build-agent.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Binary
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "agent -> target"
+
+      - name: Build Windows Executable
+        run: |
+          cd agent
+          cargo build --release
+
+      - name: Package Windows Artifacts
+        shell: pwsh
+        run: |
+          mkdir dist-bin
+          Copy-Item agent/target/release/wow-agent.exe dist-bin/wow-addon-agent-windows-x64.exe
+          Compress-Archive -Path dist-bin/wow-addon-agent-windows-x64.exe -DestinationPath wow-addon-agent-windows-x64.zip
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wow-agent-windows
+          path: wow-addon-agent-windows-x64.zip
+
+  build-macos:
+    name: Build macOS Universal Binary
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "agent -> target"
+
+      - name: Build for Apple Silicon (arm64)
+        run: |
+          cd agent
+          cargo build --release --target aarch64-apple-darwin
+
+      - name: Build for Intel (x86_64)
+        run: |
+          cd agent
+          cargo build --release --target x86_64-apple-darwin
+
+      - name: Create Universal Binary
+        run: |
+          mkdir -p dist-bin
+          lipo -create -output dist-bin/wow-addon-agent-macos-universal \
+            agent/target/aarch64-apple-darwin/release/wow-agent \
+            agent/target/x86_64-apple-darwin/release/wow-agent
+          chmod +x dist-bin/wow-addon-agent-macos-universal
+          zip -j wow-addon-agent-macos-universal.zip dist-bin/wow-addon-agent-macos-universal
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wow-agent-macos
+          path: wow-addon-agent-macos-universal.zip
+
+  create-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wow-agent-windows
+          path: release-assets
+
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wow-agent-macos
+          path: release-assets
+
+      - name: Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: "WoW Addon Manager Local Agent v1.0.0"
+          body: |
+            ## 魔兽世界网页插件管理器 - 本地极速助手 (v1.0.0)
+
+            本助手用于为网页端 [https://wow.lich.tech](https://wow.lich.tech) 提供本地目录直通读写能力：
+            - **彻底解除** Windows 下 `C:\Program Files (x86)` 系统保护目录浏览器沙箱拦截限制
+            - **解决** macOS Safari 浏览器缺乏 File System Access API 的问题
+            - **自动发现** 本机已安装的魔兽世界版本（经典旧世 / 怀旧服 / 正式服）
+            - **极速同步** 网页端随时更新，打开助手即可自动加载最新云端功能，无需反复重装
+
+            ### 下载版本：
+            - 🪟 **Windows 用户**: 下载 `wow-addon-agent-windows-x64.zip`，解压后双击运行即可。
+            - 🍎 **Mac 用户**: 下载 `wow-addon-agent-macos-universal.zip`，解压后双击运行（兼容 M1/M2/M3/M4 及 Intel）。
+          files: |
+            release-assets/wow-addon-agent-windows-x64.zip
+            release-assets/wow-addon-agent-macos-universal.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

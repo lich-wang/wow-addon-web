@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Loader2, FolderSync } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { DirectoryBanner } from './components/DirectoryBanner';
 import { AddonList } from './components/AddonList';
@@ -9,22 +10,35 @@ import { ShareModal } from './components/ShareModal';
 import { DeployModal } from './components/DeployModal';
 import { ProgressModal } from './components/ProgressModal';
 
-import type { AddonInfo, CuratedAddon, DirectoryState, InstallProgress } from './types/addon';
 import {
   pickAddOnsDirectory,
   getSavedDirectoryHandle,
   verifyPermission,
+  clearSavedDirectoryHandle,
   scanAddOns,
   deleteAddon,
   installAddonFromZip,
-  clearSavedDirectoryHandle,
 } from './services/fsService';
+
 import { downloadAndInstallAddon } from './services/catalogService';
-import { Loader2, FolderSync } from 'lucide-react';
+
+import {
+  checkAgentStatus,
+  agentPickFolder,
+  agentScanAddons,
+  agentDeleteAddon,
+  agentInstallZip,
+  type AgentStatus,
+  type WowInstallation,
+} from './services/agentService';
+
+import type { AddonInfo, CuratedAddon, DirectoryState, InstallProgress } from './types/addon';
 
 export function App() {
   const [directoryState, setDirectoryState] = useState<DirectoryState>({
     handle: null,
+    mode: 'browser',
+    agentPath: '',
     folderName: '',
     fullPathHint: '',
     isAuthorized: false,
@@ -32,6 +46,7 @@ export function App() {
     addonCount: 0,
   });
 
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [addons, setAddons] = useState<AddonInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isPicking, setIsPicking] = useState(false);
@@ -52,8 +67,26 @@ export function App() {
     message: '',
   });
 
-  // Scan current directory handle
-  const loadAddons = useCallback(async (handle: FileSystemDirectoryHandle) => {
+  // Check agent status on load and periodically
+  useEffect(() => {
+    let active = true;
+    const pollAgent = async () => {
+      const status = await checkAgentStatus();
+      if (active) {
+        setAgentStatus(status);
+      }
+    };
+
+    pollAgent();
+    const timer = setInterval(pollAgent, 3500);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  // Scan current browser directory handle
+  const loadBrowserAddons = useCallback(async (handle: FileSystemDirectoryHandle) => {
     setIsLoading(true);
     try {
       const list = await scanAddOns(handle);
@@ -63,13 +96,70 @@ export function App() {
         addonCount: list.length,
       }));
     } catch (err) {
-      console.error('Scan error:', err);
+      console.error('Browser scan error:', err);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // Try auto-restoring directory from IndexedDB on startup
+  // Scan addons via agent path
+  const loadAgentAddons = useCallback(async (addonsPath: string) => {
+    setIsLoading(true);
+    try {
+      const list = await agentScanAddons(addonsPath);
+      setAddons(list);
+      setDirectoryState((prev) => ({
+        ...prev,
+        addonCount: list.length,
+      }));
+    } catch (err: any) {
+      console.error('Agent scan error:', err);
+      alert(`扫描目录失败: ${err.message || '未知错误'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Select auto-discovered installation from agent
+  const handleSelectAgentInstallation = async (inst: WowInstallation) => {
+    setDirectoryState({
+      handle: null,
+      mode: 'agent',
+      agentPath: inst.addonsPath,
+      folderName: inst.name,
+      fullPathHint: inst.addonsPath,
+      isAuthorized: true,
+      flavor: (inst.flavor as any) || 'retail',
+      addonCount: 0,
+    });
+    setNeedsResumeAuth(false);
+    await loadAgentAddons(inst.addonsPath);
+  };
+
+  // Pick folder via native OS dialog through agent
+  const handlePickAgentDirectory = async () => {
+    try {
+      const picked = await agentPickFolder();
+      if (picked) {
+        setDirectoryState({
+          handle: null,
+          mode: 'agent',
+          agentPath: picked,
+          folderName: '魔兽 AddOns 目录',
+          fullPathHint: picked,
+          isAuthorized: true,
+          flavor: 'retail',
+          addonCount: 0,
+        });
+        setNeedsResumeAuth(false);
+        await loadAgentAddons(picked);
+      }
+    } catch (err: any) {
+      alert(`打开选择窗口失败: ${err.message || '未知错误'}`);
+    }
+  };
+
+  // Try auto-restoring directory from IndexedDB on startup (Browser Mode)
   useEffect(() => {
     const restoreSession = async () => {
       const savedHandle = await getSavedDirectoryHandle();
@@ -81,13 +171,15 @@ export function App() {
         if (perm === 'granted') {
           setDirectoryState({
             handle: savedHandle,
+            mode: 'browser',
+            agentPath: '',
             folderName: savedHandle.name,
             fullPathHint: `.../${savedHandle.name}`,
             isAuthorized: true,
             flavor: 'retail',
             addonCount: 0,
           });
-          await loadAddons(savedHandle);
+          await loadBrowserAddons(savedHandle);
         } else {
           setNeedsResumeAuth(true);
           setDirectoryState((prev) => ({
@@ -104,16 +196,24 @@ export function App() {
     };
 
     restoreSession();
-  }, [loadAddons]);
+  }, [loadBrowserAddons]);
 
-  // Request directory permission on user click
+  // Request directory permission on user click (Browser Mode)
   const handlePickDirectory = async () => {
+    // If agent is active, prefer agent folder picker to avoid Chromium Program Files block!
+    if (agentStatus) {
+      await handlePickAgentDirectory();
+      return;
+    }
+
     if (isPicking) return;
     setIsPicking(true);
     try {
       const resolved = await pickAddOnsDirectory();
       setDirectoryState({
         handle: resolved.handle,
+        mode: 'browser',
+        agentPath: '',
         folderName: resolved.handle.name,
         fullPathHint: resolved.pathHint,
         isAuthorized: true,
@@ -121,7 +221,7 @@ export function App() {
         addonCount: 0,
       });
       setNeedsResumeAuth(false);
-      await loadAddons(resolved.handle);
+      await loadBrowserAddons(resolved.handle);
     } catch (err: any) {
       console.error('Directory pick error:', err);
       alert(err.message || '选择目录失败，请重试');
@@ -138,7 +238,7 @@ export function App() {
       if (granted) {
         setDirectoryState((prev) => ({ ...prev, isAuthorized: true }));
         setNeedsResumeAuth(false);
-        await loadAddons(directoryState.handle);
+        await loadBrowserAddons(directoryState.handle);
       } else {
         await clearSavedDirectoryHandle();
         setNeedsResumeAuth(false);
@@ -149,17 +249,30 @@ export function App() {
     }
   };
 
+  // Refresh current directory
+  const handleRefreshCurrentDirectory = () => {
+    if (directoryState.mode === 'agent' && directoryState.agentPath) {
+      loadAgentAddons(directoryState.agentPath);
+    } else if (directoryState.handle) {
+      loadBrowserAddons(directoryState.handle);
+    }
+  };
+
   // Delete an addon
   const handleDeleteAddon = async (folderName: string, name: string) => {
-    if (!directoryState.handle) return;
     const confirmed = window.confirm(
       `确定要彻底从魔兽本地目录中删除插件 [${name}] (${folderName}) 吗？\n删除后不可撤销。`
     );
     if (!confirmed) return;
 
     try {
-      await deleteAddon(directoryState.handle, folderName);
-      await loadAddons(directoryState.handle);
+      if (directoryState.mode === 'agent' && directoryState.agentPath) {
+        await agentDeleteAddon(directoryState.agentPath, folderName);
+        await loadAgentAddons(directoryState.agentPath);
+      } else if (directoryState.handle) {
+        await deleteAddon(directoryState.handle, folderName);
+        await loadBrowserAddons(directoryState.handle);
+      }
     } catch (err: any) {
       alert(`删除插件失败: ${err.message || '未知错误'}`);
     }
@@ -167,16 +280,47 @@ export function App() {
 
   // Install Curated Addon from Market
   const handleInstallCuratedAddon = async (addon: CuratedAddon) => {
-    if (!directoryState.handle) {
+    if (!directoryState.isAuthorized) {
       handlePickDirectory();
       return;
     }
 
     try {
-      await downloadAndInstallAddon(addon, directoryState.handle, (p) => {
-        setInstallProgress(p);
-      });
-      await loadAddons(directoryState.handle);
+      if (directoryState.mode === 'agent' && directoryState.agentPath) {
+        setInstallProgress({
+          status: 'downloading',
+          addonName: addon.name,
+          percent: 25,
+          message: `正在从云端下载 ${addon.name}...`,
+        });
+
+        const res = await fetch(addon.downloadUrl);
+        if (!res.ok) throw new Error(`下载失败 (HTTP ${res.status})`);
+        const blob = await res.blob();
+
+        setInstallProgress({
+          status: 'writing',
+          addonName: addon.name,
+          percent: 75,
+          message: `正在写入本地 AddOns 目录...`,
+        });
+
+        await agentInstallZip(directoryState.agentPath, blob);
+
+        setInstallProgress({
+          status: 'completed',
+          addonName: addon.name,
+          percent: 100,
+          message: `插件 ${addon.name} 安装成功！`,
+        });
+
+        await loadAgentAddons(directoryState.agentPath);
+      } else if (directoryState.handle) {
+        await downloadAndInstallAddon(addon, directoryState.handle, (p: InstallProgress) => {
+          setInstallProgress(p);
+        });
+        await loadBrowserAddons(directoryState.handle);
+      }
     } catch (err: any) {
       setInstallProgress({
         status: 'error',
@@ -189,17 +333,37 @@ export function App() {
 
   // Install Local ZIP file
   const handleInstallZip = async (file: File) => {
-    if (!directoryState.handle) {
+    if (!directoryState.isAuthorized) {
       handlePickDirectory();
       return;
     }
 
     try {
-      const buffer = await file.arrayBuffer();
-      await installAddonFromZip(directoryState.handle, buffer, (p) => {
-        setInstallProgress(p);
-      });
-      await loadAddons(directoryState.handle);
+      if (directoryState.mode === 'agent' && directoryState.agentPath) {
+        setInstallProgress({
+          status: 'writing',
+          addonName: file.name,
+          percent: 50,
+          message: `本地助手正在解压写入 ${file.name}...`,
+        });
+
+        await agentInstallZip(directoryState.agentPath, file);
+
+        setInstallProgress({
+          status: 'completed',
+          addonName: file.name,
+          percent: 100,
+          message: `安装成功！`,
+        });
+
+        await loadAgentAddons(directoryState.agentPath);
+      } else if (directoryState.handle) {
+        const buffer = await file.arrayBuffer();
+        await installAddonFromZip(directoryState.handle, buffer, (p) => {
+          setInstallProgress(p);
+        });
+        await loadBrowserAddons(directoryState.handle);
+      }
     } catch (err: any) {
       setInstallProgress({
         status: 'error',
@@ -218,11 +382,12 @@ export function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onPickDirectory={handlePickDirectory}
-        onRefreshDirectory={() => directoryState.handle && loadAddons(directoryState.handle)}
+        onRefreshDirectory={handleRefreshCurrentDirectory}
         onOpenZipModal={() => setIsZipModalOpen(true)}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenDeployModal={() => setIsDeployModalOpen(true)}
         isPicking={isPicking}
+        agentStatus={agentStatus}
       />
 
       {/* Main Container */}
@@ -251,7 +416,13 @@ export function App() {
 
         {/* Directory Banner when not authorized */}
         {!directoryState.isAuthorized && !needsResumeAuth && (
-          <DirectoryBanner onPickDirectory={handlePickDirectory} isPicking={isPicking} />
+          <DirectoryBanner
+            onPickDirectory={handlePickDirectory}
+            isPicking={isPicking}
+            agentStatus={agentStatus}
+            onSelectAgentInstallation={handleSelectAgentInstallation}
+            onPickAgentDirectory={handlePickAgentDirectory}
+          />
         )}
 
         {/* Loading Spinner */}
@@ -273,7 +444,7 @@ export function App() {
                 <div className="text-center py-12 p-6 rounded-2xl bg-slate-900/40 border border-slate-800">
                   <h3 className="text-lg font-bold text-slate-300 mb-2">尚未连接魔兽世界插件目录</h3>
                   <p className="text-xs text-slate-400 mb-5">
-                    请在上方点击“选择魔兽世界 AddOns 目录”开始扫描本地已装插件。
+                    请在上方点击“选择魔兽世界 AddOns 目录”或启动本地助手开始管理插件。
                   </p>
                   <button
                     onClick={handlePickDirectory}

@@ -40,6 +40,8 @@ export interface CuratedAddon {
 
 export interface DirectoryState {
   handle: FileSystemDirectoryHandle | null;
+  mode?: 'browser' | 'agent';
+  agentPath?: string;
   folderName: string;
   fullPathHint: string;
   isAuthorized: boolean;
