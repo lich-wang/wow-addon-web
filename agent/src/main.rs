@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::System;
 use tower_http::cors::{Any, CorsLayer};
 
 const PORT: u16 = 24642;
@@ -82,11 +82,11 @@ fn clean_wow_string(s: &str) -> String {
 
 fn check_running_wow_exes() -> Vec<String> {
     let mut sys = System::new();
-    sys.refresh_processes(ProcessesToUpdate::All, true);
+    sys.refresh_processes();
     let mut list = Vec::new();
 
     for (_pid, p) in sys.processes() {
-        let name_str = p.name().to_string_lossy().to_lowercase();
+        let name_str = p.name().to_lowercase();
         // Match Wow.exe, WowClassic.exe, World of Warcraft, etc.
         if (name_str.starts_with("wow") || name_str.contains("warcraft"))
             && !name_str.contains("agent")
