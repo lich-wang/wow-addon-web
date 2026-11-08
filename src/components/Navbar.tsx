@@ -139,7 +139,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* GitHub Repo */}
             <a
-              href="https://github.com"
+              href="https://github.com/lich-wang/wow-addon-web"
               target="_blank"
               rel="noopener noreferrer"
               title="GitHub 开源仓库"

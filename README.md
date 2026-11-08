@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
+  <a href="https://github.com/lich-wang/wow-addon-web/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
   <a href="https://pages.cloudflare.com/"><img src="https://img.shields.io/badge/Deploy%20on-Cloudflare%20Pages-orange?logo=cloudflare" alt="Cloudflare Pages" /></a>
   <a href="https://vite.dev/"><img src="https://img.shields.io/badge/Built%20with-Vite%20%2B%20React%20%2B%20Tailwind-646cff?logo=vite" alt="Tech Stack" /></a>
 </p>
@@ -52,7 +52,7 @@
 ### 运行步骤
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/your-username/wow-addon-web.git
+git clone https://github.com/lich-wang/wow-addon-web.git
 cd wow-addon-web
 
 # 2. 安装依赖
@@ -71,15 +71,16 @@ npm run dev
 本项目可以**完全免费**部署在 Cloudflare Pages 上，具备永久免费的 SSL 证书（HTTPS）与全球 CDN：
 
 1. **推送到 GitHub**：
-   将代码推送到你的 GitHub 仓库。
+   将代码推送到你的 GitHub 仓库（`https://github.com/lich-wang/wow-addon-web`）。
 2. **进入 Cloudflare 控制台**：
    访问 [Cloudflare Dashboard](https://dash.cloudflare.com/)，在左侧导航栏点击 **Workers 与 Pages** → **创建应用程序** → 选择 **Pages** → **连接到 Git**。
 3. **选择仓库并配置构建参数**：
+   - **项目名称**：`wow-addon-web`
    - **框架预设 (Framework preset)**：`Vite`
    - **构建命令 (Build command)**：`npm run build`
    - **构建输出目录 (Build output directory)**：`dist`
 4. **点击“保存并部署”**：
-   构建完成后，即可通过 `https://<你的项目名>.pages.dev` 全球访问！
+   构建完成后，即可通过 `https://wow-addon-web.pages.dev` 全球访问！
 
 ---
 

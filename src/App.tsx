@@ -305,7 +305,7 @@ export function App() {
             </button>
             <span>•</span>
             <a
-              href="https://github.com"
+              href="https://github.com/lich-wang/wow-addon-web"
               target="_blank"
               rel="noreferrer"
               className="text-slate-400 hover:text-slate-200"

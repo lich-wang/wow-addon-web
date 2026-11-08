@@ -45,7 +45,7 @@ export const DeployModal: React.FC<DeployModalProps> = ({ isOpen, onClose }) => 
                 <span>将本项目开源/推送到 GitHub</span>
               </h4>
               <p className="text-slate-400 mt-1">
-                在 GitHub 新建一个仓库（例如 <code className="text-slate-300">wow-addon-web</code>），并将当前项目源码提交并推送（Push）到该仓库。
+                在 GitHub 新建一个仓库（例如 <code className="text-slate-300">lich-wang/wow-addon-web</code>），并将当前项目源码提交并推送（Push）到该仓库。
               </p>
             </div>
 
