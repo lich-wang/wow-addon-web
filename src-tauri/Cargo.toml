@@ -1,17 +1,14 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+name = "wow-addon-manager"
+version = "1.0.0"
+description = "World of Warcraft Addon Manager Desktop"
+authors = ["lich"]
+license = "MIT"
 edition = "2024"
 rust-version = "1.90"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [lib]
-name = "app_lib"
+name = "wow_addon_manager_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -23,3 +20,13 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.12.5" }
 tauri-plugin-log = "2"
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "set-header"] }
+regex = "1.10"
+walkdir = "2.5"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+open = "5.3"
+rfd = "0.15"
+sysinfo = "0.30"

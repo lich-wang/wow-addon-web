@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "wow-addon-manager",
-  "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "productName": "魔兽世界插件管理器",
+  "version": "1.0.0",
+  "identifier": "tech.lich.wowaddon",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "WoWAddonManager",
-        "width": 800,
-        "height": 600,
+        "label": "main",
+        "title": "魔兽世界插件管理器",
+        "url": "https://wow.lich.tech",
+        "width": 1280,
+        "height": 850,
+        "minWidth": 900,
+        "minHeight": 650,
         "resizable": true,
         "fullscreen": false
       }
@@ -32,9 +36,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "android": {
-      "debugApplicationIdSuffix": ".debug"
-    }
+    ]
   }
 }
