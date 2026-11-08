@@ -13,9 +13,9 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader, Cursor},
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
+use sysinfo::{ProcessesToUpdate, System};
 use tower_http::cors::{Any, CorsLayer};
 
 const PORT: u16 = 24642;
@@ -28,6 +28,7 @@ struct WowInstallation {
     flavor: String,
     addons_path: String,
     game_root: String,
+    is_running: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -79,6 +80,29 @@ fn clean_wow_string(s: &str) -> String {
     step4.trim().to_string()
 }
 
+fn check_running_wow_exes() -> Vec<String> {
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    let mut list = Vec::new();
+
+    for (_pid, p) in sys.processes() {
+        let name_str = p.name().to_string_lossy().to_lowercase();
+        // Match Wow.exe, WowClassic.exe, World of Warcraft, etc.
+        if (name_str.starts_with("wow") || name_str.contains("warcraft"))
+            && !name_str.contains("agent")
+            && !name_str.contains("helper")
+        {
+            if let Some(exe) = p.exe() {
+                list.push(exe.to_string_lossy().to_string());
+            } else {
+                list.push(name_str);
+            }
+        }
+    }
+
+    list
+}
+
 fn find_wow_installations() -> Vec<WowInstallation> {
     let mut candidates = Vec::new();
 
@@ -119,6 +143,8 @@ fn find_wow_installations() -> Vec<WowInstallation> {
         ("_ptr_", "测试服 (PTR)"),
     ];
 
+    let running_exes = check_running_wow_exes();
+
     let mut found = Vec::new();
     for root_str in candidates {
         let root = Path::new(&root_str);
@@ -129,15 +155,37 @@ fn find_wow_installations() -> Vec<WowInstallation> {
         for (flavor_dir, label) in flavors {
             let addons_path = root.join(flavor_dir).join("Interface").join("AddOns");
             if addons_path.is_dir() {
+                let flavor_name = flavor_dir.trim_matches('_').to_string();
+                let lower_flavor = flavor_dir.to_lowercase();
+
+                // Check if this flavor matches any running process path
+                let is_running = running_exes.iter().any(|exe| {
+                    let lower_exe = exe.to_lowercase();
+                    lower_exe.contains(&lower_flavor)
+                });
+
                 found.push(WowInstallation {
-                    name: format!("{} ({})", label, flavor_dir.trim_matches('_')),
-                    flavor: flavor_dir.trim_matches('_').to_string(),
+                    name: format!("{} ({})", label, flavor_name),
+                    flavor: flavor_name,
                     addons_path: addons_path.to_string_lossy().to_string(),
                     game_root: root.to_string_lossy().to_string(),
+                    is_running,
                 });
             }
         }
     }
+
+    // Sort running versions first, then forever first
+    found.sort_by(|a, b| {
+        let a_run = if a.is_running { 1 } else { 0 };
+        let b_run = if b.is_running { 1 } else { 0 };
+        if a_run != b_run {
+            return b_run.cmp(&a_run);
+        }
+        let a_fav = if a.flavor == "forever" { 1 } else { 0 };
+        let b_fav = if b.flavor == "forever" { 1 } else { 0 };
+        b_fav.cmp(&a_fav)
+    });
 
     found
 }
@@ -317,7 +365,8 @@ async fn main() {
     if !installs.is_empty() {
         println!("\n[✓] 自动发现本机魔兽世界版本 (共 {} 个):", installs.len());
         for (i, inst) in installs.iter().enumerate() {
-            println!("    {}. {}", i + 1, inst.name);
+            let status_tag = if inst.is_running { " [🟢 正在运行中]" } else { "" };
+            println!("    {}. {}{}", i + 1, inst.name, status_tag);
             println!("       -> {}", inst.addons_path);
         }
     } else {
@@ -332,25 +381,19 @@ async fn main() {
         });
     }
 
-    let shared_installs = Arc::new(installs);
-
     // Build Axum Router
     let app = Router::new()
         .route(
             "/api/ping",
-            get({
-                let inst = shared_installs.clone();
-                move || {
-                    let inst = inst.clone();
-                    async move {
-                        Json(serde_json::json!({
-                            "status": "ok",
-                            "version": "1.0.0",
-                            "platform": std::env::consts::OS,
-                            "installations": *inst
-                        }))
-                    }
-                }
+            get(|| async move {
+                // Real-time dynamic scan so running process changes are immediately reflected
+                let dynamic_installs = find_wow_installations();
+                Json(serde_json::json!({
+                    "status": "ok",
+                    "version": "1.0.0",
+                    "platform": std::env::consts::OS,
+                    "installations": dynamic_installs
+                }))
             }),
         )
         .route(

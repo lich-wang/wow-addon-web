@@ -7,6 +7,7 @@ export interface WowInstallation {
   flavor: string;
   addonsPath: string;
   gameRoot: string;
+  isRunning?: boolean;
 }
 
 export interface AgentStatus {

@@ -17,3 +17,4 @@ open = "5"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"
 regex = "1.10"
+sysinfo = "0.30"

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   FolderCheck,
   ShieldCheck,
@@ -10,6 +10,8 @@ import {
   Terminal,
   CheckCircle2,
   ExternalLink,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { isFileSystemAccessSupported } from '../services/fsService';
 import type { AgentStatus, WowInstallation } from '../services/agentService';
@@ -32,6 +34,16 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
 }) => {
   const isSupported = isFileSystemAccessSupported();
   const isAgentConnected = !!agentStatus;
+  const [showAllVersions, setShowAllVersions] = useState(false);
+
+  const allInstalls = agentStatus?.installations || [];
+  const runningInstalls = allInstalls.filter((i) => i.isRunning);
+  const idleInstalls = allInstalls.filter((i) => !i.isRunning);
+
+  // When games are running, only show running versions on page by default.
+  // Other idle versions only show after they are launched or user clicks expand.
+  const displayedInstalls =
+    runningInstalls.length > 0 && !showAllVersions ? runningInstalls : allInstalls;
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900/90 via-slate-900/60 to-slate-950 p-6 md:p-10 mb-8 shadow-2xl">
@@ -50,7 +62,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
           {isAgentConnected ? (
             <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>本地助手已连接 (v{agentStatus.version}) · 彻底解除沙箱限制</span>
+              <span>本地助手在线 (v{agentStatus.version}) · 已解除沙箱限制</span>
             </div>
           ) : (
             <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400 text-xs">
@@ -73,10 +85,14 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
         {/* If Agent is Connected: Show Auto-Discovered Versions */}
         {isAgentConnected ? (
           <div className="mb-8 p-5 rounded-xl bg-emerald-950/20 border border-emerald-500/30">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="text-sm font-bold text-emerald-300 flex items-center space-x-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>自动扫描发现已安装的魔兽版本（点击一键载入）：</span>
+                <span>
+                  {runningInstalls.length > 0
+                    ? `检测到正在运行的游戏版本（点击一键载入）：`
+                    : `扫描发现已安装的魔兽版本（点击一键载入）：`}
+                </span>
               </h3>
               <button
                 onClick={onPickAgentDirectory}
@@ -86,27 +102,73 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
               </button>
             </div>
 
-            {agentStatus.installations && agentStatus.installations.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {agentStatus.installations.map((inst, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => onSelectAgentInstallation(inst)}
-                    className="flex flex-col text-left p-3.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/50 transition-all cursor-pointer group shadow-md"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-100 group-hover:text-emerald-300 text-sm">
-                        {inst.name}
+            {displayedInstalls.length > 0 ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {displayedInstalls.map((inst, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => onSelectAgentInstallation(inst)}
+                      className={`flex flex-col text-left p-4 rounded-xl border transition-all cursor-pointer group shadow-lg ${
+                        inst.isRunning
+                          ? 'bg-gradient-to-r from-emerald-950/50 to-slate-900 border-emerald-500/60 hover:border-emerald-400 ring-1 ring-emerald-500/30 hover:scale-101'
+                          : 'bg-slate-900/90 hover:bg-slate-800 border-slate-700/80 hover:border-slate-500'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2 min-w-0">
+                          {inst.isRunning && (
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                          )}
+                          <span className="font-bold text-slate-100 group-hover:text-amber-300 text-sm truncate">
+                            {inst.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-1.5 shrink-0">
+                          {inst.isRunning ? (
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              🟢 游戏运行中
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 px-2 py-0.5 rounded bg-slate-800 border border-slate-700">
+                              未运行
+                            </span>
+                          )}
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-500 text-slate-950">
+                            一键载入
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-xs text-slate-400 font-mono truncate mt-2" title={inst.addonsPath}>
+                        {inst.addonsPath}
                       </span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        一键载入
+                    </button>
+                  ))}
+                </div>
+
+                {/* Toggle for other un-launched versions */}
+                {runningInstalls.length > 0 && idleInstalls.length > 0 && (
+                  <div className="pt-2 flex items-center justify-between">
+                    <p className="text-xs text-slate-400">
+                      💡 其他未开启的魔兽版本（开启客户端后页面将自动感应显示）：
+                    </p>
+                    <button
+                      onClick={() => setShowAllVersions(!showAllVersions)}
+                      className="inline-flex items-center space-x-1 text-xs text-amber-400 hover:text-amber-300 cursor-pointer font-medium"
+                    >
+                      <span>
+                        {showAllVersions
+                          ? '收起未开启的版本'
+                          : `展开显示未开启版本 (${idleInstalls.length} 个)`}
                       </span>
-                    </div>
-                    <span className="text-xs text-slate-400 font-mono truncate mt-1.5" title={inst.addonsPath}>
-                      {inst.addonsPath}
-                    </span>
-                  </button>
-                ))}
+                      {showAllVersions ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex items-center justify-between">
