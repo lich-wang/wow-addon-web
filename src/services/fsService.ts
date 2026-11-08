@@ -116,9 +116,9 @@ export async function resolveAddOnsDirectory(
 ): Promise<{ handle: FileSystemDirectoryHandle; pathHint: string; flavor: GameFlavor }> {
   const rootName = pickedHandle.name.toLowerCase();
 
-  // 1. Direct AddOns folder
-  if (rootName === 'addons') {
-    return { handle: pickedHandle, pathHint: '.../Interface/AddOns', flavor: 'retail' };
+  // 1. Direct AddOns folder (e.g. AddOns or WoW-AddOns)
+  if (rootName.includes('addons')) {
+    return { handle: pickedHandle, pathHint: `.../${pickedHandle.name}`, flavor: 'retail' };
   }
 
   // 2. Interface folder: check if contains addons folder
@@ -132,23 +132,24 @@ export async function resolveAddOnsDirectory(
   if (interfaceHandle) {
     const addonsInside = await findSubdirectory(interfaceHandle, 'addons');
     if (addonsInside) {
-      const flavor: GameFlavor = rootName.includes('classic') ? 'classic' : 'retail';
+      const flavor: GameFlavor = rootName.includes('classic') || rootName.includes('forever') ? 'classic' : 'retail';
       return { handle: addonsInside, pathHint: `${pickedHandle.name}/Interface/AddOns`, flavor };
     }
   }
 
-  // 4. WoW Root folder containing _retail_, _classic_, etc.
-  for (const flavorSub of ['_retail_', '_classic_', '_era_', '_ptr_']) {
+  // 4. WoW Root folder containing _retail_, _classic_, _forever_, etc.
+  for (const flavorSub of ['_retail_', '_classic_', '_classic_era_', '_forever_', '_era_', '_ptr_']) {
     const subFlavorHandle = await findSubdirectory(pickedHandle, flavorSub);
     if (subFlavorHandle) {
       const iface = await findSubdirectory(subFlavorHandle, 'interface');
       if (iface) {
         const addonsInside = await findSubdirectory(iface, 'addons');
         if (addonsInside) {
+          const isVanilla = flavorSub.includes('forever') || flavorSub.includes('era');
           return {
             handle: addonsInside,
             pathHint: `${pickedHandle.name}/${flavorSub}/Interface/AddOns`,
-            flavor: flavorSub.includes('classic') ? 'classic' : 'retail',
+            flavor: isVanilla ? 'vanilla' : flavorSub.includes('classic') ? 'classic' : 'retail',
           };
         }
       }
