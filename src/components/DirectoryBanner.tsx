@@ -38,12 +38,23 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
 
   const allInstalls = agentStatus?.installations || [];
   const runningInstalls = allInstalls.filter((i) => i.isRunning);
-  const idleInstalls = allInstalls.filter((i) => !i.isRunning);
 
-  // When games are running, only show running versions on page by default.
-  // Other idle versions only show after they are launched or user clicks expand.
-  const displayedInstalls =
-    runningInstalls.length > 0 && !showAllVersions ? runningInstalls : allInstalls;
+  // Priority display:
+  // 1. If any game is running, only show running versions by default.
+  // 2. If no game is running, default to only showing the active Infinite server (无限服).
+  // 3. Other idle versions only show on page after they are launched or user clicks expand.
+  const defaultInstalls = React.useMemo(() => {
+    if (runningInstalls.length > 0) {
+      return runningInstalls;
+    }
+    const forever = allInstalls.filter((i) => i.flavor === 'forever');
+    return forever.length > 0 ? forever : allInstalls.slice(0, 1);
+  }, [runningInstalls, allInstalls]);
+
+  const displayedInstalls = showAllVersions ? allInstalls : defaultInstalls;
+  const idleHiddenInstalls = allInstalls.filter(
+    (inst) => !displayedInstalls.some((d) => d.addonsPath === inst.addonsPath)
+  );
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900/90 via-slate-900/60 to-slate-950 p-6 md:p-10 mb-8 shadow-2xl">
@@ -147,19 +158,19 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
                 </div>
 
                 {/* Toggle for other un-launched versions */}
-                {runningInstalls.length > 0 && idleInstalls.length > 0 && (
-                  <div className="pt-2 flex items-center justify-between">
+                {(idleHiddenInstalls.length > 0 || showAllVersions) && allInstalls.length > 1 && (
+                  <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/60 mt-3">
                     <p className="text-xs text-slate-400">
-                      💡 其他未开启的魔兽版本（开启客户端后页面将自动感应显示）：
+                      💡 其他版本的魔兽开启后页面将自动感应显示：
                     </p>
                     <button
                       onClick={() => setShowAllVersions(!showAllVersions)}
-                      className="inline-flex items-center space-x-1 text-xs text-amber-400 hover:text-amber-300 cursor-pointer font-medium"
+                      className="inline-flex items-center space-x-1 text-xs text-amber-400 hover:text-amber-300 cursor-pointer font-medium px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 transition-colors"
                     >
                       <span>
                         {showAllVersions
-                          ? '收起未开启的版本'
-                          : `展开显示未开启版本 (${idleInstalls.length} 个)`}
+                          ? '收起其他未开启版本'
+                          : `展开显示其他版本 (${allInstalls.length - displayedInstalls.length} 个未开启)`}
                       </span>
                       {showAllVersions ? (
                         <ChevronUp className="w-3.5 h-3.5" />
