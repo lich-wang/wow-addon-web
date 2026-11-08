@@ -1,7 +1,7 @@
 use axum::{
     body::Bytes,
     extract::Query,
-    http::{header::HeaderName, HeaderValue, Method, StatusCode},
+    http::{header::HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Json},
     routing::{get, post},
     Router,
@@ -257,10 +257,12 @@ fn scan_addons_dir(addons_path: &Path) -> Vec<AddonInfo> {
                 file_count += 1;
                 if let Ok(m) = w.metadata() {
                     total_size += m.len();
-                    if let Ok(dur) = m.modified().and_then(|t| t.duration_since(std::time::UNIX_EPOCH)) {
-                        let ms = dur.as_millis() as u64;
-                        if ms > latest_mtime {
-                            latest_mtime = ms;
+                    if let Ok(time) = m.modified() {
+                        if let Ok(dur) = time.duration_since(std::time::UNIX_EPOCH) {
+                            let ms = dur.as_millis() as u64;
+                            if ms > latest_mtime {
+                                latest_mtime = ms;
+                            }
                         }
                     }
                 }
