@@ -19,6 +19,7 @@ interface NavbarProps {
   onOpenZipModal: () => void;
   onOpenShareModal: () => void;
   onOpenDeployModal: () => void;
+  isPicking?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenZipModal,
   onOpenShareModal,
   onOpenDeployModal,
+  isPicking = false,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800">
@@ -101,10 +103,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             ) : (
               <button
                 onClick={onPickDirectory}
-                className="flex items-center space-x-2 px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-semibold shadow-md shadow-amber-500/20 transition-all hover:scale-102 cursor-pointer"
+                disabled={isPicking}
+                className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold shadow-md transition-all ${
+                  isPicking
+                    ? 'bg-slate-800 text-slate-400 cursor-wait'
+                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20 hover:scale-102 cursor-pointer'
+                }`}
               >
                 <FolderOpen className="w-4 h-4" />
-                <span>选择魔兽目录</span>
+                <span>{isPicking ? '请在弹窗中选择...' : '选择魔兽目录'}</span>
               </button>
             )}
 

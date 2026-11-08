@@ -11,9 +11,13 @@ import { isFileSystemAccessSupported } from '../services/fsService';
 
 interface DirectoryBannerProps {
   onPickDirectory: () => void;
+  isPicking?: boolean;
 }
 
-export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({ onPickDirectory }) => {
+export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
+  onPickDirectory,
+  isPicking = false,
+}) => {
   const isSupported = isFileSystemAccessSupported();
 
   return (
@@ -58,15 +62,17 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({ onPickDirector
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
           <button
             onClick={onPickDirectory}
-            disabled={!isSupported}
+            disabled={!isSupported || isPicking}
             className={`flex items-center space-x-3 px-6 py-3.5 rounded-xl font-bold text-base shadow-xl transition-all ${
-              isSupported
-                ? 'bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 shadow-amber-500/25 hover:scale-102 active:scale-98 cursor-pointer'
-                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+              !isSupported
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                : isPicking
+                ? 'bg-slate-800 text-slate-400 cursor-wait'
+                : 'bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 shadow-amber-500/25 hover:scale-102 active:scale-98 cursor-pointer'
             }`}
           >
             <FolderOpen className="w-5 h-5" />
-            <span>选择魔兽世界 AddOns 目录</span>
+            <span>{isPicking ? '已打开选择窗口，请选择文件夹...' : '选择魔兽世界 AddOns 目录'}</span>
           </button>
         </div>
 

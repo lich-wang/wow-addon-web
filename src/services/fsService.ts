@@ -159,6 +159,8 @@ export async function resolveAddOnsDirectory(
   return { handle: pickedHandle, pathHint: pickedHandle.name, flavor: 'retail' };
 }
 
+let isPickerActive = false;
+
 /**
  * Ask user to pick the directory
  */
@@ -171,44 +173,54 @@ export async function pickAddOnsDirectory(): Promise<{
     throw new Error('当前浏览器不支持本地文件系统访问，请使用 Chrome、Edge 或 Brave 浏览器');
   }
 
-  let rawHandle: FileSystemDirectoryHandle;
-  try {
-    // Open directory picker with standard options
-    // @ts-expect-error showDirectoryPicker is standard in Chromium
-    rawHandle = await window.showDirectoryPicker({
-      id: 'wow-addons-dir',
-      startIn: 'desktop',
-    });
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      throw new Error(
-        '未完成文件夹选择。提示：如果您的魔兽世界在系统盘 C:\\Program Files (x86)，由于系统安全限制，请在选择框中双击进入到 Interface 文件夹，直接选中【AddOns】文件夹。'
-      );
-    }
-    throw err;
+  if (isPickerActive) {
+    throw new Error('文件夹选择窗口已处于打开状态，请检查任务栏或按 Alt + Tab 切换到打开的窗口！');
   }
 
-  // Request readwrite permission explicitly if supported
+  isPickerActive = true;
   try {
-    // @ts-expect-error requestPermission
-    if (rawHandle.requestPermission) {
+    let rawHandle: FileSystemDirectoryHandle;
+    try {
+      // @ts-expect-error showDirectoryPicker is standard in Chromium
+      rawHandle = await window.showDirectoryPicker({
+        startIn: 'desktop',
+      });
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        throw new Error(
+          '未完成文件夹选择。提示：如果您的魔兽世界在系统盘 C:\\Program Files (x86)，由于系统安全限制，请在选择框中双击进入到 Interface 文件夹，直接选中【AddOns】文件夹。'
+        );
+      }
+      if (err.message && err.message.includes('already active')) {
+        throw new Error('文件夹选择窗口已在后台打开，请检查任务栏或按 Alt + Tab 查看已打开的窗口！');
+      }
+      throw err;
+    }
+
+    // Request readwrite permission explicitly if supported
+    try {
       // @ts-expect-error requestPermission
-      await rawHandle.requestPermission({ mode: 'readwrite' });
+      if (rawHandle.requestPermission) {
+        // @ts-expect-error requestPermission
+        await rawHandle.requestPermission({ mode: 'readwrite' });
+      }
+    } catch (permErr) {
+      console.warn('Permission request error:', permErr);
     }
-  } catch (permErr) {
-    console.warn('Permission request error:', permErr);
+
+    const resolved = await resolveAddOnsDirectory(rawHandle);
+
+    // Safely persist handle in IndexedDB
+    try {
+      await set(IDB_HANDLE_KEY, resolved.handle);
+    } catch (idbErr) {
+      console.warn('Could not save handle to IndexedDB (e.g. private mode):', idbErr);
+    }
+
+    return resolved;
+  } finally {
+    isPickerActive = false;
   }
-
-  const resolved = await resolveAddOnsDirectory(rawHandle);
-
-  // Safely persist handle in IndexedDB
-  try {
-    await set(IDB_HANDLE_KEY, resolved.handle);
-  } catch (idbErr) {
-    console.warn('Could not save handle to IndexedDB (e.g. private mode):', idbErr);
-  }
-
-  return resolved;
 }
 
 /**

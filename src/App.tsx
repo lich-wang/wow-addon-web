@@ -34,6 +34,7 @@ export function App() {
 
   const [addons, setAddons] = useState<AddonInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isPicking, setIsPicking] = useState(false);
   const [needsResumeAuth, setNeedsResumeAuth] = useState(false);
   const [activeTab, setActiveTab] = useState<'installed' | 'market'>('installed');
 
@@ -107,6 +108,8 @@ export function App() {
 
   // Request directory permission on user click
   const handlePickDirectory = async () => {
+    if (isPicking) return;
+    setIsPicking(true);
     try {
       const resolved = await pickAddOnsDirectory();
       setDirectoryState({
@@ -122,6 +125,8 @@ export function App() {
     } catch (err: any) {
       console.error('Directory pick error:', err);
       alert(err.message || '选择目录失败，请重试');
+    } finally {
+      setIsPicking(false);
     }
   };
 
@@ -217,6 +222,7 @@ export function App() {
         onOpenZipModal={() => setIsZipModalOpen(true)}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenDeployModal={() => setIsDeployModalOpen(true)}
+        isPicking={isPicking}
       />
 
       {/* Main Container */}
@@ -245,7 +251,7 @@ export function App() {
 
         {/* Directory Banner when not authorized */}
         {!directoryState.isAuthorized && !needsResumeAuth && (
-          <DirectoryBanner onPickDirectory={handlePickDirectory} />
+          <DirectoryBanner onPickDirectory={handlePickDirectory} isPicking={isPicking} />
         )}
 
         {/* Loading Spinner */}
