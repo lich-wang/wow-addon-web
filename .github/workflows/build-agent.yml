@@ -93,6 +93,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
@@ -106,20 +109,24 @@ jobs:
           path: release-assets
 
       - name: Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: "WoW Addon Manager Local Agent v1.0.0"
+          body: |
+            ## 魔兽世界网页插件管理器 - 本地极速助手 (v1.0.0)
+
+            本助手用于为网页端 [https://wow.lich.tech](https://wow.lich.tech) 提供本地目录直通读写能力：
+            - **彻底解除** Windows 下 `C:\Program Files (x86)` 系统保护目录浏览器沙箱拦截限制
+            - **解决** macOS Safari 浏览器缺乏 File System Access API 的问题
+            - **自动发现** 本机已安装的魔兽世界版本（经典旧世 / 怀旧服 / 正式服）
+            - **极速同步** 网页端随时更新，打开助手即可自动加载最新云端功能，无需反复重装
+
+            ### 下载版本：
+            - 🪟 **Windows 用户**: 下载 `wow-addon-agent-windows-x64.zip`，解压后双击运行即可。
+            - 🍎 **Mac 用户**: 下载 `wow-addon-agent-macos-universal.zip`，解压后双击运行（通用兼容 M1/M2/M3/M4 及 Intel）。
+          files: |
+            release-assets/wow-addon-agent-windows-x64.zip
+            release-assets/wow-addon-agent-macos-universal.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create v1.0.0 release-assets/* \
-            --title "WoW Addon Manager Local Agent v1.0.0" \
-            --notes "## 魔兽世界网页插件管理器 - 本地极速助手 (v1.0.0)
-
-          本助手用于为网页端 [https://wow.lich.tech](https://wow.lich.tech) 提供本地目录直通读写能力：
-          - **彻底解除** Windows 下 C:\Program Files (x86) 系统保护目录浏览器沙箱拦截限制
-          - **解决** macOS Safari 浏览器缺乏 File System Access API 的问题
-          - **自动发现** 本机已安装的魔兽世界版本（经典旧世 / 怀旧服 / 正式服）
-          - **极速同步** 网页端随时更新，打开助手即可自动加载最新云端功能，无需反复重装
-
-          ### 下载版本：
-          - 🪟 **Windows 用户**: 下载 wow-addon-agent-windows-x64.zip，解压后双击运行即可。
-          - 🍎 **Mac 用户**: 下载 wow-addon-agent-macos-universal.zip，解压后双击运行（兼容 M1/M2/M3/M4 及 Intel）。" \
-            --clobber || gh release upload v1.0.0 release-assets/* --clobber
