@@ -1,0 +1,63 @@
+name: Build Tauri Desktop App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+          - platform: 'macos-latest'
+            args: '--target universal-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri Desktop App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: '魔兽世界插件管理器桌面版 v__VERSION__'
+          releaseBody: |
+            魔兽世界网页插件管理器 - 原生桌面客户端 (基于 Tauri 2.0)。
+            
+            ### ✨ 特性
+            - 🚀 **完美突破浏览器权限限制**：原生读写 `C:\Program Files (x86)\World of Warcraft`，无需每次浏览器弹窗授权。
+            - 🔄 **云端自动同步更新**：与网页端（https://wow.lich.tech）实时同步，随时获取最新插件源与功能，无需频繁重装客户端。
+            - ⚡ **无限服 (WoW Forever) 优先适配**：优先展示与识别无限服目录及专属插件。
+            - 🟢 **进程运行感知**：智能感知正在运行的魔兽版本，无缝切换。
+            
+            ### 📦 下载说明
+            - **Windows**: 下载 `.exe` (一键安装包) 或 `.msi`
+            - **macOS**: 下载 `.dmg` (支持 Apple Silicon 与 Intel Mac)
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

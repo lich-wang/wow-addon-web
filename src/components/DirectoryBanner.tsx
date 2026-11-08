@@ -234,9 +234,9 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-300 mt-1.5 leading-relaxed">
-                    由于 Chromium 浏览器强制拦截系统保护目录，若您的魔兽安装在系统盘，只需下载运行
-                    <strong className="text-amber-300 font-semibold"> 本地轻量助手</strong>
-                    （仅几 MB，免安装，开源无任何广告）。运行后本网页将<strong>自动识别并解除拦截</strong>，直接畅通读写！
+                    由于 Chromium 浏览器强制拦截系统保护目录，若您的魔兽安装在系统盘，推荐使用
+                    <strong className="text-amber-300 font-semibold"> 原生桌面端 (基于 Tauri 2.0)</strong>。
+                    启动后网页端与客户端将<strong>自动识别并解除拦截</strong>，随时随地畅通读写！
                   </p>
 
                   {/* Download Buttons */}
@@ -248,7 +248,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
                       className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 text-xs font-semibold transition-all hover:scale-102 cursor-pointer shadow"
                     >
                       <Download className="w-3.5 h-3.5 text-amber-400" />
-                      <span>🪟 Windows 版下载 (.zip)</span>
+                      <span>🪟 Windows 客户端下载 (.exe / .msi)</span>
                     </a>
 
                     <a
@@ -258,7 +258,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
                       className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 text-xs font-semibold transition-all hover:scale-102 cursor-pointer shadow"
                     >
                       <Download className="w-3.5 h-3.5 text-amber-400" />
-                      <span>🍎 macOS 版下载 (通用支持 M/Intel)</span>
+                      <span>🍎 macOS 客户端下载 (.dmg)</span>
                     </a>
 
                     <a
@@ -267,13 +267,13 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
                       rel="noopener noreferrer"
                       className="flex items-center space-x-1.5 text-xs text-slate-400 hover:text-slate-200 ml-2 transition-colors"
                     >
-                      <span>GitHub Releases 源码与发布</span>
+                      <span>GitHub Releases 全部下载</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
 
                   <p className="text-[11px] text-slate-500 mt-2.5">
-                    💡 提示：助手启动后无需重复下载更新，网页端界面与新功能将自动跟随云端更新。
+                    💡 提示：桌面端内置云端直连架构，打开时自动加载最新 Web 界面与功能，随云端同步更新，无需频繁重新安装。
                   </p>
                 </div>
               </div>

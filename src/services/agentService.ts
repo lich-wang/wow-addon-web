@@ -18,8 +18,8 @@ export interface AgentStatus {
 }
 
 export const GITHUB_RELEASES_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
-export const WIN_DOWNLOAD_URL = 'https://github.com/lich-wang/wow-addon-web/releases/latest/download/wow-addon-agent-windows-x64.zip';
-export const MAC_DOWNLOAD_URL = 'https://github.com/lich-wang/wow-addon-web/releases/latest/download/wow-addon-agent-macos-universal.zip';
+export const WIN_DOWNLOAD_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
+export const MAC_DOWNLOAD_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
 
 /**
  * Check if the native local bridge agent is running on 127.0.0.1:24642
