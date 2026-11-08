@@ -36,6 +36,8 @@ export interface CuratedAddon {
   curseSlug?: string;
   githubRepo?: string;
   homeUrl?: string;
+  gameFlavors?: GameFlavor[];
+  isForeverRecommended?: boolean;
 }
 
 export interface DirectoryState {

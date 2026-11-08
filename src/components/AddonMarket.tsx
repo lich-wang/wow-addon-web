@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Download,
   CheckCircle2,
@@ -18,14 +18,16 @@ import {
   Cpu,
   Coins,
   Search,
+  Flame,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 import { POPULAR_ADDONS } from '../services/catalogService';
-import type { AddonInfo, CuratedAddon } from '../types/addon';
+import type { AddonInfo, CuratedAddon, GameFlavor } from '../types/addon';
 
 interface AddonMarketProps {
   installedAddons: AddonInfo[];
   hasDirectory: boolean;
+  currentFlavor?: GameFlavor;
   onInstallAddon: (addon: CuratedAddon) => void;
   onPromptPickDirectory: () => void;
 }
@@ -50,14 +52,19 @@ const iconMap: Record<string, React.ReactNode> = {
 export const AddonMarket: React.FC<AddonMarketProps> = ({
   installedAddons,
   hasDirectory,
+  currentFlavor,
   onInstallAddon,
   onPromptPickDirectory,
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // If current flavor is forever, default to 'forever' tab to prioritize forever addons
+  const [selectedCategory, setSelectedCategory] = useState<string>(
+    currentFlavor === 'forever' ? 'forever' : 'all'
+  );
   const [searchQuery, setSearchQuery] = useState('');
 
   const categories = [
-    { id: 'all', label: '全部' },
+    { id: 'forever', label: '🔥 无限服推荐', highlight: true },
+    { id: 'all', label: '全部插件' },
     { id: 'Combat', label: '战斗统计' },
     { id: 'Raid', label: '副本首领' },
     { id: 'UI', label: '界面血条' },
@@ -66,27 +73,76 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
   ];
 
   const getInstalledState = (curated: CuratedAddon) => {
-    const matched = installedAddons.find(
+    return installedAddons.find(
       (installed) =>
         installed.folderName.toLowerCase() === curated.defaultFolderName.toLowerCase() ||
         installed.name.toLowerCase().includes(curated.id.toLowerCase())
     );
-    return matched;
   };
 
-  const filteredCatalog = POPULAR_ADDONS.filter((item) => {
-    if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      item.name.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q) ||
-      item.author.toLowerCase().includes(q)
-    );
-  });
+  const filteredCatalog = useMemo(() => {
+    let list = POPULAR_ADDONS.filter((item) => {
+      // Forever specific filter
+      if (selectedCategory === 'forever') {
+        if (!item.isForeverRecommended && !item.gameFlavors?.includes('forever')) {
+          return false;
+        }
+      } else if (selectedCategory !== 'all' && item.category !== selectedCategory) {
+        return false;
+      }
+
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.description.toLowerCase().includes(q) ||
+        item.author.toLowerCase().includes(q)
+      );
+    });
+
+    // Prioritize Forever addons when on 'all' tab if current connected flavor is forever
+    if (currentFlavor === 'forever' && selectedCategory === 'all') {
+      list = [...list].sort((a, b) => {
+        const aFav = a.isForeverRecommended ? 1 : 0;
+        const bFav = b.isForeverRecommended ? 1 : 0;
+        return bFav - aFav;
+      });
+    }
+
+    return list;
+  }, [selectedCategory, searchQuery, currentFlavor]);
 
   return (
     <div className="space-y-6">
+      {/* Forever Server Priority Banner */}
+      {currentFlavor === 'forever' && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/40 via-amber-900/20 to-slate-900 border border-amber-500/30 flex items-center justify-between shadow-lg">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400">
+              <Flame className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-amber-300">
+                已进入【魔兽世界：无限服 (WoW Forever)】优先匹配模式
+              </h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                已为您置顶筛选 60 级传承升级、仇恨统计、平砍计时器与目标施法条等核心插件。
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setSelectedCategory('forever')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedCategory === 'forever'
+                ? 'bg-amber-500 text-slate-950'
+                : 'bg-slate-800 text-amber-300 hover:bg-slate-700'
+            }`}
+          >
+            仅看无限服推荐 ({POPULAR_ADDONS.filter((a) => a.isForeverRecommended).length})
+          </button>
+        </div>
+      )}
+
       {/* Search & Categories Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-900 border border-slate-800 shadow-lg">
         {/* Category Pills */}
@@ -95,9 +151,13 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
             <button
               key={cat.id}
               onClick={() => setSelectedCategory(cat.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                 selectedCategory === cat.id
-                  ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
+                  ? cat.highlight
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-bold shadow-md shadow-amber-500/25'
+                    : 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
+                  : cat.highlight
+                  ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20'
                   : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
               }`}
             >
@@ -127,22 +187,41 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
           return (
             <div
               key={addon.id}
-              className="p-5 rounded-xl bg-slate-900 border border-slate-800/90 hover:border-slate-700 flex flex-col justify-between shadow-lg transition-all"
+              className={`p-5 rounded-xl bg-slate-900 border flex flex-col justify-between shadow-lg transition-all ${
+                addon.isForeverRecommended
+                  ? 'border-amber-500/30 hover:border-amber-500/60 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950/80'
+                  : 'border-slate-800/90 hover:border-slate-700'
+              }`}
             >
               <div>
                 {/* Header: Icon, Name & Author */}
                 <div className="flex items-start space-x-3.5 mb-3">
-                  <div className="w-11 h-11 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+                  <div
+                    className={`w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 ${
+                      addon.isForeverRecommended
+                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                        : 'bg-slate-800 border-slate-700 text-slate-300'
+                    }`}
+                  >
                     {iconMap[addon.icon] || <Package className="w-5 h-5" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-bold text-sm text-slate-100 truncate" title={addon.name}>
-                      {addon.name}
-                    </h3>
-                    <div className="flex items-center space-x-2 text-xs text-slate-400 mt-0.5">
+                    <div className="flex items-center space-x-1.5">
+                      <h3 className="font-bold text-sm text-slate-100 truncate" title={addon.name}>
+                        {addon.name}
+                      </h3>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 mt-1">
                       <span>{addon.author}</span>
                       <span>•</span>
                       <span className="font-mono text-amber-500/90">{addon.latestVersion}</span>
+
+                      {addon.isForeverRecommended && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                          无限服适配
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

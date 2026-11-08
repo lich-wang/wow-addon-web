@@ -458,6 +458,7 @@ export function App() {
               <AddonMarket
                 installedAddons={addons}
                 hasDirectory={directoryState.isAuthorized}
+                currentFlavor={directoryState.flavor}
                 onInstallAddon={handleInstallCuratedAddon}
                 onPromptPickDirectory={handlePickDirectory}
               />
