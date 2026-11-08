@@ -80,7 +80,7 @@ npm run dev
    - **构建命令 (Build command)**：`npm run build`
    - **构建输出目录 (Build output directory)**：`dist`
 4. **点击“保存并部署”**：
-   构建完成后，即可通过 `https://wow-addon-web.pages.dev` 全球访问！
+   构建完成后，即可通过 `https://wow.lich.tech` 全球访问！
 
 ---
 

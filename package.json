@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/lich-wang/wow-addon-web/issues"
   },
-  "homepage": "https://github.com/lich-wang/wow-addon-web#readme",
+  "homepage": "https://wow.lich.tech",
   "type": "module",
   "scripts": {
     "dev": "vite",
