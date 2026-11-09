@@ -102,15 +102,29 @@ export const SBF_HELP_ZH = {
 };
 
 export const SBF_OPTIONS_REPLACEMENTS = [
-  // 8 Main Tabs
-  ['rootMenu:CreateTab("Profiles"', 'rootMenu:CreateTab("配置方案"'],
-  ['rootMenu:CreateTab("Behavior"', 'rootMenu:CreateTab("功能设置"'],
-  ['rootMenu:CreateTab("Keys"', 'rootMenu:CreateTab("按键绑定"'],
-  ['rootMenu:CreateTab("Skill"', 'rootMenu:CreateTab("钓鱼技能"'],
-  ['rootMenu:CreateTab("Log"', 'rootMenu:CreateTab("钓鱼日志"'],
-  ['rootMenu:CreateTab("Stats"', 'rootMenu:CreateTab("钓鱼统计"'],
-  ['rootMenu:CreateTab("Track"', 'rootMenu:CreateTab("世界追踪"'],
-  ['rootMenu:CreateTab("About"', 'rootMenu:CreateTab("关于插件"'],
+  // 8 Main Tabs across the top (Images 1-5)
+  [
+    `local tabDefs = {
+    { key = "buttons",  label = "Profile" },
+    { key = "behavior", label = "Settings" },
+    { key = "keys",     label = "Keybinds" },
+    { key = "skillbook", label = "Skill Book" },
+    { key = "log",      label = "Log" },
+    { key = "stats",    label = "Stats" },
+    { key = "world",    label = "World" },   -- expansion/season content watches (Patiently Rewarded, ...)
+    { key = "about",    label = "About" },
+  }`,
+    `local tabDefs = {
+    { key = "buttons",  label = "配置方案" },
+    { key = "behavior", label = "功能设置" },
+    { key = "keys",     label = "按键绑定" },
+    { key = "skillbook", label = "钓鱼技能" },
+    { key = "log",      label = "钓鱼日志" },
+    { key = "stats",    label = "钓鱼统计" },
+    { key = "world",    label = "世界追踪" },   -- expansion/season content watches (Patiently Rewarded, ...)
+    { key = "about",    label = "关于插件" },
+  }`
+  ],
 
   // Buttons in UI
   ['addBtn:SetText("New")', 'addBtn:SetText("新建")'],
@@ -143,9 +157,11 @@ export const SBF_OPTIONS_REPLACEMENTS = [
    'poleWarn:SetText("|cffff9933未设置鱼竿。|r 将鱼竿拖到此处，或保存在本配置方案的配装中。")'],
   ['GameTooltip:SetText("Fishing pole", accentRGB())', 'GameTooltip:SetText("鱼竿", accentRGB())'],
 
-  // Keybindings Tab
-  ['intro:SetText("Set a key or controller button for any SBF action. " .. "(Controller: enable it in Settings, then press a pad button here.)")',
-   'intro:SetText("为任意 SBF 操作设置按键或手柄按钮。（手柄：请在功能设置中启用手柄支持，然后在此按下手柄按钮。）")'],
+  // Keybindings Tab (Image 1)
+  [
+    `intro:SetText("Set a key or controller button for any SBF action. "\n      .. "(Controller: enable it in Settings, then press a pad button here.)")`,
+    `intro:SetText("为任意 SBF 操作设置按键或手柄按钮。（手柄：请在功能设置中启用手柄支持，然后在此按下手柄按钮。）")`
+  ],
   ['h:SetText(({ key1 = "Keyboard", mouse = "Mouse", ctrl = "Controller" })[key])',
    'h:SetText(({ key1 = "键盘", mouse = "鼠标", ctrl = "手柄" })[key])'],
   ['sectionAt("Main")', 'sectionAt("主要")'],
@@ -156,12 +172,74 @@ export const SBF_OPTIONS_REPLACEMENTS = [
   ['tableRow("equipGear", "Equip profile gear")', 'tableRow("equipGear", "换上钓鱼配装")'],
   ['tableRow("restoreGear", "Restore normal gear")', 'tableRow("restoreGear", "恢复常规装备")'],
 
-  // Sections
+  // Skill Book Tab (Image 2)
+  ['Theme.SectionHeader(pSkill, 4, -8, "Fishing skill by expansion")',
+   'Theme.SectionHeader(pSkill, 4, -8, "各资料片钓鱼技能等级")'],
+  [
+    `note:SetText(SBF.CLASSIC_GEAR and "Your Fishing level / max.\\n\\"-\\" means no Fishing skill yet."\n      or "Fishing level / max in each expansion.\\n\\"-\\" means no skill in that line yet.")`,
+    `note:SetText(SBF.CLASSIC_GEAR and "当前角色的钓鱼技能等级 / 上限。\\n\\"-\\" 表示尚未学习钓鱼。"\n      or "各资料片的钓鱼技能等级 / 上限。\\n\\"-\\" 表示尚未学习该资料片的钓鱼。")`
+  ],
+  [
+    `skillNote:SetText("Open your Fishing Journal once on this character to load your fishing skill "\n      .. "(a Blizzard requirement - your skill shows automatically after that), or check the box below "\n      .. "and we'll do it for you on your next cast.")`,
+    `skillNote:SetText("请在此角色上打开一次专业技能或钓鱼日志以加载技能数据（暴雪客户端接口要求，之后技能点数将自动显示），或勾选下方选项在下次抛竿时自动刷新。")`
+  ],
+  ['"  |cff45c4a0(here)|r"', '"  |cff45c4a0(当前)|r"'],
+
+  // Log Tab (Image 3)
+  ['logHead:SetPoint("TOPLEFT", 4, -2); logHead:SetText(Theme.Accent("Fishing log"))',
+   'logHead:SetPoint("TOPLEFT", 4, -2); logHead:SetText(Theme.Accent("钓鱼日志"))'],
+  ['logCountLbl:SetText(#SBF.FishLog() .. " logged")',
+   'logCountLbl:SetText(#SBF.FishLog() .. " 条记录")'],
+  ['logMaxLbl:SetPoint("RIGHT", logMaxEb, "LEFT", -4, 0); logMaxLbl:SetText("show")',
+   'logMaxLbl:SetPoint("RIGHT", logMaxEb, "LEFT", -4, 0); logMaxLbl:SetText("显示")'],
+  [
+    'local KIND_LABEL = { caught = "CAUGHT", expired = "EXPIRED", nothing = "NOTHING", missed = "MISSED", interrupt = "interrupt", castfail = "cast-fail", action = "ACTION", buff = "chest up", skill = "SKILL UP", chest = "CHEST", gathered = "gathered", unreachable = "out of reach",',
+    'local KIND_LABEL = { caught = "已钓起", expired = "超时", nothing = "无鱼上钩", missed = "脱钩", interrupt = "打断", castfail = "抛竿失败", action = "动作", buff = "宝箱出现", skill = "技能提升", chest = "钓起宝箱", gathered = "采集", unreachable = "距离过远",'
+  ],
+  [
+    `local nice = (rec.cause == "los" and "line of sight") or (rec.cause == "nowater" and "no fishable water")`,
+    `local nice = (rec.cause == "los" and "视线受阻") or (rec.cause == "nowater" and "无有效水域") or (rec.cause == "shallow" and "水域过浅") or (rec.cause == "movement" and "移动打断")`
+  ],
+  ['showTip(self, "Lines to show", "How many of the most recent log lines to DISPLAY. The full log is always kept (never trimmed). Default 150.")',
+   'showTip(self, "显示记录行数", "最多在界面中显示的最新钓鱼记录条数。完整日志始终完整保存，默认 150 条。")'],
+
+  // Stats Tab (Image 4)
+  ['btnAcquire(72, "All-time")', 'btnAcquire(72, "累计全部")'],
+  ['btnAcquire(90, "This session")', 'btnAcquire(90, "本次会话")'],
+  ['btnAcquire(64, "Today")', 'btnAcquire(64, "今日")'],
+  [
+    `{ tostring(totalFish), "fish" }, { tostring(casts), "casts" }, { avgCast, "avg cast" },`,
+    `{ tostring(totalFish), "条鱼" }, { tostring(casts), "抛竿数" }, { avgCast, "平均耗时" },`
+  ],
+  [
+    `{ catchRate, "catch rate" }, { timeFished, "time fished" }, { fishPerHour, "fish / hr" }`,
+    `{ catchRate, "上钩率" }, { timeFished, "钓鱼时长" }, { fishPerHour, "每小时钓起" }`
+  ],
+  [
+    `ol:SetText(("Out of reach: |cffe0b050%d|r of %d line-outs (%s)   recast: %d   |cff808080left out of casts, avg cast and catch rate|r")`,
+    `ol:SetText(("超出距离: |cffe0b050%d|r / %d 次甩竿 (%s)   重新抛竿: %d   |cff808080不计入抛竿数与上钩率|r")`
+  ],
+  ['btnAcquire(72, "By fish")', 'btnAcquire(72, "按鱼种")'],
+  ['btnAcquire(72, "By zone")', 'btnAcquire(72, "按区域")'],
+  ['btnAcquire(52, "count")', 'btnAcquire(52, "数量")'],
+  ['btnAcquire(52, "name")', 'btnAcquire(52, "名称")'],
+  ['btnAcquire(52, "recent")', 'btnAcquire(52, "最新")'],
+  ['btnAcquire(52, "quality")', 'btnAcquire(52, "品质")'],
+  ['btnAcquire(150, "Reset all-time stats")', 'btnAcquire(150, "重置累计统计")'],
+  ['"Refresh: Live"', '"刷新: 实时"'],
+
+  // World Tab (Image 5)
+  [
+    `local intro = { section = "Watches",\n      { note = { text = "Expansion, season and zone watches. Each row can glow the screen edges in its own "\n          .. "color, announce on screen, and play a sound. Rows are grouped by the content they belong to.",\n          color = "textMuted" } },\n    }`,
+    `local intro = { section = "世界追踪事件",\n      { note = { text = "资料片、赛季及特殊区域钓鱼事件追踪。触发时支持全屏光晕告警、屏幕公告以及音频提示。事件按所属资料片内容分组归类。",\n          color = "textMuted" } },\n    }`
+  ],
+  ['{ label = "Patiently Rewarded"', '{ label = "成就：沉着有报 (Patiently Rewarded)"'],
+  ['Theme.MakeButton(pWo, 64, "Test"', 'Theme.MakeButton(pWo, 64, "测试"'],
+
+  // Sections & Checkboxes on Settings page
   ['{ section = "Interface options"', '{ section = "操作界面设置"'],
   ['{ section = "Fishing behavior"', '{ section = "钓鱼行为设置"'],
   ['{ section = "Pet (this character)"', '{ section = "宠物协同 (当前角色)"'],
-
-  // Checkboxes
   ['"Two-button mode (separate cast & loot)"', '"双键模式 (抛竿与拾取分离)"'],
   ['"Enable controller (gamepad) support"', '"启用手柄控制器支持"'],
   ['"Use mouse (double-click)"', '"启用鼠标右键双击钓鱼"'],
@@ -215,6 +293,8 @@ export const SBF_WIDGETS_REPLACEMENTS = [
   ['"click a button..."', '"请点击鼠标按键..."'],
   ['return "Set key"', 'return "设置按键"'],
   ['or "Set key"', 'or "设置按键"'],
+  ['return allowNone and "(none)" or "Set button"', 'return allowNone and "(无)" or "设置按键"'],
+  ['or "Set button"', 'or "设置按键"'],
   ['local GEAR_LABEL = { equipGear = "Equip profile gear", restoreGear = "Restore normal gear" }',
    'local GEAR_LABEL = { equipGear = "换上钓鱼配装", restoreGear = "恢复常规装备" }'],
   ['slotId == "equipGear" and "Equip profile gear" or "Restore normal gear"',
@@ -355,10 +435,34 @@ end
     zip.file('SBF/OptionsWidgets.lua', widText);
   }
 
-  // 6. Update Core.lua and SBF.toc
+  // 6. Patch Core.lua for Skill Book expansions and label
   const coreFile = zip.file('SBF/Core.lua');
   if (coreFile) {
     let coreText = await coreFile.async('string');
+    coreText = coreText
+      .replace(
+        `SBF.SKILLBOOK_ORDER = {
+  { "classic",      "Classic" },        { "outland",     "Outland" },
+  { "northrend",    "Northrend" },      { "cataclysm",   "Cataclysm" },
+  { "pandaria",     "Pandaria" },       { "draenor",     "Draenor" },
+  { "legion",       "Legion" },         { "bfa",         "Battle for Azeroth" },
+  { "shadowlands",  "Shadowlands" },    { "dragonflight","Dragonflight" },
+  { "warwithin",    "The War Within" }, { "midnight",    "Midnight" },
+}`,
+        `SBF.SKILLBOOK_ORDER = {
+  { "classic",      "经典旧世" },        { "outland",     "外域" },
+  { "northrend",    "诺森德" },          { "cataclysm",   "大地的裂变" },
+  { "pandaria",     "潘达利亚" },        { "draenor",     "德拉诺" },
+  { "legion",       "军团再临" },        { "bfa",         "争霸艾泽拉斯" },
+  { "shadowlands",  "暗影国度" },        { "dragonflight","巨龙时代" },
+  { "warwithin",    "地心之战" },        { "midnight",    "至暗之夜" },
+}`
+      )
+      .replace(
+        `return { { label = "Fishing", line = line, level = l and l.level, max = l and l.max, has = l ~= nil, current = true } }`,
+        `return { { label = "钓鱼技能", line = line, level = l and l.level, max = l and l.max, has = l ~= nil, current = true } }`
+      );
+
     const injection = `
 -- [zhCN Localization Inject]
 _G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
