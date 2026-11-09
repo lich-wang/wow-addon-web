@@ -1,0 +1,49 @@
+name: Auto Sync Upstream & Release Addons
+
+on:
+  schedule:
+    # 每天 00:00 和 12:00 UTC (北京时间 08:00 和 20:00) 自动检查上游
+    - cron: '0 0,12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Fetch Latest Upstream Addons & Apply Localizations
+        run: node scripts/fetch-addons.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and Push if Updated
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if public/addons or scripts/locales has changes
+          git add public/addons scripts/locales
+          if git diff --staged --quiet; then
+            echo "No upstream addon updates detected."
+          else
+            echo "Updates detected! Committing and pushing..."
+            git commit -m "chore(auto-sync): update addons from upstream with zhCN patches"
+            git push origin main
+          fi

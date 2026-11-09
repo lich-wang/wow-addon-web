@@ -3,7 +3,6 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import { patchSBF } from './locales/sbf.js';
 import { patchIceHUDZhCN } from './locales/icehud.js';
-import { generateBTZhCN } from './locales/blackthornes.js';
 import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
 import { patchBtWQuests, patchQuestie, patchQuestieDB } from './locales/quests.js';
@@ -37,8 +36,31 @@ async function downloadBuffer(url, fallbackPath) {
   }
 }
 
+async function getLatestGitHubRelease(repo, assetMatch) {
+  try {
+    const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
+    const res = await fetch(apiUrl, { headers: HEADERS });
+    if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
+    const data = await res.json();
+    const tag = data.tag_name;
+    const asset = data.assets?.find(a => assetMatch(a.name));
+    if (asset?.browser_download_url) {
+      return { tag, url: asset.browser_download_url };
+    }
+  } catch (err) {
+    console.warn(`[Warn] Failed to query latest release for ${repo}: ${err.message}`);
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 1. Single-Button Fishing (SBF)
+// ---------------------------------------------------------------------------
 async function processSBF() {
-  const url = 'https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.05.1/SBF-2026.11.05.1.zip';
+  let url = 'https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.05.1/SBF-2026.11.05.1.zip';
+  const latest = await getLatestGitHubRelease('Goblin-Engineering-Company/SBF', name => name.endsWith('.zip'));
+  if (latest?.url) url = latest.url;
+
   const outPath = path.join(OUTPUT_DIR, 'sbf.zip');
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
@@ -63,16 +85,80 @@ async function processSBF() {
   console.log(`[✓] sbf.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 2. Blackthornes Tradeskills (BT)
+// ---------------------------------------------------------------------------
 async function processBlackthornes() {
-  const url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.20.1/Blackthornes_TS-v1.20.1-forever.zip';
+  let url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.21.0/Blackthornes_TS-v1.21.0-forever.zip';
+  let tag = 'v1.21.0';
+  const latest = await getLatestGitHubRelease('Blackthornes/Blackthornes_Tradeskills', name => name.endsWith('-forever.zip') || name.endsWith('.zip'));
+  if (latest?.url) {
+    url = latest.url;
+    tag = latest.tag;
+  }
+
   const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
-  console.log('Injecting clean 100% complete zhCN for Blackthornes Tradeskills v1.20.1...');
-  const btZhCNPath = path.resolve('scripts/locales/bt_zhCN.lua');
-  if (fs.existsSync(btZhCNPath)) {
-    zip.file('Blackthornes_TS/Locale/zhCN.lua', fs.readFileSync(btZhCNPath, 'utf-8'));
+  console.log(`Injecting clean 100% complete zhCN for Blackthornes Tradeskills ${tag}...`);
+
+  // Targeted fixes dictionary (ensuring PR changes are always applied even if upstream has new version)
+  const BT_TARGETED_FIXES = {
+    "Made for": "制造成本",
+    "Train Artisan %s": "学习大师级%s",
+    "Learn Artisan %s": "学习大师级%s",
+    "Start with %s in %s. Catch the four rare fish he asks for. Then he teaches you Artisan %s.": "先去%2$s找%1$s。钓到他要的四条稀有鱼。然后他会教你大师级%3$s。",
+    "%s %s: %s%s. %s.": "%s %s：%s%s。%s。",
+    "Deals: Craftsman's Writs": "划算货：工匠文书",
+    "Craftsman's Writ: %s": "工匠文书：%s",
+    "Craftsman's Writs": "工匠文书",
+    "Deals: Merchant's Favor": "划算货：商人的青睐",
+    "Merchant's Favor": "商人的青睐",
+    "Waylaid Crate: %s": "遭劫的货物：%s",
+    "WAYLAID CRATE": "遭劫的货物",
+    "All bought. Fill the crates and take them to the Supply Officer.": "都买好了。装满箱子，交给军需官。",
+    // Enchanting material fallback names
+    "Strange Dust": "奇异之尘",
+    "Soul Dust": "灵魂之尘",
+    "Vision Dust": "幻象之尘",
+    "Dream Dust": "梦境之尘",
+    "Illusion Dust": "幻影之尘",
+    "Lesser Magic Essence": "次级魔法精华",
+    "Greater Magic Essence": "强效魔法精华",
+    "Lesser Astral Essence": "次级星界精华",
+    "Greater Astral Essence": "强效星界精华",
+    "Lesser Mystic Essence": "次级秘法精华",
+    "Greater Mystic Essence": "强效秘法精华",
+    "Lesser Nether Essence": "次级虚空精华",
+    "Greater Nether Essence": "强效虚空精华",
+    "Lesser Eternal Essence": "次级不灭精华",
+    "Greater Eternal Essence": "强效不灭精华",
+    "Small Glimmering Shard": "小块微光碎片",
+    "Large Glimmering Shard": "大块微光碎片",
+    "Small Glowing Shard": "小块闪光碎片",
+    "Large Glowing Shard": "大块闪光碎片",
+    "Small Radiant Shard": "小块强光碎片",
+    "Large Radiant Shard": "大块强光碎片",
+    "Small Brilliant Shard": "小块魔光碎片",
+    "Large Brilliant Shard": "大块魔光碎片",
+    "Nexus Crystal": "连结水晶",
+  };
+
+  const zhFile = zip.file('Blackthornes_TS/Locale/zhCN.lua');
+  if (zhFile) {
+    let zh = await zhFile.async('string');
+    for (const [enKey, zhVal] of Object.entries(BT_TARGETED_FIXES)) {
+      const pattern = new RegExp(`L\\["${enKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\]\\s*=\\s*"([^"\\\\]|\\\\.)*"`);
+      if (pattern.test(zh)) {
+        zh = zh.replace(pattern, `L[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`);
+      } else {
+        zh += `\nL[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`;
+      }
+    }
+    zip.file('Blackthornes_TS/Locale/zhCN.lua', zh);
+    // Keep scripts/locales/bt_zhCN.lua in sync
+    fs.writeFileSync(path.resolve('scripts/locales/bt_zhCN.lua'), zh, 'utf-8');
   }
 
   // Localize enchanting material names in Logic/Disenchant.lua
@@ -86,7 +172,7 @@ async function processBlackthornes() {
       )
       .replace(
         /function Disenchant:MaterialName\(itemID\)\r?\n\s*return MATERIAL_NAME\[itemID\]\r?\nend/,
-        'function Disenchant:MaterialName(itemID)\n    if not MATERIAL_NAME[itemID] then return nil end\n    return self:ItemName(itemID)\nend'
+        'function Disenchant:MaterialName(itemID)\n    return MATERIAL_NAME[itemID] and self:ItemName(itemID) or nil\nend'
       );
     zip.file('Blackthornes_TS/Logic/Disenchant.lua', deText);
   }
@@ -165,8 +251,14 @@ async function processBlackthornes() {
   console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 3. IceHUD
+// ---------------------------------------------------------------------------
 async function processIceHUD() {
-  const url = 'https://github.com/parnic/ice-hud/releases/download/v1.17.28/IceHUD-v1.17.28.zip';
+  let url = 'https://github.com/parnic/ice-hud/releases/download/v1.17.28/IceHUD-v1.17.28.zip';
+  const latest = await getLatestGitHubRelease('parnic/ice-hud', name => name.endsWith('.zip') && !name.includes('nolib'));
+  if (latest?.url) url = latest.url;
+
   const outPath = path.join(OUTPUT_DIR, 'icehud.zip');
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
@@ -195,6 +287,9 @@ async function processIceHUD() {
   console.log(`[✓] icehud.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 4. DungeonsForever
+// ---------------------------------------------------------------------------
 async function processDungeonsForever() {
   const url = 'https://edge.forgecdn.net/files/9506/425/DungeonsForever2.1.31.zip';
   const outPath = path.join(OUTPUT_DIR, 'dungeonsforever.zip');
@@ -203,6 +298,9 @@ async function processDungeonsForever() {
   console.log(`[✓] dungeonsforever.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 5. Bagnon
+// ---------------------------------------------------------------------------
 async function processBagnon() {
   const url = 'https://edge.forgecdn.net/files/9456/775/Bagnon-12.1.8.zip';
   const outPath = path.join(OUTPUT_DIR, 'bagnon.zip');
@@ -217,6 +315,9 @@ async function processBagnon() {
   console.log(`[✓] bagnon.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 6. Lueur
+// ---------------------------------------------------------------------------
 async function processLueur() {
   const url = 'https://edge.forgecdn.net/files/9281/32/Lueur-1.4.0.zip';
   const outPath = path.join(OUTPUT_DIR, 'lueur.zip');
@@ -231,19 +332,23 @@ async function processLueur() {
   console.log(`[✓] lueur.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 7. Questie Forever
+// ---------------------------------------------------------------------------
 async function processQuestieForever() {
   const coreUrl = 'https://edge.forgecdn.net/files/9502/146/Questie-v12.6.4.zip';
-  const dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
+  let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
+  const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
+  if (latestDB?.url) dbUrl = latestDB.url;
+
   const outPath = path.join(OUTPUT_DIR, 'questie-forever.zip');
 
-  console.log('Fetching Questie Core (v12.6.4) + QuestieDB Forever (v1.0.13)...');
+  console.log('Fetching Questie Core + QuestieDB Forever...');
   const coreBuf = await downloadBuffer(coreUrl);
   const dbBuf = await downloadBuffer(dbUrl);
 
   const zip = await JSZip.loadAsync(coreBuf);
   await patchQuestie(zip);
-
-  // Merge QuestieDB into the same zip archive so 1-click install sets up both Questie and QuestieDB
   await zip.loadAsync(dbBuf);
   await patchQuestieDB(zip);
 
@@ -252,6 +357,9 @@ async function processQuestieForever() {
   console.log(`[✓] questie-forever.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 8. BtWQuests
+// ---------------------------------------------------------------------------
 async function processBtWQuests() {
   const url = 'https://edge.forgecdn.net/files/9498/296/BtWQuests-v2.69.1-forever.zip';
   const outPath = path.join(OUTPUT_DIR, 'btwquests.zip');
@@ -266,8 +374,14 @@ async function processBtWQuests() {
   console.log(`[✓] btwquests.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 9. Forever Mouse Tooltip
+// ---------------------------------------------------------------------------
 async function processForeverMouseTooltip() {
-  const url = 'https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip';
+  let url = 'https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip';
+  const latest = await getLatestGitHubRelease('Ninjaskurk/forever-mouse-tooltip', name => name.endsWith('.zip'));
+  if (latest?.url) url = latest.url;
+
   const outPath = path.join(OUTPUT_DIR, 'forever-mouse-tooltip.zip');
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
