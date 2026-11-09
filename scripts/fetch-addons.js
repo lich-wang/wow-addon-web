@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import JSZip from 'jszip';
+import { patchSBF } from './locales/sbf.js';
+import { patchIceHUDZhCN } from './locales/icehud.js';
+import { generateBTZhCN } from './locales/blackthornes.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -9,210 +12,115 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const HEADERS = {
-  'User-Agent': 'WoW-Addon-Manager-Builder/1.0',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
 };
 
-const ADDONS = [
-  {
-    id: 'questie',
-    repo: 'Questie/Questie',
-    isQuestieBundle: true,
-  },
-  {
-    id: 'threatclassic2',
-    repo: 'dfherr/ThreatClassic2',
-  },
-  {
-    id: 'classiccastbars',
-    repo: 'wardz/ClassicCastbars',
-  },
-  {
-    id: 'weaponswingtimer',
-    repo: 'LeftHandedGlove/WeaponSwingTimerAddon',
-    archiveBranch: 'master',
-    targetFolder: 'WeaponSwingTimer',
-  },
-  {
-    id: 'whatstraining',
-    repo: 'fusionpit/WhatsTraining',
-  },
-  {
-    id: 'atlasloot',
-    repo: 'Hoizame/AtlasLootClassic',
-  },
-  {
-    id: 'weakauras',
-    repo: 'WeakAuras/WeakAuras2',
-  },
-  {
-    id: 'details',
-    repo: 'Tercioo/Details-Damage-Meter',
-    archiveBranch: 'master',
-    targetFolder: 'Details',
-  },
-  {
-    id: 'dbm',
-    repo: 'DeadlyBossMods/DeadlyBossMods',
-  },
-  {
-    id: 'leatrix-plus',
-    repo: 'Sattva-108/Leatrix_Plus',
-    archiveBranch: 'master',
-    targetFolder: 'Leatrix_Plus',
-  },
-  {
-    id: 'bartender4',
-    repo: 'Nevcairiel/Bartender4',
-  },
-  {
-    id: 'omnicc',
-    repo: 'tullamods/OmniCC',
-  },
-  {
-    id: 'bagnon',
-    repo: 'Jaliborc/Bagnon',
-    archiveBranch: 'master',
-    targetFolder: 'Bagnon',
-  },
-  {
-    id: 'auctionator',
-    repo: 'Wetxius/Auctionator',
-    archiveBranch: 'master',
-    targetFolder: 'Auctionator',
-  },
-  {
-    id: 'plater',
-    repo: 'Tercioo/Plater-Nameplates',
-    archiveBranch: 'master',
-    targetFolder: 'Plater',
-  },
-  {
-    id: 'mdt',
-    repo: 'Nnoggie/MythicDungeonTools',
-  },
-  {
-    id: 'simc',
-    repo: 'simulationcraft/simc-addon',
-  },
-];
-
-async function getLatestReleaseZip(repo) {
-  const url = `https://api.github.com/repos/${repo}/releases?per_page=1`;
-  const res = await fetch(url, { headers: HEADERS });
-  if (!res.ok) throw new Error(`GitHub API error ${res.status}: ${await res.text()}`);
-  const releases = await res.json();
-  if (!releases.length) throw new Error(`No releases found for ${repo}`);
-  const release = releases[0];
-  const zipAsset = release.assets.find((a) => a.name.toLowerCase().endsWith('.zip'));
-  if (!zipAsset) throw new Error(`No zip asset in release ${release.tag_name} for ${repo}`);
-  return {
-    url: zipAsset.browser_download_url,
-    tag: release.tag_name,
-    name: zipAsset.name,
-    size: zipAsset.size,
-  };
-}
-
 async function downloadBuffer(url) {
-  console.log(`  Downloading: ${url}`);
-  const res = await fetch(url, { headers: HEADERS, redirect: 'follow' });
-  if (!res.ok) throw new Error(`Download failed ${res.status} for ${url}`);
+  console.log(`Downloading: ${url}...`);
+  const res = await fetch(url, { headers: HEADERS });
+  if (!res.ok) {
+    throw new Error(`Failed to download ${url}: HTTP ${res.status}`);
+  }
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function processAddon(addon) {
-  const outputFile = path.join(OUTPUT_DIR, `${addon.id}.zip`);
-  console.log(`\n[+] Processing ${addon.id} (${addon.repo})...`);
+async function processSBF() {
+  const url = 'https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.05.1/SBF-2026.11.05.1.zip';
+  const buf = await downloadBuffer(url);
+  const zip = await JSZip.loadAsync(buf);
 
-  try {
-    let zipBuffer;
-    if (addon.archiveBranch) {
-      const archiveUrl = `https://github.com/${addon.repo}/archive/refs/heads/${addon.archiveBranch}.zip`;
-      const rawZip = await downloadBuffer(archiveUrl);
-      
-      // Repack archive so folder name matches targetFolder
-      const zip = await JSZip.loadAsync(rawZip);
-      const newZip = new JSZip();
-      
-      // Find top folder prefix (e.g. WeaponSwingTimerAddon-master/)
-      const rootFolder = Object.keys(zip.files)[0].split('/')[0];
-      for (const [relativePath, file] of Object.entries(zip.files)) {
-        if (file.dir) continue;
-        const subPath = relativePath.startsWith(rootFolder + '/') 
-          ? relativePath.substring(rootFolder.length + 1)
-          : relativePath;
-        const content = await file.async('nodebuffer');
-        newZip.file(`${addon.targetFolder}/${subPath}`, content);
-      }
-      zipBuffer = await newZip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-    } else {
-      const releaseInfo = await getLatestReleaseZip(addon.repo);
-      const rawZip = await downloadBuffer(releaseInfo.url);
+  console.log('Injecting zhCN localization for Single-Button Fishing...');
+  await patchSBF(zip);
 
-      if (addon.isQuestieBundle) {
-        console.log(`  Optimizing Questie for Forever/Classic to stay within Cloudflare 25MB limit...`);
-        const zip = await JSZip.loadAsync(rawZip);
-        const newZip = new JSZip();
-        
-        for (const [relativePath, file] of Object.entries(zip.files)) {
-          // Exclude huge Cata, Mists, Wrath, TBC databases not needed for Forever (level 60)
-          if (
-            relativePath.includes('Mists') ||
-            relativePath.includes('Cata') ||
-            relativePath.includes('Wrath') ||
-            relativePath.includes('TBC') ||
-            relativePath.includes('Camelot') ||
-            relativePath.includes('cataItemDrops') ||
-            relativePath.includes('mopItemDrops') ||
-            relativePath.includes('wotlkItemDrops') ||
-            relativePath.includes('tbcItemDrops') ||
-            relativePath.includes('factionTemplateMoP') ||
-            relativePath.includes('factionTemplateCata') ||
-            relativePath.includes('factionTemplateWotlk') ||
-            relativePath.includes('factionTemplateTBC')
-          ) {
-            continue;
-          }
-          if (file.dir) {
-            newZip.folder(relativePath);
-          } else {
-            const content = await file.async('nodebuffer');
-            newZip.file(relativePath, content);
-          }
-        }
-        zipBuffer = await newZip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-      } else {
-        zipBuffer = rawZip;
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  const outPath = path.join(OUTPUT_DIR, 'sbf.zip');
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] sbf.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
+async function processBlackthornes() {
+  const url = 'https://edge.forgecdn.net/files/9228/138/Blackthornes_TS-v0.64.0-forever.zip';
+  const buf = await downloadBuffer(url);
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log('Generating zhCN localization for Blackthornes Tradeskills...');
+  const deDE = await zip.file('Blackthornes_TS/Locale/deDE.lua').async('string');
+  const lines = deDE.split('\n');
+  const entries = [];
+  for (const line of lines) {
+    const m = line.match(/^L\[(".*?")\]\s*=\s*(".*?")/);
+    if (m) {
+      try {
+        const key = JSON.parse(m[1]);
+        const deVal = JSON.parse(m[2]);
+        entries.push({ key, deVal });
+      } catch (e) {
+        // pass
       }
     }
-
-    fs.writeFileSync(outputFile, zipBuffer);
-    const sizeMb = (zipBuffer.length / (1024 * 1024)).toFixed(2);
-    console.log(`  [OK] Saved ${addon.id}.zip (${sizeMb} MB)`);
-    return { id: addon.id, size: sizeMb, success: true };
-  } catch (err) {
-    console.error(`  [FAIL] Failed to process ${addon.id}:`, err.message);
-    return { id: addon.id, error: err.message, success: false };
   }
+
+  const zhCNLua = generateBTZhCN(entries);
+  zip.file('Blackthornes_TS/Locale/zhCN.lua', zhCNLua);
+
+  const tocFile = zip.file('Blackthornes_TS/Blackthornes_TS.toc');
+  if (tocFile) {
+    let toc = await tocFile.async('string');
+    if (!toc.includes('Locale\\zhCN.lua')) {
+      toc = toc
+        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r Blackthornes Tradeskills (商业制造与拍卖)')
+        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 专为无限服打造的专业制造与拍卖行全能管理插件，实时计算配方利润、排队制造与防亏损上架。')
+        .replace('Locale\\deDE.lua', 'Locale\\deDE.lua\nLocale\\zhCN.lua');
+      zip.file('Blackthornes_TS/Blackthornes_TS.toc', toc);
+    }
+  }
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB) with ${entries.length} localized strings`);
+}
+
+async function processIceHUD() {
+  const url = 'https://github.com/parnic/ice-hud/releases/download/v1.17.28/IceHUD-v1.17.28.zip';
+  const buf = await downloadBuffer(url);
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log('Completing zhCN localization for IceHUD...');
+  const zhCNFile = zip.file('IceHUD/loc/zhCN.lua');
+  if (zhCNFile) {
+    const origZhCN = await zhCNFile.async('string');
+    const patchedZhCN = patchIceHUDZhCN(origZhCN);
+    zip.file('IceHUD/loc/zhCN.lua', patchedZhCN);
+  }
+
+  const tocFile = zip.file('IceHUD/IceHUD.toc');
+  if (tocFile) {
+    let toc = await tocFile.async('string');
+    if (!toc.includes('Title-zhCN')) {
+      toc = toc
+        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[界面]|r IceHUD (弧形战斗抬头显示)')
+        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 高度可定制的弧形HUD平视框架，将生命、法力、能量、施法条居中直观展现。');
+      zip.file('IceHUD/IceHUD.toc', toc);
+    }
+  }
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  const outPath = path.join(OUTPUT_DIR, 'icehud.zip');
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] icehud.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function main() {
-  console.log(`Starting addon fetch and bundle into ${OUTPUT_DIR}...`);
-  const results = [];
-  for (const addon of ADDONS) {
-    const res = await processAddon(addon);
-    results.push(res);
-  }
-
-  console.log('\n================ Summary ================');
-  for (const r of results) {
-    if (r.success) {
-      console.log(`  ✓ ${r.id.padEnd(20)} : ${r.size} MB`);
-    } else {
-      console.log(`  ✗ ${r.id.padEnd(20)} : ${r.error}`);
-    }
-  }
+  console.log('=== Fetching & Bundling Curated Addons (SBF, Blackthornes, IceHUD) ===');
+  await processSBF();
+  await processBlackthornes();
+  await processIceHUD();
+  console.log('=== All 3 Addons successfully bundled & localized into public/addons/ ===');
 }
 
-main();
+main().catch(err => {
+  console.error('Build addons failed:', err);
+  process.exit(1);
+});
