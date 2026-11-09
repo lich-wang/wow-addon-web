@@ -36,14 +36,17 @@ jobs:
         shell: pwsh
         run: |
           mkdir dist-bin
+          Copy-Item agent/target/release/wow-agent.exe dist-bin/wow-agent.exe
           Copy-Item agent/target/release/wow-agent.exe dist-bin/wow-addon-agent-windows-x64.exe
-          Compress-Archive -Path dist-bin/wow-addon-agent-windows-x64.exe -DestinationPath wow-addon-agent-windows-x64.zip
+          Compress-Archive -Path dist-bin/wow-agent.exe -DestinationPath dist-bin/wow-addon-agent-windows-x64.zip
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: wow-agent-windows
-          path: wow-addon-agent-windows-x64.zip
+          path: |
+            dist-bin/wow-agent.exe
+            dist-bin/wow-addon-agent-windows-x64.zip
 
   build-macos:
     name: Build macOS Universal Binary
@@ -123,9 +126,10 @@ jobs:
             - **极速同步** 网页端随时更新，打开助手即可自动加载最新云端功能，无需反复重装
 
             ### 下载版本：
-            - 🪟 **Windows 用户**: 下载 `wow-addon-agent-windows-x64.zip`，解压后双击运行即可。
+            - 🪟 **Windows 用户**: 下载 `wow-agent.exe`（单文件绿色免安装版，直接双击运行，无须解压或安装）。
             - 🍎 **Mac 用户**: 下载 `wow-addon-agent-macos-universal.zip`，解压后双击运行（通用兼容 M1/M2/M3/M4 及 Intel）。
           files: |
+            release-assets/wow-agent.exe
             release-assets/wow-addon-agent-windows-x64.zip
             release-assets/wow-addon-agent-macos-universal.zip
         env:

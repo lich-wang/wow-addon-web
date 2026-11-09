@@ -248,7 +248,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
                       className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 text-xs font-semibold transition-all hover:scale-102 cursor-pointer shadow"
                     >
                       <Download className="w-3.5 h-3.5 text-amber-400" />
-                      <span>🪟 Windows 客户端下载 (.exe / .msi)</span>
+                      <span>🪟 Windows 客户端 (单个 .exe 绿色免安装)</span>
                     </a>
 
                     <a
@@ -273,7 +273,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
                   </div>
 
                   <p className="text-[11px] text-slate-500 mt-2.5">
-                    💡 提示：桌面端内置云端直连架构，打开时自动加载最新 Web 界面与功能，随云端同步更新，无需频繁重新安装。
+                    💡 提示：单个可执行 .exe 绿色免安装，下载后双击直接运行！内置云端直连架构，界面与功能实时云端同步，无需反复重装。
                   </p>
                 </div>
               </div>

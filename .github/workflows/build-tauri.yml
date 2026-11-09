@@ -54,7 +54,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist-bundles
-          find src-tauri/target/release/bundle -type f \( -name "*.exe" -o -name "*.msi" \) -exec cp {} dist-bundles/ \;
+          # Copy standalone executable directly (单文件绿色免安装版，双击直接运行)
+          find src-tauri/target/release -maxdepth 1 -type f -name "*.exe" -exec cp {} dist-bundles/WoW-Addon-Manager.exe \;
+          # Also package into zip for users who prefer zip download
+          powershell -Command "Compress-Archive -Path dist-bundles/WoW-Addon-Manager.exe -DestinationPath dist-bundles/WoW-Addon-Manager-windows-x64.zip"
           ls -la dist-bundles/
 
       - name: Gather macOS bundles
@@ -128,9 +131,9 @@ jobs:
             - ⚡ **无限服 (WoW Forever) 优先适配**：优先展示与识别无限服目录及专属插件。
             - 🟢 **游戏运行状态实时感知**：智能感知正在运行的魔兽版本，无缝切换。
 
-            ### 📦 下载安装
-            - **Windows**: 下载 `.exe` (一键安装) 或 `.msi`
-            - **macOS**: 下载 `.dmg` (通用版，原生支持 M1/M2/M3/M4 及 Intel Mac)
+            ### 📦 下载运行
+            - **Windows**: 下载 `WoW-Addon-Manager.exe`（单文件绿色免安装版，直接双击运行，无须安装器）
+            - **macOS**: 下载 `.dmg`（通用版，原生支持 M1/M2/M3/M4 及 Intel Mac）
           files: release-assets/*
           draft: false
           prerelease: false
