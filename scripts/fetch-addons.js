@@ -66,6 +66,15 @@ async function processBlackthornes() {
   const zhCNLua = generateBTZhCN(entries);
   zip.file('Blackthornes_TS/Locale/zhCN.lua', zhCNLua);
 
+  const themeFile = zip.file('Blackthornes_TS/UI/Theme.lua');
+  if (themeFile) {
+    let themeText = await themeFile.async('string');
+    if (themeText.includes('[[Fonts\\FRIZQT__.TTF]]')) {
+      themeText = themeText.replace('[[Fonts\\FRIZQT__.TTF]]', '(STANDARD_TEXT_FONT or [[Fonts\\ARKai_T.TTF]])');
+      zip.file('Blackthornes_TS/UI/Theme.lua', themeText);
+    }
+  }
+
   const tocFile = zip.file('Blackthornes_TS/Blackthornes_TS.toc');
   if (tocFile) {
     let toc = await tocFile.async('string');

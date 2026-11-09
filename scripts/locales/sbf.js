@@ -1,5 +1,5 @@
 /**
- * Single-Button Fishing zhCN Localization Generator & Patcher
+ * Single-Button Fishing zhCN Localization Generator & Comprehensive Patcher
  */
 
 export const SBF_HELP_ZH = {
@@ -99,135 +99,203 @@ export const SBF_HELP_ZH = {
     title: "钓鱼专注音频 (放大起竿水花声)",
     body: "钓鱼时自动调大环境音效并放大鱼儿咬钩溅水声，即使切到后台也能清晰听见起竿时机！"
   },
-  "set.showUnownedToys": {
-    title: "显示未拥有的钓鱼玩具",
-    body: "在玩具栏中列出所有钓鱼相关玩具（包括未收集的）。"
+  "set.focusAudioMaster": {
+    title: "主音量",
+    body: "钓鱼时使用的主音量百分比。"
   },
-  "set.showUnownedItems": {
-    title: "显示背包中未持有的鱼饵物品",
-    body: "在备选列表中展示所有支持的增益鱼饵与道具。"
+  "set.focusAudioSFX": {
+    title: "音效音量",
+    body: "钓鱼时的音效音量（直接影响起竿溅水咬钩声音）。"
   },
-  "set.showWarbandItems": {
-    title: "显示战团共享物品",
-    body: "包含战团银行中可用的钓鱼物资。"
+  "set.focusAudioMusic": {
+    title: "背景音乐音量",
+    body: "钓鱼时的背景音乐音量。"
   },
-  "set.showHiddenItems": {
-    title: "显示已隐藏物品",
-    body: "在物品选择器中显示先前被标记为隐藏的条目。"
+  "set.focusAudioAmbience": {
+    title: "环境音效音量",
+    body: "钓鱼时的自然环境氛围音量。"
   },
-  "set.hideMinimap": {
-    title: "隐藏小地图图标",
-    body: "在小地图周围隐藏 SBF 快捷入口图标。"
-  },
-  "set.castSound": {
-    title: "抛竿提示音",
-    body: "成功抛出鱼线时播放提示音效。"
-  },
-  "set.castFailSound": {
-    title: "抛竿失败提示音",
-    body: "抛竿遇到障碍或无法下竿时播放警告音效。"
-  },
-  "set.bobberReach": {
-    title: "浮漂交互距离判定",
-    body: "监测浮漂与角色的交互范围，超出距离自动报警或重抛。"
-  },
-  "set.reachCamera": {
-    title: "使用专用钓鱼视距镜头",
-    body: "进入钓鱼状态后自动拉近或微调镜头视角，便于观察浮漂。"
-  },
-  "set.reachViewSlot": {
-    title: "视距镜头保存栏位",
-    body: "指定绑定的游戏内置镜头视角编号。"
-  },
-  "set.reachSaveCamera": {
-    title: "保存当前镜头为钓鱼视角",
-    body: "将当前的镜头朝向和视距保存为钓鱼默认视角。"
-  },
-  "set.reachRecast": {
-    title: "超出范围时自动重新抛竿",
-    body: "当浮漂落点距离角色太远超出拾取范围时，自动取消并立即重抛。"
-  },
-  "set.reachSound": {
-    title: "超距提示音",
-    body: "落点超出交互范围时播放警告音。"
-  },
-  "set.noFishSound": {
-    title: "未咬钩提示音",
-    body: "直到倒计时结束仍无鱼上钩时播放提示音。"
-  },
-  "set.expiredSound": {
-    title: "抛竿超时提示音",
-    body: "浮漂倒计时结束超时提示。"
-  },
-  "set.nothingSound": {
-    title: "空杆收线提示音",
-    body: "提竿时空空如也未获得物品时的音效。"
-  },
-  "set.prSound": {
-    title: "耐心收获奖励音效",
-    body: "长时间连续垂钓获得稀有收获时的专属庆祝音效！"
+  "set.focusAudioDialog": {
+    title: "对话音量",
+    body: "钓鱼时的角色语音与NPC对话音量。"
   },
   "set.bgAlpha": {
-    title: "面板背景透明度",
-    body: "调整 SBF 设置窗口的半透明程度。"
+    title: "界面背景透明度",
+    body: "调整 SBF 主界面的背景底色透明度。"
   },
-  "set.debug": {
-    title: "调试日志输出",
-    body: "在聊天窗口输出按键判定与状态转换详细诊断日志。"
-  },
-  "set.footing": {
-    title: "落脚点与站位诊断面板",
+  "set.waterDepth": {
+    title: "水深判定提示",
     body: "显示当前水体表面与地面高度碰撞检测。"
   }
 };
 
-export function patchSBF(zip) {
-  // 1. Create SBF/Locale/zhCN.lua
+const SBF_OPTIONS_REPLACEMENTS = [
+  // Tabs
+  ['{ key = "buttons",  label = "Profile" }', '{ key = "buttons",  label = "配置方案" }'],
+  ['{ key = "behavior", label = "Settings" }', '{ key = "behavior", label = "功能设置" }'],
+  ['{ key = "keys",     label = "Keybinds" }', '{ key = "keys",     label = "按键绑定" }'],
+  ['{ key = "skillbook", label = "Skill Book" }', '{ key = "skillbook", label = "钓鱼技能" }'],
+  ['{ key = "log",      label = "Log" }', '{ key = "log",      label = "钓鱼日志" }'],
+  ['{ key = "stats",    label = "Stats" }', '{ key = "stats",    label = "钓鱼统计" }'],
+  ['{ key = "world",    label = "World" }', '{ key = "world",    label = "世界追踪" }'],
+  ['{ key = "about",    label = "About" }', '{ key = "about",    label = "关于插件" }'],
+
+  // Buttons
+  ['revertBtn:SetText("Revert")', 'revertBtn:SetText("还原")'],
+  ['saveBtn:SetText("Save")', 'saveBtn:SetText("保存")'],
+  ['addBtn:SetText("Add")', 'addBtn:SetText("新建")'],
+  ['dupBtn:SetText("Duplicate")', 'dupBtn:SetText("复制")'],
+  ['remBtn:SetText("Remove")', 'remBtn:SetText("删除")'],
+  ['indivLbl:SetText("Individual")', 'indivLbl:SetText("角色独立")'],
+  ['defBtn:SetText("Set as default")', 'defBtn:SetText("设为默认")'],
+  ['emBtn:SetText("Equipment Manager")', 'emBtn:SetText("装备管理器")'],
+  ['unhideBtn:SetText("Restore all hidden")', 'unhideBtn:SetText("恢复所有隐藏物品")'],
+  ['reset:SetText("Reset to default")', 'reset:SetText("恢复默认")'],
+  ['doneBtn:SetText("Close")', 'doneBtn:SetText("关闭")'],
+  ['bug:SetText("Report a bug")', 'bug:SetText("反馈问题")'],
+  ['wbtn:SetText("Show welcome screen")', 'wbtn:SetText("显示欢迎引导")'],
+  ['camSave = Theme.MakeButton(pBe, 150, "Save current camera"', 'camSave = Theme.MakeButton(pBe, 150, "保存当前视角"'],
+  ['Theme.MakeButton(pBe, 130, "Audio settings\\226\\128\\166"', 'Theme.MakeButton(pBe, 130, "音频设置…"'],
+  ['Theme.MakeButton(pBe, 130, "Reset window"', 'Theme.MakeButton(pBe, 130, "重置窗口位置"'],
+
+  // Profile bar labels
+  ['plbl:SetText("Profile:")', 'plbl:SetText("方案:")'],
+  ['nlbl:SetText("Name:")', 'nlbl:SetText("名称:")'],
+  ['blbl:SetText("Bind here:")', 'blbl:SetText("绑定地点:")'],
+  ['glbl:SetText("Gear set:")', 'glbl:SetText("配装方案:")'],
+  ['plbl2:SetText("Fishing pole:")', 'plbl2:SetText("鱼竿栏位:")'],
+  ['charLbl:SetText(Theme.Accent("Character"))', 'charLbl:SetText(Theme.Accent("角色"))'],
+  ['sl:SetText("sort:")', 'sl:SetText("排序:")'],
+
+  // Sections
+  ['{ section = "Interface options"', '{ section = "操作界面设置"'],
+  ['{ section = "Fishing behavior"', '{ section = "钓鱼行为设置"'],
+  ['{ section = "Pet (this character)"', '{ section = "宠物协同 (当前角色)"'],
+
+  // Checkboxes
+  ['"Two-button mode (separate cast & loot)"', '"双键模式 (抛竿与拾取分离)"'],
+  ['"Enable controller (gamepad) support"', '"启用手柄控制器支持"'],
+  ['"Use mouse (double-click)"', '"启用鼠标右键双击钓鱼"'],
+  ['"Sit before each cast"', '"每次甩竿前坐下"'],
+  ['"Warn when there\'s no fishing pole to fish with"', '"未装备鱼竿时发出警告提示"'],
+  ['"Fight instead of looting when combat starts"', '"进入战斗时优先反击而非拾取"'],
+  ['"Shift+click to turn off Cast Fishing"', '"Shift+点击 临时关闭钓鱼动作"'],
+  ['"Auto-dismount to fish  (never while flying)"', '"钓鱼时自动下坐骑 (飞行中除外)"'],
+  ['"Refresh skill on cast"', '"甩竿时刷新钓鱼技能点数"'],
+  ['"Hide interface in combat"', '"进入战斗后自动隐藏界面"'],
+  ['"Fight when my pet is fighting"', '"宠物战斗时自动协同反击"'],
+  ['"Target what my pet is attacking first"', '"优先选中宠物正在攻击的目标"'],
+  ['zgLabel = "Zone buff glow  (screen edges glow while a special fishing buff is on you)"', 'zgLabel = "特殊区域增益发光提示 (拥有特殊钓鱼Buff时光晕高亮)"'],
+
+  // Labeled inputs
+  ['{ note = { text = "click speed:", color = "text" } }', '{ note = { text = "双击判定:", color = "text" } }'],
+  ['{ note = { text = "Cast-fail back-off"', '{ note = { text = "施法失败退避间隔"'],
+  ['{ note = { text = "Idle timeout"', '{ note = { text = "闲置超时时间"'],
+  ['{ note = { text = "(SBF stands down until your next cast)"', '{ note = { text = "(超时后 SBF 待机直至下次抛竿)"'],
+  ['{ note = { text = "Pet stance while fishing"', '{ note = { text = "钓鱼时宠物姿态"'],
+
+  // Sounds
+  ['local SOUND_LABELS = { "Fishing start", "Cast fail", "No fish hooked", "Expired (ran full, no bite)", "Patiently Rewarded" }',
+   'local SOUND_LABELS = { "开始钓鱼甩竿", "抛竿施法失败", "脱钩未钓到鱼", "超时未咬钩", "成就事件触发" }'],
+  ['{ label = "Ready Check ding"', '{ label = "就位确认叮声"'],
+  ['{ label = "Raid warning"', '{ label = "团队警告音"'],
+  ['{ label = "Level up"', '{ label = "角色升级音"'],
+  ['{ label = "Auction open"', '{ label = "打开拍卖行"'],
+  ['{ label = "Map ping"', '{ label = "小地图点击"'],
+  ['{ label = "Quest failed"', '{ label = "任务失败音"'],
+  ['{ label = "Yay"', '{ label = "欢呼声 (Yay)"'],
+  ['{ label = "Custom file (sounds/cast.ogg)"', '{ label = "自定义音频文件"'],
+  ['rootMenu:CreateRadio("No sound"', 'rootMenu:CreateRadio("无提示音"'],
+  ['rootMenu:CreateRadio("Leave alone"', 'rootMenu:CreateRadio("保持原样"'],
+  ['rootMenu:CreateRadio("View "', 'rootMenu:CreateRadio("视角 "'],
+
+  // Messages & Popups
+  ['"Remove the profile \\"%s\\"? This can\'t be undone."', '"确定要删除方案“%s”吗？此操作无法撤销。"'],
+  ['"You have unsaved changes. Switch profiles anyway?\\n(your unsaved edits will be discarded)"', '"你有未保存的更改。确定切换方案吗？\\n(未保存的修改将被放弃)"'],
+  ['"Name your new profile:"', '"请输入新方案名称:"'],
+  ['"Name the duplicate profile:"', '"请输入复制方案名称:"'],
+  ['"No pole set.|r Drag your pole here, or save it in this profile\'s gear set."', '"未设置鱼竿。|r 请将鱼竿拖至此处，或在当前方案的配装中保存。"']
+];
+
+const SBF_WIDGETS_REPLACEMENTS = [
+  ['"Cast Fishing - default"', '"抛竿钓鱼 - 默认"'],
+  ['"Combat - default"', '"战斗动作 - 默认"'],
+  ['"Macro"', '"宏命令"'],
+  ['"Drag an item, spell, macro, or toy here"', '"将物品、技能、宏或玩具拖拽至此处"'],
+  ['"press a controller button..."', '"请按下手柄按键..."'],
+  ['"press key or button..."', '"请按下键盘或鼠标按键..."'],
+  ['"click a button..."', '"请点击鼠标按键..."'],
+  ['{ check = { label = "Active"', '{ check = { label = "启用"']
+];
+
+export async function patchSBF(zip) {
+  // 1. Create SBF/Locale/zhCN.lua (unconditionally loaded)
   const zhCNLua = `-- SBF 简体中文本地化
 local ADDON, ns = ...
 
-if GetLocale() == "zhCN" or GetLocale() == "zhTW" then
-    _G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
-    _G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 施法与交互"
+_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
+_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 施法与交互"
 
-    local zhHelp = ${JSON.stringify(SBF_HELP_ZH, null, 2)}
+local zhHelp = ${JSON.stringify(SBF_HELP_ZH, null, 2)}
 
-    if SBF and SBF.Help then
-        for k, v in pairs(zhHelp) do
-            if SBF.Help[k] then
-                SBF.Help[k].title = v.title
-                SBF.Help[k].body = v.body
-            else
-                SBF.Help[k] = v
-            end
+if SBF and SBF.Help then
+    for k, v in pairs(zhHelp) do
+        if SBF.Help[k] then
+            SBF.Help[k].title = v.title
+            SBF.Help[k].body = v.body
+        else
+            SBF.Help[k] = v
         end
     end
 end
 `;
   zip.file('SBF/Locale/zhCN.lua', zhCNLua);
 
-  // 2. Append locale load and Chinese bindings to SBF/Core.lua
-  let core = zip.file('SBF/Core.lua') ? zip.file('SBF/Core.lua').async('string') : null;
-  // 3. Update SBF/SBF.toc
-  let toc = zip.file('SBF/SBF.toc').async('string');
-  return Promise.all([core, toc]).then(([coreText, tocText]) => {
-    if (coreText) {
-      const injection = `
--- [zhCN Localization Inject]
-if GetLocale() == "zhCN" or GetLocale() == "zhTW" then
-    _G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
-    _G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"
-end
-`;
-      zip.file('SBF/Core.lua', coreText + injection);
+  // 2. Patch SBF/Options.lua directly
+  const optFile = zip.file('SBF/Options.lua');
+  if (optFile) {
+    let optText = await optFile.async('string');
+    for (const [target, repl] of SBF_OPTIONS_REPLACEMENTS) {
+      if (optText.includes(target)) {
+        optText = optText.replaceAll(target, repl);
+      }
     }
+    zip.file('SBF/Options.lua', optText);
+  }
 
-    if (tocText && !tocText.includes('Locale\\zhCN.lua')) {
-      const newToc = tocText
+  // 3. Patch SBF/OptionsWidgets.lua directly
+  const widFile = zip.file('SBF/OptionsWidgets.lua');
+  if (widFile) {
+    let widText = await widFile.async('string');
+    for (const [target, repl] of SBF_WIDGETS_REPLACEMENTS) {
+      if (widText.includes(target)) {
+        widText = widText.replaceAll(target, repl);
+      }
+    }
+    zip.file('SBF/OptionsWidgets.lua', widText);
+  }
+
+  // 4. Update Core.lua and SBF.toc
+  const coreFile = zip.file('SBF/Core.lua');
+  if (coreFile) {
+    let coreText = await coreFile.async('string');
+    const injection = `
+-- [zhCN Localization Inject]
+_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
+_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"
+`;
+    zip.file('SBF/Core.lua', coreText + injection);
+  }
+
+  const tocFile = zip.file('SBF/SBF.toc');
+  if (tocFile) {
+    let tocText = await tocFile.async('string');
+    if (!tocText.includes('Locale\\zhCN.lua')) {
+      tocText = tocText
         .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[钓鱼]|r Single-Button Fishing (单键钓鱼)')
         .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 单键完成钓鱼循环（抛竿、浮漂交互、自动拾取、换装上饵），完美支持无限服与各经典版本。')
         .replace('Welcome.lua', 'Welcome.lua\nLocale\\zhCN.lua');
-      zip.file('SBF/SBF.toc', newToc);
+      zip.file('SBF/SBF.toc', tocText);
     }
-  });
+  }
 }

@@ -169,13 +169,10 @@ export function translateBTKey(enKey, deVal) {
 export function generateBTZhCN(entries) {
   const lines = [
     '-- Blackthornes Tradeskills -- Locale/zhCN.lua',
-    '-- 简体中文 (Simplified Chinese)',
+    '-- 简体中文 (Simplified Chinese) - 强制加载全部中文',
     '',
     'local _, ns = ...',
     'local L = ns.L',
-    '',
-    'local ok, locale = pcall(function() return GetLocale() end)',
-    'if not (ok and (locale == "zhCN" or locale == "zhTW")) then return end',
     ''
   ];
 
