@@ -1,6 +1,6 @@
 {
   "name": "wow-addon-web",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": false,
   "description": "魔兽世界本地插件在线网页管理器 - 基于 File System Access API",
   "author": "lich-wang",
