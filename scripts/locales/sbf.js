@@ -98,55 +98,27 @@ export const SBF_HELP_ZH = {
   "set.focusAudio": {
     title: "钓鱼专注音频 (放大起竿水花声)",
     body: "钓鱼时自动调大环境音效并放大鱼儿咬钩溅水声，即使切到后台也能清晰听见起竿时机！"
-  },
-  "set.focusAudioMaster": {
-    title: "主音量",
-    body: "钓鱼时使用的主音量百分比。"
-  },
-  "set.focusAudioSFX": {
-    title: "音效音量",
-    body: "钓鱼时的音效音量（直接影响起竿溅水咬钩声音）。"
-  },
-  "set.focusAudioMusic": {
-    title: "背景音乐音量",
-    body: "钓鱼时的背景音乐音量。"
-  },
-  "set.focusAudioAmbience": {
-    title: "环境音效音量",
-    body: "钓鱼时的自然环境氛围音量。"
-  },
-  "set.focusAudioDialog": {
-    title: "对话音量",
-    body: "钓鱼时的角色语音与NPC对话音量。"
-  },
-  "set.bgAlpha": {
-    title: "界面背景透明度",
-    body: "调整 SBF 主界面的背景底色透明度。"
-  },
-  "set.waterDepth": {
-    title: "水深判定提示",
-    body: "显示当前水体表面与地面高度碰撞检测。"
   }
 };
 
-const SBF_OPTIONS_REPLACEMENTS = [
-  // Tabs
-  ['{ key = "buttons",  label = "Profile" }', '{ key = "buttons",  label = "配置方案" }'],
-  ['{ key = "behavior", label = "Settings" }', '{ key = "behavior", label = "功能设置" }'],
-  ['{ key = "keys",     label = "Keybinds" }', '{ key = "keys",     label = "按键绑定" }'],
-  ['{ key = "skillbook", label = "Skill Book" }', '{ key = "skillbook", label = "钓鱼技能" }'],
-  ['{ key = "log",      label = "Log" }', '{ key = "log",      label = "钓鱼日志" }'],
-  ['{ key = "stats",    label = "Stats" }', '{ key = "stats",    label = "钓鱼统计" }'],
-  ['{ key = "world",    label = "World" }', '{ key = "world",    label = "世界追踪" }'],
-  ['{ key = "about",    label = "About" }', '{ key = "about",    label = "关于插件" }'],
+export const SBF_OPTIONS_REPLACEMENTS = [
+  // 8 Main Tabs
+  ['rootMenu:CreateTab("Profiles"', 'rootMenu:CreateTab("配置方案"'],
+  ['rootMenu:CreateTab("Behavior"', 'rootMenu:CreateTab("功能设置"'],
+  ['rootMenu:CreateTab("Keys"', 'rootMenu:CreateTab("按键绑定"'],
+  ['rootMenu:CreateTab("Skill"', 'rootMenu:CreateTab("钓鱼技能"'],
+  ['rootMenu:CreateTab("Log"', 'rootMenu:CreateTab("钓鱼日志"'],
+  ['rootMenu:CreateTab("Stats"', 'rootMenu:CreateTab("钓鱼统计"'],
+  ['rootMenu:CreateTab("Track"', 'rootMenu:CreateTab("世界追踪"'],
+  ['rootMenu:CreateTab("About"', 'rootMenu:CreateTab("关于插件"'],
 
-  // Buttons
-  ['revertBtn:SetText("Revert")', 'revertBtn:SetText("还原")'],
-  ['saveBtn:SetText("Save")', 'saveBtn:SetText("保存")'],
-  ['addBtn:SetText("Add")', 'addBtn:SetText("新建")'],
+  // Buttons in UI
+  ['addBtn:SetText("New")', 'addBtn:SetText("新建")'],
   ['dupBtn:SetText("Duplicate")', 'dupBtn:SetText("复制")'],
   ['remBtn:SetText("Remove")', 'remBtn:SetText("删除")'],
-  ['indivLbl:SetText("Individual")', 'indivLbl:SetText("角色独立")'],
+  ['saveBtn:SetText("Save")', 'saveBtn:SetText("保存")'],
+  ['revertBtn:SetText("Revert")', 'revertBtn:SetText("还原")'],
+  ['indivChkText:SetText("Individual")', 'indivChkText:SetText("角色独立")'],
   ['defBtn:SetText("Set as default")', 'defBtn:SetText("设为默认")'],
   ['emBtn:SetText("Equipment Manager")', 'emBtn:SetText("装备管理器")'],
   ['unhideBtn:SetText("Restore all hidden")', 'unhideBtn:SetText("恢复所有隐藏物品")'],
@@ -158,7 +130,7 @@ const SBF_OPTIONS_REPLACEMENTS = [
   ['Theme.MakeButton(pBe, 130, "Audio settings\\226\\128\\166"', 'Theme.MakeButton(pBe, 130, "音频设置…"'],
   ['Theme.MakeButton(pBe, 130, "Reset window"', 'Theme.MakeButton(pBe, 130, "重置窗口位置"'],
 
-  // Profile bar labels
+  // Profile bar labels & Pole status
   ['plbl:SetText("Profile:")', 'plbl:SetText("方案:")'],
   ['nlbl:SetText("Name:")', 'nlbl:SetText("名称:")'],
   ['blbl:SetText("Bind here:")', 'blbl:SetText("绑定地点:")'],
@@ -166,6 +138,23 @@ const SBF_OPTIONS_REPLACEMENTS = [
   ['plbl2:SetText("Fishing pole:")', 'plbl2:SetText("鱼竿栏位:")'],
   ['charLbl:SetText(Theme.Accent("Character"))', 'charLbl:SetText(Theme.Accent("角色"))'],
   ['sl:SetText("sort:")', 'sl:SetText("排序:")'],
+  ['"|cff888888Skill: not loaded|r"', '"|cff888888钓鱼技能: 未加载|r"'],
+  ['poleWarn:SetText("|cffff9933No pole set.|r Drag your pole here, or save it in this profile\'s gear set.")',
+   'poleWarn:SetText("|cffff9933未设置鱼竿。|r 将鱼竿拖到此处，或保存在本配置方案的配装中。")'],
+  ['GameTooltip:SetText("Fishing pole", accentRGB())', 'GameTooltip:SetText("鱼竿", accentRGB())'],
+
+  // Keybindings Tab
+  ['intro:SetText("Set a key or controller button for any SBF action. " .. "(Controller: enable it in Settings, then press a pad button here.)")',
+   'intro:SetText("为任意 SBF 操作设置按键或手柄按钮。（手柄：请在功能设置中启用手柄支持，然后在此按下手柄按钮。）")'],
+  ['h:SetText(({ key1 = "Keyboard", mouse = "Mouse", ctrl = "Controller" })[key])',
+   'h:SetText(({ key1 = "键盘", mouse = "鼠标", ctrl = "手柄" })[key])'],
+  ['sectionAt("Main")', 'sectionAt("主要")'],
+  ['sectionAt("Gear")', 'sectionAt("装备")'],
+  ['sectionAt("Slots", true)', 'sectionAt("栏位", true)'],
+  ['tableRow("fishing", "Action /Cast"', 'tableRow("fishing", "操作 / 抛竿"'],
+  ['tableRow("interact", "Loot / Interact"', 'tableRow("interact", "拾取 / 交互"'],
+  ['tableRow("equipGear", "Equip profile gear")', 'tableRow("equipGear", "换上钓鱼配装")'],
+  ['tableRow("restoreGear", "Restore normal gear")', 'tableRow("restoreGear", "恢复常规装备")'],
 
   // Sections
   ['{ section = "Interface options"', '{ section = "操作界面设置"'],
@@ -213,11 +202,10 @@ const SBF_OPTIONS_REPLACEMENTS = [
   ['"Remove the profile \\"%s\\"? This can\'t be undone."', '"确定要删除方案“%s”吗？此操作无法撤销。"'],
   ['"You have unsaved changes. Switch profiles anyway?\\n(your unsaved edits will be discarded)"', '"你有未保存的更改。确定切换方案吗？\\n(未保存的修改将被放弃)"'],
   ['"Name your new profile:"', '"请输入新方案名称:"'],
-  ['"Name the duplicate profile:"', '"请输入复制方案名称:"'],
-  ['"No pole set.|r Drag your pole here, or save it in this profile\'s gear set."', '"未设置鱼竿。|r 请将鱼竿拖至此处，或在当前方案的配装中保存。"']
+  ['"Name the duplicate profile:"', '"请输入复制方案名称:"']
 ];
 
-const SBF_WIDGETS_REPLACEMENTS = [
+export const SBF_WIDGETS_REPLACEMENTS = [
   ['"Cast Fishing - default"', '"抛竿钓鱼 - 默认"'],
   ['"Combat - default"', '"战斗动作 - 默认"'],
   ['"Macro"', '"宏命令"'],
@@ -225,7 +213,75 @@ const SBF_WIDGETS_REPLACEMENTS = [
   ['"press a controller button..."', '"请按下手柄按键..."'],
   ['"press key or button..."', '"请按下键盘或鼠标按键..."'],
   ['"click a button..."', '"请点击鼠标按键..."'],
+  ['return "Set key"', 'return "设置按键"'],
+  ['or "Set key"', 'or "设置按键"'],
+  ['local GEAR_LABEL = { equipGear = "Equip profile gear", restoreGear = "Restore normal gear" }',
+   'local GEAR_LABEL = { equipGear = "换上钓鱼配装", restoreGear = "恢复常规装备" }'],
+  ['slotId == "equipGear" and "Equip profile gear" or "Restore normal gear"',
+   'slotId == "equipGear" and "换上钓鱼配装" or "恢复常规装备"'],
   ['{ check = { label = "Active"', '{ check = { label = "启用"']
+];
+
+export const SBF_WELCOME_REPLACEMENTS = [
+  ['title = "Welcome to Single-Button Fishing"', 'title = "欢迎使用 Single-Button Fishing 一键钓鱼"'],
+  ['"|cffe8c679The only fishing add-on that does it all.|r"', '"|cffe8c679唯一一个全功能一体化单键钓鱼插件。|r"'],
+  [
+    `local actions = "One key runs your whole fishing loop - cast, wait, loot, "\n    .. "|cffe8c679eat, drink, lures, bobbers, chum, buffs,|r "\n    .. "|cfff28c28fight, heal,|r "\n    .. "|cff7cb83aboat, dismount,|r "\n    .. "then recast - automatically."`,
+    `local actions = "单个按键搞定所有钓鱼流程：抛竿、等待、拾取、"\n    .. "|cffe8c679进食、喝水、鱼饵、浮标、诱饵、增益、|r "\n    .. "|cfff28c28战斗、治疗、|r "\n    .. "|cff7cb83a乘船、下坐骑，|r "\n    .. "然后自动重新抛竿。"`
+  ],
+  ['header(body, PAD, y, W, "How do you want to fish?  |cffff8a4c(required)|r")',
+   'header(body, PAD, y, W, "你想如何操作钓鱼？  |cffff8a4c(必选项)|r")'],
+  ['para(body, PAD, y, W, "Pick your input, then set your fishing key below. The bind controls change to match, and setting your fishing key turns the matching mode on for you.", "textDim")',
+   'para(body, PAD, y, W, "选择输入方式并在下方设置快捷键。绑定控件会随之调整，设置按键后将自动为您启用对应模式。", "textDim")'],
+  ['makeSelBtn("keyboard",   "Keyboard",   PAD)', 'makeSelBtn("keyboard",   "键盘",   PAD)'],
+  ['makeSelBtn("mouse",      "Mouse",      PAD + (SEL_W + SEL_GAP))', 'makeSelBtn("mouse",      "鼠标",      PAD + (SEL_W + SEL_GAP))'],
+  ['makeSelBtn("controller", "Controller", PAD + 2 * (SEL_W + SEL_GAP))', 'makeSelBtn("controller", "手柄", PAD + 2 * (SEL_W + SEL_GAP))'],
+  ['"Bind your fishing key"', '"绑定钓鱼按键"'],
+  ['"Loot / interact key"', '"拾取 / 交互按键"'],
+  ['"Fishing mouse button"', '"钓鱼鼠标按键"'],
+  ['"Loot mouse button"', '"拾取鼠标按键"'],
+  ['"Fishing controller button"', '"钓鱼手柄按钮"'],
+  ['"Loot controller button"', '"拾取手柄按钮"'],
+  ['"Use a separate " .. (kind == "mouse" and "button" or "key") .. " to loot"',
+   '"使用独立" .. (kind == "mouse" and "鼠标键" or "按键") .. "拾取"'],
+  ['"Two-button mode", "On: the fishing input only casts; a second input loots. Off: it does both."',
+   '"双键模式", "开启：钓鱼键只负责抛竿，按第二个键拾取。关闭：单键同时完成抛竿与拾取。"'],
+  ['header(body, PAD, y, W, "Combat  |cff9aa0aa(optional)|r")', 'header(body, PAD, y, W, "战斗动作  |cff9aa0aa(可选项)|r")'],
+  [
+    `para(body, PAD, y, W, SBF.CLASSIC_GEAR\n    and "Combat defaults to auto-attack (hunters also fire Auto Shot). Drag in your own macro for real abilities."\n    or "Combat defaults to WoW's Single-Button Assistant, cast at whatever you are already fighting. Drag in your own macro to override.", "textDim")`,
+    `para(body, PAD, y, W, SBF.CLASSIC_GEAR\n    and "战斗默认使用自动攻击（猎人自动射击）。可拖入您自己的技能宏。"\n    or "战斗默认使用单键战斗助手。可拖入您自己的技能宏进行覆盖。", "textDim")`
+  ],
+  ['header(body, PAD, y, W, "Heal  |cff9aa0aa(optional)|r")', 'header(body, PAD, y, W, "治疗动作  |cff9aa0aa(可选项)|r")'],
+  ['para(body, PAD, y, W, "No default - add your own heal macro/spell/item.", "textDim")',
+   'para(body, PAD, y, W, "默认无 - 可在此拖入您自己的治疗宏/法术/物品。", "textDim")'],
+  ['header(body, PAD, y, W, "A memo from Management")', 'header(body, PAD, y, W, "来自渔协的备忘录")'],
+  [
+    `"You're all set. The boring part's over, so get out there and slay some fish. Show the lake who's boss, "\n    .. "keep that bobber proud, and remember: a fish uncaught is a fish that got away with it. Tight lines, and "\n    .. "don't embarrass us out there.\\n\\n- Management"`,
+    `"一切准备就绪！枯燥的配置已搞定，快去尽情享受钓鱼的乐趣吧！让水里的鱼儿见识见识谁才是老大！祝竿竿中大鱼，盆满钵满！\\n\\n- 渔协管理团队"`
+  ],
+  ['"Don\'t show this again"', '"不再显示此向导"'],
+  ['"Stops this welcome from popping up at login. Reopen it any time with /sbf welcome."',
+   '"登录时不再弹出此欢迎向导。随时可在聊天框输入 /sbf welcome 重新打开。"'],
+  ['openBtn:SetText("Open Settings")', 'openBtn:SetText("打开完整设置")'],
+  ['webBtn:SetText("Website")', 'webBtn:SetText("访问网站")'],
+  ['startBtn:SetText("Start fishing")', 'startBtn:SetText("开始钓鱼")']
+];
+
+export const SBF_SLOTS_REPLACEMENTS = [
+  ['label = "Oversized Bobber"', 'label = "超大浮标"'],
+  ['label = "Bobber"', 'label = "浮标"'],
+  ['label = "Lure (buff)"', 'label = "鱼饵 (增益)"'],
+  ['label = "Pole Enchant"', 'label = "鱼竿附魔"'],
+  ['label = "Food"', 'label = "食物"'],
+  ['label = "Drink"', 'label = "饮料"'],
+  ['label = "Chum (skill)"', 'label = "诱饵 (技能)"'],
+  ['label = "Chum (perception)"', 'label = "诱饵 (感知)"'],
+  ['label = "Boat"', 'label = "船只 / 木筏"'],
+  ['label = "Buffs"', 'label = "通用增益"'],
+  ['label = "Cast Fishing"', 'label = "施放钓鱼"'],
+  ['label = "Interact / Loot"', 'label = "交互 / 拾取"'],
+  ['label = "Combat (attack)"', 'label = "战斗 (攻击)"'],
+  ['label = "Heal"', 'label = "治疗"']
 ];
 
 export async function patchSBF(zip) {
@@ -251,7 +307,31 @@ end
 `;
   zip.file('SBF/Locale/zhCN.lua', zhCNLua);
 
-  // 2. Patch SBF/Options.lua directly
+  // 2. Patch SBF/Welcome.lua
+  const welFile = zip.file('SBF/Welcome.lua');
+  if (welFile) {
+    let welText = await welFile.async('string');
+    for (const [target, repl] of SBF_WELCOME_REPLACEMENTS) {
+      if (welText.includes(target)) {
+        welText = welText.replaceAll(target, repl);
+      }
+    }
+    zip.file('SBF/Welcome.lua', welText);
+  }
+
+  // 3. Patch SBF/Slots.lua
+  const slotsFile = zip.file('SBF/Slots.lua');
+  if (slotsFile) {
+    let slotsText = await slotsFile.async('string');
+    for (const [target, repl] of SBF_SLOTS_REPLACEMENTS) {
+      if (slotsText.includes(target)) {
+        slotsText = slotsText.replaceAll(target, repl);
+      }
+    }
+    zip.file('SBF/Slots.lua', slotsText);
+  }
+
+  // 4. Patch SBF/Options.lua directly
   const optFile = zip.file('SBF/Options.lua');
   if (optFile) {
     let optText = await optFile.async('string');
@@ -263,7 +343,7 @@ end
     zip.file('SBF/Options.lua', optText);
   }
 
-  // 3. Patch SBF/OptionsWidgets.lua directly
+  // 5. Patch SBF/OptionsWidgets.lua directly
   const widFile = zip.file('SBF/OptionsWidgets.lua');
   if (widFile) {
     let widText = await widFile.async('string');
@@ -275,7 +355,7 @@ end
     zip.file('SBF/OptionsWidgets.lua', widText);
   }
 
-  // 4. Update Core.lua and SBF.toc
+  // 6. Update Core.lua and SBF.toc
   const coreFile = zip.file('SBF/Core.lua');
   if (coreFile) {
     let coreText = await coreFile.async('string');

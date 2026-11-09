@@ -1,22 +1,117 @@
 import fs from 'node:fs';
 
 const DICTIONARY = {
-  // Navigation & Tabs
+  // Navigation & 12 Main Tabs (Both Title Case and UPPERCASE for robust matching)
   "PROFIT": "制造利润",
-  "DEALS": "特惠抄底",
+  "Profit": "制造利润",
   "QUEUE": "制造队列",
+  "Queue": "制造队列",
+  "GATHER": "材料清单",
+  "Gather": "材料清单",
   "POST": "拍卖上架",
-  "SALES": "销售统计",
-  "STATS": "数据统计",
-  "PRICES": "物价行情",
-  "SETTINGS": "插件设置",
-  "CHARACTERS": "角色资产",
-  "ABOUT": "关于插件",
+  "Post": "拍卖上架",
   "DISENCHANTING": "附魔分解",
-  "LEVEL UP": "冲级配方",
+  "Disenchanting": "附魔分解",
+  "LEVEL UP": "冲级建议",
+  "Level Up": "冲级建议",
+  "FAVORS AND WRITS": "日常与手谕",
+  "Favors and Writs": "日常与手谕",
+  "DEALS": "特惠抄底",
+  "Deals": "特惠抄底",
+  "PRICES": "物价行情",
+  "Prices": "物价行情",
+  "STATS": "数据统计",
+  "Stats": "数据统计",
+  "SALES": "销售记录",
+  "Sales": "销售记录",
+  "CHARACTERS": "角色资产",
+  "Characters": "角色资产",
+  "SETTINGS": "插件设置",
+  "Settings": "插件设置",
+  "ABOUT": "关于插件",
+  "About": "关于插件",
   "MISSING": "缺失配方",
   "STOCK": "当前库存",
   "SHOPPING LIST": "购物清单",
+
+  // Sub-tabs & Headers under Profit (Image 4)
+  "MY CRAFTS": "我的制造",
+  "YOUR TIME": "时间收益",
+  "RECIPES TO LEARN": "可学配方",
+  "Recipes to learn": "可学配方详情",
+  "Recipes to Learn:": "可学配方:",
+  "Pick a recipe to see what goes into it and where to learn it.": "选择一个配方以查看所需材料及学习途径。",
+  "Values use the prices you have scanned. Recipes come from Classic's data, corrected by what your profession windows and recipe tooltips show.": "利润根据您扫描的拍卖行物价计算。配方信息取自经典旧世数据，并根据专业技能窗口及提示动态修正。",
+  "%d recipe  ·  %d make a profit at today's prices": "%d 个配方  ·  %d 个按今日物价有利润",
+  "%d recipes  ·  %d make a profit at today's prices": "%d 个配方  ·  %d 个按今日物价有利润",
+  "%s items priced  ·  %s recipes known  ·  %s": "%s 件物品已有报价  ·  %s 个已知配方  ·  %s",
+  "Show learned too": "显示已学会的配方",
+  "Search recipes": "搜索配方",
+  "Search crafts": "搜索制造品",
+  "All professions": "所有专业技能",
+  "All": "全部",
+  "Sub-crafts only": "仅显示中间材料",
+  "Craftable now": "当前可制造",
+  "Only what I craft with": "仅显示制造所需材料",
+
+  // Table Column Headers (Image 4)
+  "RECIPE": "配方",
+  "SKILL": "技能",
+  "COST": "成本",
+  "SELLS": "售价",
+  "DISENCHANT": "分解",
+  "LEARN FROM": "学习途径",
+  "LEARN NEXT": "下步学习",
+  "REAGENTS": "材料",
+  "MATERIALS": "材料",
+  "BUY": "购买",
+  "MAKE": "制造",
+  "NEED": "需求",
+  "HAVE": "已有",
+  "DEMAND": "需求度",
+  "PROFIT EACH": "单件利润",
+  "COST EACH": "单件成本",
+  "MARGIN": "利润率",
+
+  // Learning Sources (Image 4)
+  "Trainer": "训练师",
+  "Starter": "初始学会",
+  "Unknown": "未知途径",
+  "Quest or other": "任务或其他",
+  "Vendor": "商人出售",
+  "Drop": "怪物掉落",
+
+  // Top Bar & Scan Controls (Image 4)
+  "Scan auctions": "扫描拍卖行",
+  "the auction house must be open": "拍卖行必须已打开",
+  "open the auction house first": "请先打开拍卖行窗口",
+  "cannot scan right now": "当前无法扫描",
+  "waiting to start...": "等待开始...",
+  "Cancel scan": "取消扫描",
+  "Stop the running scan": "停止正在运行的扫描",
+  "Scan the whole auction house in one go": "一次性全量扫描整个拍卖行",
+  "never scanned": "从未扫描",
+  "Never scanned": "从未扫描",
+  "Never scanned.": "从未扫描。",
+  "not scanned yet": "尚未扫描",
+  "Not scanned yet": "尚未扫描",
+  "Not scanned yet, so priced from its materials": "尚未扫描，价格由材料成本估算",
+  "materials not scanned": "材料尚未扫描",
+  "scanned %s": "已扫描于 %s",
+  "Scanned %s": "已扫描于 %s",
+  "Scanned %s.": "已扫描于 %s。",
+  "scanned %s (stopped at the page limit)": "已扫描于 %s (受页面上限停止)",
+  "Last scan %s": "上次扫描于 %s",
+  "No scan yet": "暂无扫描数据",
+  "No auction data yet. Open the auction house and press Scan.": "暂无拍卖数据。请打开拍卖行窗口并点击“扫描拍卖行”。",
+  "Scan complete": "扫描完成",
+  "Scan complete: %s prices": "扫描完成：已收录 %s 种物价",
+  "Scan complete: %s prices updated": "扫描完成：已更新 %s 种物价",
+  "Scan complete: %s prices updated, %s sold out": "扫描完成：%s 种物价已更新，%s 种已售罄",
+  "scanning...": "正在扫描...",
+  "scanning... %d%%": "正在扫描... %d%%",
+  "Times scanned": "扫描次数",
+  "The buy price is the cheapest listing when last scanned (%s).": "买入价为最近一次扫描到的最低一口价 (%s)。",
 
   // Professions
   "Blacksmithing": "锻造",
@@ -35,6 +130,7 @@ const DICTIONARY = {
   // Core AH terms
   "Auction House": "拍卖行",
   "Auction house": "拍卖行",
+  "auction house": "拍卖行",
   "Bid": "竞标",
   "Buyout": "一口价",
   "Deposit": "保管费",
@@ -52,8 +148,6 @@ const DICTIONARY = {
   "Reagents": "材料",
   "Materials": "制造原料",
   "Disenchant": "分解",
-  "Disenchanting": "附魔分解",
-  "Vendor": "商人",
   "Merchant": "商人出售",
   "Market Price": "市场价",
   "Historical Price": "历史价格",
@@ -61,7 +155,6 @@ const DICTIONARY = {
   "Recent Scan": "最近扫描",
   "Scan Now": "立即扫描",
   "Scanning...": "正在扫描拍卖行...",
-  "Scan Complete": "扫描完成",
   "Full Scan": "全量扫描",
   "Fast Scan": "快速扫描",
 
@@ -99,8 +192,14 @@ export function translateBTKey(enKey, deVal) {
 
   let zh = enKey;
 
-  // Direct word replacements
-  const wordMap = [
+  // Exact phrases and multi-word idioms
+  const phrases = [
+    [/the auction house must be open/gi, '拍卖行必须已打开'],
+    [/open the auction house first/gi, '请先打开拍卖行窗口'],
+    [/never scanned/gi, '从未扫描'],
+    [/not scanned yet/gi, '尚未扫描'],
+    [/make a profit/gi, '有制造利润'],
+    [/at today's prices/gi, '按今日市价'],
     [/Auction House/g, '拍卖行'],
     [/auction house/g, '拍卖行'],
     [/Blackthornes Tradeskills/g, 'Blackthornes 商业助手'],
@@ -109,55 +208,55 @@ export function translateBTKey(enKey, deVal) {
     [/disenchanting/g, '附魔分解'],
     [/Disenchant/g, '分解'],
     [/disenchant/g, '分解'],
-    [/Professions?/g, '专业技能'],
-    [/professions?/g, '专业技能'],
-    [/Recipes?/g, '配方'],
-    [/recipes?/g, '配方'],
-    [/Materials?/g, '材料'],
-    [/materials?/g, '材料'],
-    [/Reagents?/g, '材料'],
-    [/reagents?/g, '材料'],
-    [/Buyout/g, '一口价'],
-    [/buyout/g, '一口价'],
-    [/Bid/g, '竞标'],
-    [/bid/g, '竞标'],
-    [/Deposit/g, '保管费'],
-    [/deposit/g, '保管费'],
-    [/Profit/g, '利润'],
-    [/profit/g, '利润'],
-    [/Margin/g, '利润率'],
-    [/margin/g, '利润率'],
-    [/Queue/g, '制造队列'],
-    [/queue/g, '制造队列'],
-    [/Scanner?/g, '扫描器'],
-    [/scanner?/g, '扫描器'],
-    [/Scanning/g, '正在扫描'],
-    [/scanning/g, '正在扫描'],
-    [/Characters?/g, '角色'],
-    [/characters?/g, '角色'],
-    [/Shopping list/g, '购物清单'],
-    [/shopping list/g, '购物清单'],
-    [/Level Up/g, '冲级建议'],
-    [/level up/g, '提升等级'],
-    [/Vendor/g, '商人'],
-    [/vendor/g, '商人'],
-    [/Undercut/g, '压价'],
-    [/undercut/g, '压价'],
-    [/Inventory/g, '库存背包'],
-    [/inventory/g, '库存背包'],
-    [/Settings/g, '设置'],
-    [/settings/g, '设置'],
-    [/History/g, '历史记录'],
-    [/history/g, '历史记录'],
-    [/Mailbox/g, '邮箱'],
-    [/mailbox/g, '邮箱'],
-    [/Bank/g, '银行'],
-    [/bank/g, '银行'],
-    [/Bags?/g, '背包'],
-    [/bags?/g, '背包']
+    [/\bProfessions?\b/g, '专业技能'],
+    [/\bprofessions?\b/g, '专业技能'],
+    [/\bRecipes?\b/g, '配方'],
+    [/\brecipes?\b/g, '配方'],
+    [/\bMaterials?\b/g, '材料'],
+    [/\bmaterials?\b/g, '材料'],
+    [/\bReagents?\b/g, '材料'],
+    [/\breagents?\b/g, '材料'],
+    [/\bBuyout\b/g, '一口价'],
+    [/\bbuyout\b/g, '一口价'],
+    [/\bBid\b/g, '竞标'],
+    [/\bbid\b/g, '竞标'],
+    [/\bDeposit\b/g, '保管费'],
+    [/\bdeposit\b/g, '保管费'],
+    [/\bProfit\b/g, '利润'],
+    [/\bprofit\b/g, '利润'],
+    [/\bMargin\b/g, '利润率'],
+    [/\bmargin\b/g, '利润率'],
+    [/\bQueue\b/g, '制造队列'],
+    [/\bqueue\b/g, '制造队列'],
+    [/\bScanned\b/g, '已扫描'],
+    [/\bscanned\b/g, '已扫描'],
+    [/\bScanning\b/g, '正在扫描'],
+    [/\bscanning\b/g, '正在扫描'],
+    [/\bScanner\b/g, '扫描器'],
+    [/\bscanner\b/g, '扫描器'],
+    [/\bCharacters?\b/g, '角色'],
+    [/\bcharacters?\b/g, '角色'],
+    [/\bShopping list\b/gi, '购物清单'],
+    [/\bLevel Up\b/gi, '冲级建议'],
+    [/\bVendor\b/g, '商人'],
+    [/\bvendor\b/g, '商人'],
+    [/\bUndercut\b/g, '压价'],
+    [/\bundercut\b/g, '压价'],
+    [/\bInventory\b/g, '库存背包'],
+    [/\binventory\b/g, '库存背包'],
+    [/\bSettings\b/g, '设置'],
+    [/\bsettings\b/g, '设置'],
+    [/\bHistory\b/g, '历史记录'],
+    [/\bhistory\b/g, '历史记录'],
+    [/\bMailbox\b/g, '邮箱'],
+    [/\bmailbox\b/g, '邮箱'],
+    [/\bBank\b/g, '银行'],
+    [/\bbank\b/g, '银行'],
+    [/\bBags?\b/g, '背包'],
+    [/\bbags?\b/g, '背包']
   ];
 
-  for (const [re, rep] of wordMap) {
+  for (const [re, rep] of phrases) {
     if (re.test(zh)) {
       zh = zh.replace(re, rep);
     }
@@ -176,9 +275,20 @@ export function generateBTZhCN(entries) {
     ''
   ];
 
+  const seen = new Set();
+
+  // First output all explicit DICTIONARY entries
+  for (const [k, v] of Object.entries(DICTIONARY)) {
+    lines.push(`L[${JSON.stringify(k)}] = ${JSON.stringify(v)}`);
+    seen.add(k);
+  }
+
+  // Then process remaining entries from deDE
   for (const { key, deVal } of entries) {
+    if (seen.has(key)) continue;
     const zh = translateBTKey(key, deVal);
     lines.push(`L[${JSON.stringify(key)}] = ${JSON.stringify(zh)}`);
+    seen.add(key);
   }
 
   return lines.join('\n');
