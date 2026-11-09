@@ -596,36 +596,36 @@ local function buildCatalogSlot(r, def0, slotKey, reflow)
         local sid2 = ns.spellEntry and ns.spellEntry(self.id)
         if sid2 then
           GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetSpellByID(sid2)
-          GameTooltip:AddLine(inItems(d, self.id) and "右键点击：移除" or "左键点击：添加", 0.7, 0.7, 0.7)
-          if not (IsSpellKnown and IsSpellKnown(sid2)) then GameTooltip:AddLine("尚未学会此技能", 0.8, 0.5, 0.5) end
+          GameTooltip:AddLine(inItems(d, self.id) and "右键点击: 移除" or "左键点击: 添加", 0.7, 0.7, 0.7)
+          if not (IsSpellKnown and IsSpellKnown(sid2)) then GameTooltip:AddLine("您尚未学会此法术", 0.8, 0.5, 0.5) end
           GameTooltip:Show(); return
         end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetItemByID(self.id)
         local bags = GetItemCount(self.id) or 0
         if self.owned then
-          GameTooltip:AddLine(bags > 0 and ("背包中拥有: " .. bags) or "Owned (toy box)", 0.4, 1, 0.4)
+          GameTooltip:AddLine(bags > 0 and ("背包中拥有: " .. bags) or "已拥有 (玩具箱)", 0.4, 1, 0.4)
         else
           GameTooltip:AddLine("未拥有该物品", 0.6, 0.6, 0.6)
         end
-        GameTooltip:AddLine(inItems(d, self.id) and "右键点击：移除" or "左键点击：添加", 0.7, 0.7, 0.7)
-        if self.hidden then GameTooltip:AddLine("Hidden - shift+left-click: restore", 1, 0.82, 0)
-        else GameTooltip:AddLine("shift+left-click: hide from this slot", 0.7, 0.7, 0.7) end
+        GameTooltip:AddLine(inItems(d, self.id) and "右键点击: 移除" or "左键点击: 添加", 0.7, 0.7, 0.7)
+        if self.hidden then GameTooltip:AddLine("已隐藏 - Shift+左键点击恢复", 1, 0.82, 0)
+        else GameTooltip:AddLine("Shift+左键点击从此栏位隐藏", 0.7, 0.7, 0.7) end
         if SBF.ItemUsable and not SBF.ItemUsable(self.id) then
           GameTooltip:AddLine("无使用效果 - 该物品无法直接使用", 1, 0.35, 0.35)
         end
-        if self.buffName then GameTooltip:AddLine("增益状态: " .. self.buffName, 0.3, 1, 0.3)
-        else GameTooltip:AddLine("增益效果：尚未收录（施放一次即可记录）", 0.6, 0.6, 0.45) end
+        if self.buffName then GameTooltip:AddLine("Buff: " .. self.buffName, 0.3, 1, 0.3)
+        else GameTooltip:AddLine("增益效果: 尚未记录 (使用一次即可记录)", 0.6, 0.6, 0.45) end
         if self.learned then
           if self.allZones then
             GameTooltip:AddLine("在所有区域生效", 0.4, 1, 0.4)
           else
             local zs = {}; for _, n in pairs(self.maps or {}) do zs[#zs + 1] = n end
-            GameTooltip:AddLine("适用区域: " .. table.concat(zs, ", "), 0.6, 0.8, 1, true)
-            if not self.zoneOk then GameTooltip:AddLine("|cffffaa00!|r not confirmed in THIS zone - may not work here") end
+            GameTooltip:AddLine("生效区域: " .. table.concat(zs, ", "), 0.6, 0.8, 1, true)
+            if not self.zoneOk then GameTooltip:AddLine("|cffffaa00!|r 当前区域尚未确认生效 - 可能无法在此使用") end
           end
           -- (no separate "forget" line: shift+left = hide, and the hide/restore line above already says so —
           -- two verbs on one gesture sent users hunting for a second action that doesn't exist)
-          GameTooltip:AddLine("Shift+右键点击：切换是否在所有区域生效", 0.5, 0.5, 0.5)
+          GameTooltip:AddLine("Shift+右键点击切换是否全区域生效", 0.5, 0.5, 0.5)
         end
         GameTooltip:Show()
       end)
@@ -741,17 +741,17 @@ local function MakeItemButton(parent, x, y, def0, onChange, slotId)
     local def = D()   -- live slot table (tooltip reads track the current working copy)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     if self._isDefault and self.slotId == "fishing" then        -- dim fishing-icon default
-      GameTooltip:SetText("抛竿钓鱼 - 默认", accentRGB())
-      GameTooltip:AddLine("施放钓鱼技能（遵循坐下/抛竿设置）。拖入宏或物品可进行覆盖。", 0.85, 0.85, 0.85, true)
+      GameTooltip:SetText("施放钓鱼 - 默认", accentRGB())
+      GameTooltip:AddLine("施放钓鱼技能 (包含坐下/防打断设置)。可拖曳宏或物品至此处覆盖默认行为。", 0.85, 0.85, 0.85, true)
     elseif self._isDefault and self.slotId == "combat" then     -- dim gear-icon default
-      GameTooltip:SetText("战斗动作 - 默认", accentRGB())
-      GameTooltip:AddLine((SBF.CLASSIC_GEAR and "自动攻击（猎人在远距离自动射击）" or "Casts Single-Button Assistant at") .. " whatever you are already fighting. Type /sbf addtarget on to also grab the nearest enemy. Drag your own macro here, or right-click to clear back to default.", 0.85, 0.85, 0.85, true)
+      GameTooltip:SetText("战斗反击 - 默认", accentRGB())
+      GameTooltip:AddLine((SBF.CLASSIC_GEAR and "Auto-attacks (hunters also fire Auto Shot at range)" or "Casts Single-Button Assistant at") .. " whatever you are already fighting. Type /sbf addtarget on to also grab the nearest enemy. Drag your own macro here, or right-click to clear back to default.", 0.85, 0.85, 0.85, true)
     elseif def.item then GameTooltip:SetHyperlink(def.item)
     elseif def.spell and GameTooltip.SetSpellByID then GameTooltip:SetSpellByID(def.spell)
     elseif def.macro then
-      GameTooltip:SetText("宏命令", accentRGB()); GameTooltip:AddLine(def.macro, 0.85, 0.85, 0.85, true)
+      GameTooltip:SetText("自定义宏", accentRGB()); GameTooltip:AddLine(def.macro, 0.85, 0.85, 0.85, true)
     else
-      GameTooltip:SetText("将物品、技能、宏或玩具拖拽至此处", accentRGB())
+      GameTooltip:SetText("拖曳物品、法术、宏或玩具至此处", accentRGB())
       GameTooltip:AddLine("右键点击清除", 0.7, 0.7, 0.7)
     end
     GameTooltip:Show()
@@ -782,7 +782,7 @@ local PAD_LABEL = {
 }
 -- present a stored binding for display: render a bare gamepad token via PAD_LABEL, else show it as-is.
 local function PrettyBind(binding)
-  if not (binding and binding ~= "") then return "设置按键" end
+  if not (binding and binding ~= "") then return "Set key" end
   if type(binding) == "string" and binding:match("^PAD") then return PAD_LABEL[binding] or binding end
   return binding
 end
@@ -817,7 +817,7 @@ local function WarnKeyConflict(combo)
 end
 
 -- Friendly label for a slot id (Pole Enchant, Chum, …); falls back to the raw id (gear pseudo-actions etc.).
-local GEAR_LABEL = { equipGear = "换上钓鱼配装", restoreGear = "恢复常规装备" }
+local GEAR_LABEL = { equipGear = "Equip profile gear", restoreGear = "Restore normal gear" }
 local function SlotLabel(id)
   local d = ns.SlotDef and ns.SlotDef(id)
   return (d and d.label) or GEAR_LABEL[id] or id
@@ -873,7 +873,7 @@ local function MakeKeybindButton(parent, x, y, slotId, w, after, mode, storeName
     -- the gear keys can't share the fishing / loot / Interact key (Apply would skip them): refuse it here, saying why
     if (slotId == "equipGear" or slotId == "restoreGear") and SBF.IsMainKey and SBF.IsMainKey(combo) then
       print(("|cff45c4a0SBF|r |cffffd100%s|r is your fishing or loot key. Pick a different key for %s."):format(
-        combo, slotId == "equipGear" and "换上钓鱼配装" or "恢复常规装备"))
+        combo, slotId == "equipGear" and "Equip profile gear" or "Restore normal gear"))
       teardown(s); return
     end
     local extra = SlotConflictExtra(slotId, storeName)
@@ -897,7 +897,7 @@ local function MakeKeybindButton(parent, x, y, slotId, w, after, mode, storeName
       if SBF.Apply then SBF.Apply() end
       return
     end
-    self:SetText(mode == "pad" and "请按下手柄按键..." or "请按下键盘或鼠标按键...")
+    self:SetText(mode == "pad" and "请按手柄按键..." or "请按快捷键...")
     if mode ~= "pad" then   -- keyboard capture (key / both)
       self:EnableKeyboard(true); self:SetPropagateKeyboardInput(false)
       self:SetScript("OnKeyDown", function(s, keyName)
@@ -926,7 +926,7 @@ ns.MakeKeybindButton = MakeKeybindButton   -- exposed so the Welcome panel reuse
 -- a button that sets/shows a GAME keybinding (the Blizzard Key Bindings menu), e.g.
 -- "INTERACTTARGET". Press it then a combo to bind; Esc clears. Persists via SaveBindings.
 local function MakeGameBindButton(parent, x, y, command, w)
-  local function cur() return PrettyBind(GetBindingKey(command) or "设置按键") end
+  local function cur() return PrettyBind(GetBindingKey(command) or "Set key") end
   local kb = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   kb:SetSize(w or 110, 20); kb:SetPoint("TOPLEFT", x, y); kb:SetText(cur())
   kb:SetNormalFontObject("GameFontNormalSmall")   -- pin on the button so a state change can't grow the label
@@ -950,7 +950,7 @@ local function MakeGameBindButton(parent, x, y, command, w)
       self:SetText(cur())
       return
     end
-    self:SetText("请按下键盘或鼠标按键...")
+    self:SetText("请按快捷键...")
     self:EnableKeyboard(true); self:SetPropagateKeyboardInput(false)
     pcall(function() if self.EnableGamePadButton then self:EnableGamePadButton(true) end end)
     self:SetScript("OnKeyDown", function(s, keyName)
@@ -988,8 +988,8 @@ ns.MakeNativeBindButton = MakeNativeBindButton   -- exposed so the Welcome panel
 
 -- human-readable label for a BUTTON1..BUTTON5 token (shown on the mouse pickers)
 local MOUSE_LABEL = {
-  BUTTON1 = "鼠标左键", BUTTON2 = "鼠标右键", BUTTON3 = "鼠标中键",
-  BUTTON4 = "鼠标侧键4", BUTTON5 = "鼠标侧键5",
+  BUTTON1 = "Left Button", BUTTON2 = "Right Button", BUTTON3 = "Middle Button",
+  BUTTON4 = "Button 4", BUTTON5 = "Button 5",
 }
 local function MouseBtnText(token, allowNone)
   if not token or token == "" then return allowNone and "(无)" or "设置按键" end
@@ -998,7 +998,7 @@ end
 
 -- A button that captures a MOUSE press to set SBFDB.mouse[field] to a BUTTON1..BUTTON5 token (mirrors
 -- MakeKeybindButton, but listens for mouse buttons instead of keys). Two-stage so the click that ARMS
--- capture isn't itself recorded: a left-click arms it ("请点击鼠标按键..."); the NEXT press of ANY of the
+-- capture isn't itself recorded: a left-click arms it ("click a button..."); the NEXT press of ANY of the
 -- 5 buttons is recorded. For `allowNone` (the optional loot picker) a right-click while idle clears it.
 -- `after` re-renders dependent UI.
 local MOUSE_CLICK_TOKEN = { LeftButton = "BUTTON1", RightButton = "BUTTON2", MiddleButton = "BUTTON3",
@@ -1143,7 +1143,7 @@ local function buildCfgPopup()
   local tree = {
     dir = "column", pad = PAD, gap = "row",
     -- Active/inactive (mirrors clicking the name on the row); get/set read the CURRENT target each click.
-    { check = { label = "启用",
+    { check = { label = "Active",
         -- live-resolved, never the cached p._def: same detached-table trap as the row label (see MakeRow's D()).
         get = function() local d = liveDef(p); return not (d and d.skip) end,
         set = function(v)
@@ -1297,7 +1297,7 @@ local function ShowSlotConfig(def, src, anchor, paint)
   local throwable = (buffable and sd and sd.allowsRepeat) and true or false
   local refs = p._refs
   local function setHidden(box, hidden) if box and box.node then box.node.hidden = hidden and true or false end end
-  p.title:SetText(src.label .. "  |cff888888(drag)|r")
+  p.title:SetText(src.label .. "  |cff888888(拖曳)|r")
   p.active:SetChecked(not def.skip)
   setHidden(refs.buffGroup, not buffable)                    -- whole recast+buffs block toggles as one box
   setHidden(refs.throwGroup, not throwable)                 -- the chum-only "Throw" field

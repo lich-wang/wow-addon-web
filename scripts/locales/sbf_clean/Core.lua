@@ -46,8 +46,8 @@ end
 --   * The CAST itself fires via an OVERRIDE-click that SBF.Apply installs over the key — the "blessed"
 --     hardware path that carries the protected cast for our INSECURE smart button. The bare native binding
 --     alone runs the PreClick but silently drops the cast, so the override is what actually fishes.
-_G["BINDING_HEADER_SBF"] = "SBF - Single-Button Fishing"
-_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "Action / Cast"
+_G["BINDING_HEADER_SBF"] = "SBF - 一键钓鱼 (Single-Button Fishing)"
+_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "操作 / 抛竿"
 
 -- Lazy GECReader handle (the one live-getter layer — the ONLY code that touches Blizzard APIs). Looked up
 -- at call time (never cached at load) with silent=true so a load-order slip / missing lib yields nil instead
@@ -720,12 +720,12 @@ end
 -- SBF.FISHING_LINE. The generic "base" line (356) is intentionally omitted — it's the legacy pre-split fishing
 -- skill, not an expansion, and reports odd values.
 SBF.SKILLBOOK_ORDER = {
-  { "classic",      "经典旧世" },        { "outland",     "外域" },
-  { "northrend",    "诺森德" },          { "cataclysm",   "大地的裂变" },
-  { "pandaria",     "潘达利亚" },        { "draenor",     "德拉诺" },
-  { "legion",       "军团再临" },        { "bfa",         "争霸艾泽拉斯" },
-  { "shadowlands",  "暗影国度" },        { "dragonflight","巨龙时代" },
-  { "warwithin",    "地心之战" },        { "midnight",    "至暗之夜" },
+  { "classic",      "Classic" },        { "outland",     "Outland" },
+  { "northrend",    "Northrend" },      { "cataclysm",   "Cataclysm" },
+  { "pandaria",     "Pandaria" },       { "draenor",     "Draenor" },
+  { "legion",       "Legion" },         { "bfa",         "Battle for Azeroth" },
+  { "shadowlands",  "Shadowlands" },    { "dragonflight","Dragonflight" },
+  { "warwithin",    "The War Within" }, { "midnight",    "Midnight" },
 }
 
 -- Per-expansion fishing skill for a GECStore character index (nil = current character). Reads the professions
@@ -740,7 +740,7 @@ function SBF.SkillBookFor(charIdx)
   if SBF.CLASSIC_GEAR then                                       -- Forever / Classic: one Fishing skill, one row
     local line = SBF.FISHING_LINE.base
     local l = lines and lines[line]
-    return { { label = "钓鱼技能", line = line, level = l and l.level, max = l and l.max, has = l ~= nil, current = true } }
+    return { { label = "Fishing", line = line, level = l and l.level, max = l and l.max, has = l ~= nil, current = true } }
   end
   local curLine = zoneFishingLine()
   local out = {}
@@ -3132,7 +3132,7 @@ end
 function SBF_OnAddonCompartmentEnter(_, menuButton)
   GameTooltip:SetOwner(menuButton or UIParent, "ANCHOR_LEFT")
   GameTooltip:SetText("Single-Button Fishing")
-  GameTooltip:AddLine("点击打开设置窗口。", 0.9, 0.9, 0.9)
+  GameTooltip:AddLine("Click to open the options window.", 0.9, 0.9, 0.9)
   GameTooltip:AddLine(((SBFDB.minimap and SBFDB.minimap.hide) and "Right-click to SHOW the minimap button."
     or "Right-click to hide the minimap button."), 0.7, 0.7, 0.7)
   GameTooltip:Show()
@@ -3867,15 +3867,3 @@ SlashCmdList.SBF = function(msg)
     if SBF.ToggleOptions then SBF.ToggleOptions() end
   end
 end
-
--- [zhCN Localization Inject]
-_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
-_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"
-
--- [zhCN Localization Inject]
-_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
-_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"
-
--- [zhCN Localization Inject]
-_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
-_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"

@@ -290,12 +290,12 @@ local function Build()
       -- have a skill value: WHITE "Skill:" when live/warm, GRAY when it's cached (from a prior session)
       parts[#parts + 1] = (warm and "技能等级: " or "|cff888888技能等级:|r ") .. s
     elseif warm then
-      parts[#parts + 1] = "|cff888888No fishing skill here|r"   -- data loaded + this line absent = genuinely none
+      parts[#parts + 1] = "|cff888888未学会钓鱼技能|r"   -- data loaded + this line absent = genuinely none
     else
-      parts[#parts + 1] = "|cff888888钓鱼技能: 未加载|r"       -- cold + uncached: nudge to open a journal
+      parts[#parts + 1] = "|cff888888技能等级: 未加载|r"       -- cold + uncached: nudge to open a journal
     end
     local perc = SBF.GetPerception and SBF.GetPerception() or 0
-    if perc and perc > 0 then parts[#parts + 1] = "Perc: |cffffd100" .. perc .. "|r" end
+    if perc and perc > 0 then parts[#parts + 1] = "感知加成: |cffffd100" .. perc .. "|r" end
     -- the worn pole's counter (The Coiled Huntress: Venom), in dark green, only when the pole carries one
     local vn, vword
     if SBF.PoleCounter then vn, vword = SBF.PoleCounter() end
@@ -358,13 +358,13 @@ local function Build()
   end
   panel._showTab = ShowTab
   local tabDefs = {
-    { key = "buttons",  label = "配置方案" },
-    { key = "behavior", label = "功能设置" },
-    { key = "keys",     label = "按键绑定" },
-    { key = "skillbook", label = "钓鱼技能" },
+    { key = "buttons",  label = "配装方案" },
+    { key = "behavior", label = "常用设置" },
+    { key = "keys",     label = "按键设置" },
+    { key = "skillbook", label = "专业技能" },
     { key = "log",      label = "钓鱼日志" },
-    { key = "stats",    label = "钓鱼统计" },
-    { key = "world",    label = "世界追踪" },   -- expansion/season content watches (Patiently Rewarded, ...)
+    { key = "stats",    label = "数据统计" },
+    { key = "world",    label = "世界内容" },   -- expansion/season content watches (Patiently Rewarded, ...)
     { key = "about",    label = "关于插件" },
   }
   -- Theme.Window's `content` frame already STARTS below its 34px header band, so the tabs/pages anchor from
@@ -636,14 +636,14 @@ local function Build()
   end
 
   local plbl = pBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-  plbl:SetPoint("TOPLEFT", 8, -8 - MBAR_H); plbl:SetText("方案:")
+  plbl:SetPoint("TOPLEFT", 8, -8 - MBAR_H); plbl:SetText("配装方案:")
 
   local profileDD = CreateFrame("DropdownButton", nil, pBtn, "WowStyle1DropdownTemplate")
   profileDD:SetSize(180, 22); profileDD:SetPoint("LEFT", plbl, "RIGHT", 6, 0); Theme.SkinDropdown(profileDD)
 
   -- the four CRUD buttons, laid out left-to-right after the dropdown
   local addBtn = CreateFrame("Button", nil, pBtn, "UIPanelButtonTemplate")
-  addBtn:SetSize(48, 22); addBtn:SetPoint("LEFT", profileDD, "RIGHT", 8, 0); addBtn:SetText("添加"); Theme.Button(addBtn)
+  addBtn:SetSize(48, 22); addBtn:SetPoint("LEFT", profileDD, "RIGHT", 8, 0); addBtn:SetText("新建"); Theme.Button(addBtn)
   dupBtn = CreateFrame("Button", nil, pBtn, "UIPanelButtonTemplate")   -- assigns the forward-declared upvalue
   dupBtn:SetSize(76, 22); dupBtn:SetPoint("LEFT", addBtn, "RIGHT", 4, 0); dupBtn:SetText("复制"); Theme.Button(dupBtn)
   remBtn = CreateFrame("Button", nil, pBtn, "UIPanelButtonTemplate")   -- assigns the forward-declared upvalue
@@ -659,7 +659,7 @@ local function Build()
   local indivChk = CreateFrame("CheckButton", nil, pBtn, "UICheckButtonTemplate")
   indivChk:SetSize(22, 22); indivChk:SetPoint("LEFT", remBtn, "RIGHT", 14, 0); Theme.Checkbox(indivChk)
   local indivLbl = pBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-  indivLbl:SetPoint("LEFT", indivChk, "RIGHT", 2, 0); indivLbl:SetText("独立配置"); Theme.Font(indivLbl, "text")
+  indivLbl:SetPoint("LEFT", indivChk, "RIGHT", 2, 0); indivLbl:SetText("独立设置"); Theme.Font(indivLbl, "text")
   barTip(indivChk, SCOPE_TIP_TITLE, SCOPE_TIP_BODY)                 -- tooltip on the box
   labelHover(indivLbl, indivLbl:GetStringWidth(), SCOPE_TIP_TITLE, SCOPE_TIP_BODY)   -- ...and the word
   -- forward-declared sync (defined after refreshProfileBar exists); re-checks the box to match the live scope.
@@ -688,7 +688,7 @@ local function Build()
 
   -- row 2: rename editbox + Set-as-default + Save + Revert (all four grouped: "edit THIS profile")
   local nlbl = pBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-  nlbl:SetPoint("TOPLEFT", 8, -42 - MBAR_H); nlbl:SetText("名称:")
+  nlbl:SetPoint("TOPLEFT", 8, -42 - MBAR_H); nlbl:SetText("方案名称:")
   local nameEb = CreateFrame("EditBox", nil, pBtn, "InputBoxTemplate")
   nameEb:SetSize(180, 20); nameEb:SetPoint("LEFT", nlbl, "RIGHT", 10, 0); nameEb:SetAutoFocus(false); Theme.EditBox(nameEb)
   local defBtn = CreateFrame("Button", nil, pBtn, "UIPanelButtonTemplate")
@@ -859,7 +859,7 @@ local function Build()
   local gearDD = CreateFrame("DropdownButton", nil, pBtn, "WowStyle1DropdownTemplate")
   gearDD:SetSize(150, 22); gearDD:SetPoint("LEFT", glbl, "RIGHT", 6, 0); Theme.SkinDropdown(gearDD)
   gearDD:SetupMenu(function(_dd, root)
-    root:CreateRadio("(无)",
+    root:CreateRadio("(none)",
       function() return not (SBF.working and SBF.working.equipSet) end,
       function() if SBF.working then SBF.working.equipSet = nil; markDirty() end; if refreshGear then refreshGear() end end)
     for _, name in ipairs((SBF.EquipmentSetNames and SBF.EquipmentSetNames()) or {}) do
@@ -883,7 +883,7 @@ local function Build()
     return 3
   end
   local emBtn = CreateFrame("Button", nil, pBtn, "UIPanelButtonTemplate")
-  emBtn:SetSize(140, 22); emBtn:SetPoint("LEFT", gearDD, "RIGHT", 6, 0); emBtn:SetText("装备管理器"); Theme.Button(emBtn)
+  emBtn:SetSize(140, 22); emBtn:SetPoint("LEFT", gearDD, "RIGHT", 6, 0); emBtn:SetText("装备管理"); Theme.Button(emBtn)
   emBtn:SetScript("OnClick", function()
     -- Edit flow: equip the profile's gear FIRST (so you're editing the configured set — and it snapshots
     -- your normal gear if you weren't already in it), then flag that we're editing so SBF suspends auto-equip
@@ -1040,7 +1040,7 @@ local function Build()
   -- fishing-pole row: a "Fishing pole:" label + a drop box sized to MATCH the slot-list icons (ICON=37),
   -- left-aligned to the slot rows' icon column (STRIP_X). Drop a pole to set SBF.working.pole; right-click clears.
   local plbl2 = pBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-  plbl2:SetPoint("TOPLEFT", 8, -GEAR_TOP - 44); plbl2:SetText("鱼竿栏位:")
+  plbl2:SetPoint("TOPLEFT", 8, -GEAR_TOP - 44); plbl2:SetText("专用鱼竿:")
   local poleBtn = CreateFrame("Button", nil, pBtn, "BackdropTemplate")
   poleBtn:SetSize(ICON, ICON); poleBtn:SetPoint("TOPLEFT", STRIP_X + 2, -GEAR_TOP - 38)   -- ICON matches the slot icons; +2px nudge to align with the slot rows' icon column
   poleBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -1051,7 +1051,7 @@ local function Build()
   -- shown only while the box is empty: SBF equips no pole until the player picks one (it never guesses)
   local poleWarn = pBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   poleWarn:SetPoint("LEFT", poleBtn, "RIGHT", 8, 0)
-  poleWarn:SetText("|cffff9933未设置鱼竿。|r 将鱼竿拖到此处，或保存在本配置方案的配装中。")
+  poleWarn:SetText("|cffff9933未设置鱼竿。|r 将鱼竿拖曳至此处，或保存在本方案的配装中。")
   poleWarn:Hide()
   local function setPole(id)
     if SBF.working then SBF.working.pole = id; SBF.working.poleCleared = (id == nil) or nil; markDirty() end
@@ -1073,7 +1073,7 @@ local function Build()
     local pole = SBF.working and SBF.working.pole
     if pole then GameTooltip:SetItemByID(pole)
     else
-      GameTooltip:SetText("鱼竿", accentRGB())
+      GameTooltip:SetText("钓鱼竿", accentRGB())
       GameTooltip:AddLine(SBF.CLASSIC_GEAR
         and "No pole set. SBF uses the pole saved in this profile's gear set if it has one, otherwise none. Drag the pole you want here."
         or "No pole set. SBF picks up the pole saved in this profile's gear set, or the pole you're wearing, unless you cleared the box yourself. Drag the pole you want here.",
@@ -1098,7 +1098,7 @@ local function Build()
   -- re-sync the gear widgets to the active profile's working-copy values (called from refreshProfileBar)
   refreshGear = function()
     local w = SBF.working
-    if gearDD.SetText then gearDD:SetText((w and w.equipSet) or "(无)") end
+    if gearDD.SetText then gearDD:SetText((w and w.equipSet) or "(none)") end
     local pole = w and w.pole
     local tex = pole and (select(5, GetItemInfoInstant(pole)))
     poleBtn.icon:SetTexture(tex or ""); poleBtn.icon:SetShown(tex ~= nil)
@@ -1129,7 +1129,7 @@ local function Build()
     -- hidden in simple mode (just the Default profile) and shown with the live name in advanced mode.
     local adv = SBFDB.advancedMode ~= false
     headerProfileFS:SetShown(adv)
-    if adv then headerProfileFS:SetText("当前配置: " .. Theme.Accent(curProfileName())) end
+    if adv then headerProfileFS:SetText("当前方案: " .. Theme.Accent(curProfileName())) end
     -- bindList re-Show()s the bind buttons/rows; re-apply mode visibility so simple mode stays hidden.
     if panel and panel._relaySimpleMode then panel._relaySimpleMode() end
   end
@@ -1164,8 +1164,8 @@ local function Build()
         function() selectProfile(e.id) end)
     end
   end)
-  barTip(profileDD, "Active profile", "Switch which saved fishing profile is active. The default profile (shown with \"(default)\") is the location fallback.")
-  labelHover(plbl, 44, "Active profile", "Switch which saved fishing profile is active. The default profile (shown with \"(default)\") is the location fallback.")
+  barTip(profileDD, "当前配装方案", "切换当前激活的钓鱼配装方案。标有“(默认)”的方案在未匹配到特定地点绑定时作为后备方案使用。")
+  labelHover(plbl, 44, "当前配装方案", "切换当前激活的钓鱼配装方案。标有“(默认)”的方案在未匹配到特定地点绑定时作为后备方案使用。")
 
   -- shared: create a profile from `fromId` (nil = default) named `name`, activate + rebuild + refresh.
   local function createAndActivate(name, fromId)
@@ -1199,7 +1199,7 @@ local function Build()
     end
     StaticPopup_Show("SBF_DUP_PROFILE")
   end)
-  barTip(dupBtn, "Duplicate profile", "Copy the current profile (slots and all) under a new name and switch to it.")
+  barTip(dupBtn, "复制方案", "将当前方案完整复制为一个新方案并立即切换至该方案。")
 
   -- Remove: confirm, then remove the current profile. RemoveProfile refuses the default and any
   -- missing id (returns false + a message); on success it falls the active profile back to the default.
@@ -1239,7 +1239,7 @@ local function Build()
     if SBF.SetDefaultProfile then SBF.SetDefaultProfile(curProfileId()) end
     refreshProfileBar()
   end)
-  barTip(defBtn, "Set as default", "Make this the default profile - the one used when no location binding matches. Only one profile is the default.")
+  barTip(defBtn, "设为默认方案", "将此方案设为默认后备方案。当所在区域未绑定任何独立方案时，将自动使用此方案。")
 
   -- ===== Simple/Advanced mode =====
   -- ADVANCED (advancedMode true, default): the full profile bar + bind section show, gear block sits below
@@ -1384,7 +1384,7 @@ local function Build()
   -- meant turning on "Show hidden items" and clicking each one.) Re-renders any built strips so the
   -- restored items reappear without a tab bounce.
   local unhideBtn = CreateFrame("Button", nil, pBe, "UIPanelButtonTemplate")
-  unhideBtn:SetSize(130, 22); unhideBtn:SetText("恢复所有隐藏物品"); Theme.Button(unhideBtn)
+  unhideBtn:SetSize(130, 22); unhideBtn:SetText("恢复所有隐藏项"); Theme.Button(unhideBtn)
   unhideBtn:SetScript("OnClick", function()
     local n = 0
     for _, catSlot in pairs(ns.CATALOG_SLOT or {}) do n = n + ((SBF.UnhideAll and SBF.UnhideAll(catSlot)) or 0) end
@@ -1408,7 +1408,7 @@ local function Build()
   helpTip(irf, "set.idleTimeout")
 
   -- ---- Optimizations: Focus-audio settings button ----
-  local faBtn = Theme.MakeButton(pBe, 130, "音频设置…",
+  local faBtn = Theme.MakeButton(pBe, 130, "声音详细设置…",
     function() if SBF.ShowFocusAudio then SBF.ShowFocusAudio() end end)
   faBtn:SetScript("OnEnter", function(self)
     showTip(self, "Focus audio settings", "Set the sound levels SBF switches to while fishing (master/SFX/music/ambience/dialog).")
@@ -1428,21 +1428,21 @@ local function Build()
   -- ---- Audio feedback: the 5 sound rows (check + skinned dropdown + Test), each returned as a row spec ----
   local function kit(name, fb) return (SOUNDKIT and SOUNDKIT[name]) or fb end
   local SOUND_CHOICES = {
-    { label = "就位确认叮声", id = kit("READY_CHECK", 8960) },
-    { label = "团队警告音",     id = kit("RAID_WARNING", 8959) },
-    { label = "角色升级音",         id = 888 },
-    { label = "打开拍卖行",     id = kit("AUCTION_WINDOW_OPEN", 5274) },
-    { label = "小地图点击",         id = kit("MAP_PING", 3175) },
-    { label = "任务失败音",     id = kit("IG_QUEST_FAILED", 847) },
-    { label = "欢呼声 (Yay)",              filePath = "Interface\\AddOns\\SBF\\sounds\\YAY.mp3" },
-    { label = "自定义音频文件", file = true },
+    { label = "Ready Check ding", id = kit("READY_CHECK", 8960) },
+    { label = "Raid warning",     id = kit("RAID_WARNING", 8959) },
+    { label = "Level up",         id = 888 },
+    { label = "Auction open",     id = kit("AUCTION_WINDOW_OPEN", 5274) },
+    { label = "Map ping",         id = kit("MAP_PING", 3175) },
+    { label = "Quest failed",     id = kit("IG_QUEST_FAILED", 847) },
+    { label = "Yay",              filePath = "Interface\\AddOns\\SBF\\sounds\\YAY.mp3" },
+    { label = "Custom file (sounds/cast.ogg)", file = true },
   }
   local NAMED_SOUND_FILES = {}
   for _, o in ipairs(SOUND_CHOICES) do if o.filePath then NAMED_SOUND_FILES[o.filePath] = true end end
   -- Aligned checkbox|selector table: give every sound row's CHECK cell the same fixed width = the widest
   -- of the 5 labels (measured now), so column 2 (dropdown + Test) starts at the same x on every row and
   -- the whole thing left-packs (no right-binding). Rows stay single row boxes, so they can't drift.
-  local SOUND_LABELS = { "开始钓鱼甩竿", "抛竿施法失败", "脱钩未钓到鱼", "超时未咬钩", "成就事件触发" }
+  local SOUND_LABELS = { "Fishing start", "Cast fail", "No fish hooked", "Expired (ran full, no bite)", "Patiently Rewarded" }
   local _lw = pBe:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); _lw:Hide()
   local _widest = 0
   for _, s in ipairs(SOUND_LABELS) do _lw:SetText(s); _widest = math.max(_widest, _lw:GetStringWidth() or 0) end
@@ -1475,7 +1475,7 @@ local function Build()
           end)
       end
     end)
-    local t = Theme.MakeButton(pBe, 46, "Test", function() if play then play() end end); t:SetHeight(20)
+    local t = Theme.MakeButton(pBe, 46, "测试", function() if play then play() end end); t:SetHeight(20)
     return { dir = "row", align = "center",
       -- basis = shared check-column width so every dropdown starts at the same x (aligned table, left-packed)
       { check = { label = label, get = function() return SBFDB[keys.enable] end,
@@ -1491,7 +1491,7 @@ local function Build()
     slotDD:SetSize(110, 22); Theme.SkinDropdown(slotDD)
     slotDD:SetupMenu(function(_dd, rootMenu)
       for s = 2, 5 do
-        rootMenu:CreateRadio("视角 " .. s,
+        rootMenu:CreateRadio("View " .. s,
           function() return SBF.CameraViewSlot and SBF.CameraViewSlot() == s end,
           function() SBFDB.reachViewSlot = s end)
       end
@@ -1505,7 +1505,7 @@ local function Build()
     local petDD = CreateFrame("DropdownButton", nil, pBe, "WowStyle1DropdownTemplate")
     petDD:SetSize(140, 22); Theme.SkinDropdown(petDD)
     petDD:SetupMenu(function(_dd, rootMenu)
-      rootMenu:CreateRadio("保持原样",
+      rootMenu:CreateRadio("Leave alone",
         function() return SBF.CharPet().stance == nil end,
         function() SBF.CharPet().stance = nil end)
       for _, st in ipairs(SBF.PetStances()) do
@@ -1582,7 +1582,7 @@ local function Build()
       local dd = CreateFrame("DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
       dd:SetSize(150, 22); Theme.SkinDropdown(dd)
       dd:SetupMenu(function(_dd, rootMenu)
-        rootMenu:CreateRadio("无提示音",
+        rootMenu:CreateRadio("No sound",
           function() return row.soundOn == false end,
           function() row.soundOn = false end)
         for _, o in ipairs(SOUND_CHOICES) do
@@ -1633,7 +1633,7 @@ local function Build()
     end
     return groups
   end
-  local zgLabel = "特殊区域增益发光提示 (拥有特殊钓鱼Buff时光晕高亮)"
+  local zgLabel = "Zone buff glow  (screen edges glow while a special fishing buff is on you)"
   -- Patiently Rewarded's alert (glow + announce + sound) lives on the World tab now; this row points there.
   local prSoundRowSpec = { pad = { l = 26 },
     { note = { text = "Patiently Rewarded: its alert (glow, announcement and sound) is on the World tab.", color = "textMuted" } } }
@@ -1642,9 +1642,9 @@ local function Build()
   local tree = {
     gap = "section", pad = { t = 8, r = 10, b = 12, l = 4 },
 
-    { section = "操作界面设置",
+    { section = "界面与操作设置",
       { dir = "row",
-        { check = C("双键模式 (抛竿与拾取分离)",
+        { check = C("双按键模式 (独立抛竿与拾取)",
             function() return SBFDB.requireTwoButtons end,
             function(v)
               SBFDB.requireTwoButtons = v and true or nil
@@ -1655,7 +1655,7 @@ local function Build()
               -- it ("Enable interact key" / softTargetInteract) is on the moment the mode is chosen
               if SBF.EnsureInteractKeyCVar then SBF.EnsureInteractKeyCVar() end
             end, "set.twoButton"), grow = 1 },
-        { check = C("启用手柄控制器支持",
+        { check = C("启用游戏手柄支持",
             function() return SBFDB.gamepadEnable and true or false end,
             function(v)
               SBFDB.gamepadEnable = v and true or false
@@ -1668,7 +1668,7 @@ local function Build()
             end, "set.gamepadEnable"), grow = 1, id = "gamepad" },
       },
       { dir = "row",
-        { check = C("启用鼠标右键双击钓鱼",
+        { check = C("启用鼠标双击钓鱼",
             function() return SBFDB.mouse.enabled end,
             function(v)
               SBFDB.mouse.enabled = v and true or false
@@ -1677,27 +1677,27 @@ local function Build()
               if SBF.MouseApply then SBF.MouseApply() end
             end, "set.useMouse"), id = "useMouse" },   -- no grow: the click-speed group sits grouped next to this checkbox
         { dir = "row", align = "center", id = "clickSpeed", hidden = not (SBFDB.mouse.enabled and true or false),
-          { note = { text = "双击判定:", color = "text" } }, { frame = mdf }, { note = { text = "sec", color = "text" } },
+          { note = { text = "双击判定间隔:", color = "text" } }, { frame = mdf }, { note = { text = "秒", color = "text" } },
         },
       },
     },
 
     { section = "钓鱼行为设置",
-      { check = C("每次甩竿前坐下",
+      { check = C("每次抛竿前自动坐下",
           function() return SBFDB.sitBeforeCast end, function(v) SBFDB.sitBeforeCast = v end, "set.sitBeforeCast"), id = "sit" },
-      { check = C("未装备鱼竿时发出警告提示",
+      { check = C("未装备鱼竿时发出警告",
           function() return SBFDB.warnNoPole ~= false end,
           function(v) SBFDB.warnNoPole = v and true or false end, "set.warnNoPole"),
         hidden = not SBF.CLASSIC_GEAR },
       { check = C("进入战斗时优先反击而非拾取",
           function() return SBFDB.combatReleasesLoot ~= false end,
           function(v) SBFDB.combatReleasesLoot = v and true or false end, "set.combatReleasesLoot") },
-      { check = C("Shift+点击 临时关闭钓鱼动作",
+      { check = C("Shift+点击关闭施放钓鱼",
           function() return SBFDB.guardFishingOff ~= false end,
           function(v) SBFDB.guardFishingOff = v and true or false end, "set.guardFishingOff") },
       { check = C("钓鱼时自动下坐骑 (飞行中除外)",
           function() return SBFDB.autoDismount end, function(v) SBFDB.autoDismount = v end, "set.autoDismount") },
-      { check = C("甩竿时刷新钓鱼技能点数",
+      { check = C("抛竿时刷新技能等级",
           function() return SBFDB.refreshSkillOnCast ~= false end,
           function(v) SBFDB.refreshSkillOnCast = v and true or false end, "set.refreshSkillOnCast") },
       { check = C(zgLabel,
@@ -1711,14 +1711,14 @@ local function Build()
       -- the per-watch rows (enable + color + sound); the whole group hides with the master toggle
       { id = "zgSub", hidden = #zgRowSpecs == 0 or (SBFDB.zoneIndicator and SBFDB.zoneIndicator.enabled == false) or false,
         unpack(zgRowSpecs) },
-      { check = C("进入战斗后自动隐藏界面",
+      { check = C("战斗中隐藏插件界面",
           function() return (SBFDB.combatWindowMode or "collapse") ~= "off" end,
           function(v) SBFDB.combatWindowMode = v and "collapse" or "off" end, "set.combatWindows") },
       -- The two labeled-field rows below match the checkboxes around them: pad.l = 26 starts the label at
       -- the same x as a checkbox's TEXT (24px box + 2px gap), and bigLabel raises the note's font from the
       -- note default (GameFontHighlightSmall) to the checkbox-label font. Addon-side on purpose — no lib edit.
       { dir = "row", align = "center", pad = { l = 26 },
-        { note = { text = "施法失败退避间隔", color = "text",
+        { note = { text = "抛竿失败冷却时间", color = "text",
                    onBuild = function(fs) bigLabel(fs); helpLabel(fs, "set.castBackoff") end } },
         { frame = cbf }, { note = { text = "sec", color = "text" } },
       },
@@ -1726,50 +1726,50 @@ local function Build()
       -- inside "Profile advanced mode" glued to the gear checkbox, but the standby made it genuinely
       -- independent of gear — it fires for everyone — so it belongs with the fishing behavior.
       { dir = "row", align = "center", pad = { l = 26 },
-        { note = { text = "闲置超时时间", color = "text",
+        { note = { text = "闲置超时换装时间", color = "text",
                    onBuild = function(fs) bigLabel(fs); helpLabel(fs, "set.idleTimeout") end } },
         { frame = irf }, { note = { text = "sec", color = "text" } },
-        { note = { text = "(超时后 SBF 待机直至下次抛竿)", color = "textMuted" } },
+        { note = { text = "(超时后停止动作并恢复常规装备)", color = "textMuted" } },
       },
     },
 
     -- Pet options are per character (a hunter's choice shouldn't follow you to a mage). Always shown: checking
     -- for a pet would make the section come and go as the pet is dismissed.
-    { section = "宠物协同 (当前角色)",
+    { section = "宠物设置 (当前角色)",
       { dir = "row", align = "center", pad = { l = 26 },
         { note = { text = "钓鱼时宠物姿态", color = "text",
                    onBuild = function(fs) bigLabel(fs); helpLabel(fs, "set.petStance") end } },
         { frame = cam.pet },
       },
-      { check = C("宠物战斗时自动协同反击",
+      { check = C("宠物进入战斗时协助攻击",
           function() return SBF.CharPet().fight and true or false end,
           function(v) SBF.CharPet().fight = v and true or nil end, "set.petFight") },
       { dir = "row", align = "center", pad = { l = 26 },
-        { check = C("优先选中宠物正在攻击的目标",
+        { check = C("优先选定宠物正在攻击的目标",
             function() return SBF.CharPet().fightTarget ~= false end,
             function(v) SBF.CharPet().fightTarget = v and true or false end, "set.petFightTarget") } },
     },
 
-    { section = "Item pickers",
+    { section = "物品选择器",
       { dir = "row",
-        { check = C("Show toys I don't own",
+        { check = C("显示未拥有的玩具",
             function() return SBFDB.showUnownedToys ~= false end, function(v) SBFDB.showUnownedToys = v end, "set.showUnownedToys"), grow = 1 },
-        { check = C("Show items not in my bags",
+        { check = C("显示不在背包中的物品",
             function() return SBFDB.showUnownedItems ~= false end, function(v) SBFDB.showUnownedItems = v end, "set.showUnownedItems"), grow = 1 },
       },
-      { check = C("Show Warband items",
+      { check = C("显示战团物品",
           function() return SBFDB.showWarbandItems ~= false end, function(v) SBFDB.showWarbandItems = v end, "set.showWarbandItems") },
       -- the way BACK from a shift+left hide. Off by default (hidden means hidden); on, suppressed items
       -- reappear dimmed in every picker so a shift+left-click can restore them.
       { dir = "row", align = "center",
-        { check = C("Show hidden items  (dimmed - shift+left-click one to restore it)",
+        { check = C("显示已隐藏物品 (变暗显示 - Shift+左键恢复)",
             function() return SBFDB.showHiddenItems end, function(v) SBFDB.showHiddenItems = v and true or false end, "set.showHiddenItems"), grow = 1 },
         { frame = unhideBtn },
       },
     },
 
-    { section = "Minimap",
-      { check = C("Hide the minimap button",
+    { section = "小地图",
+      { check = C("隐藏小地图图标",
           function() return SBFDB.minimap and SBFDB.minimap.hide end,
           function(v)
             SBFDB.minimap = SBFDB.minimap or {}
@@ -1778,12 +1778,12 @@ local function Build()
           end, "set.hideMinimap") },
     },
 
-    { section = "Optimizations",
-      { check = C("Ultra fast loot  (grab everything instantly, no loot window)",
+    { section = "性能与音效优化",
+      { check = C("极速自动拾取 (瞬间拾取全部物品，无需弹出拾取窗口)",
           function() return SBFDB.fastLoot end,
           function(v) SBFDB.fastLoot = v and true or false; if SBF.ApplyFastLoot then SBF.ApplyFastLoot() end end, "set.fastLoot") },
       { dir = "row",
-        { check = C("Focus fishing",
+        { check = C("钓鱼专注音效 (调大水声/静音杂音)",
             function() return SBFDB.focusAudio and SBFDB.focusAudio.enabled end,
             function(v) SBFDB.focusAudio = SBFDB.focusAudio or {}; SBFDB.focusAudio.enabled = v
               if not v and SBF.RestoreAudio then SBF.RestoreAudio() end
@@ -1792,8 +1792,8 @@ local function Build()
       },
     },
 
-    { section = "Profile advanced mode",
-      { check = C("Enable advanced mode",
+    { section = "高级方案模式",
+      { check = C("启用高级方案模式",
           function() return SBFDB.advancedMode ~= false end,
           function(v) SBFDB.advancedMode = v
             if panel and panel._relaySimpleMode then panel._relaySimpleMode() end
@@ -1801,57 +1801,57 @@ local function Build()
             if SBF._welcomeRefreshAdvanced then SBF._welcomeRefreshAdvanced() end
           end, "set.advancedMode"), id = "adv" },
       { id = "advSub", hidden = (SBFDB.advancedMode == false),
-        { check = C("Auto-swap profiles by location",
+        { check = C("根据所在地点自动切换方案",
             function() return SBFDB.autoSwap ~= false end, function(v) SBFDB.autoSwap = v end, "set.autoSwap") },
-        { check = C("Ask to save unsaved changes when closing SBF",
+        { check = C("关闭界面时提示保存未保存的修改",
           function() return SBFDB.warnUnsavedOnClose ~= false end,
           function(v) SBFDB.warnUnsavedOnClose = v and true or false end, "set.warnUnsavedOnClose") },
-      { check = C("Flash on profile swap",
+      { check = C("切换方案时屏幕边缘闪烁提示",
             function() return SBFDB.swapFlash ~= false end, function(v) SBFDB.swapFlash = v end, "set.swapFlash") },
         -- gear restore rides the shared idle timeout (the "Idle timeout" field under Fishing behavior)
-        { check = C("Auto-restore gear when idle  (at the idle timeout)",
+        { check = C("闲置超时后自动恢复常规装备",
             function() return SBFDB.idleRestoreEnabled end, function(v) SBFDB.idleRestoreEnabled = v end, "set.idleRestore") },
       },
     },
 
     -- Bobber reach (Reach.lua). Classic only (hidden on retail and WoW: Forever). The two mode boxes are exclusive: ticking one clears
     -- the other; with neither ticked a far bobber is reeled by pointing at it with the mouse.
-    { section = "Bobber reach", hidden = not (SBF.ShowReachSettings and SBF.ShowReachSettings()),
+    { section = "浮漂距离判定", hidden = not (SBF.ShowReachSettings and SBF.ShowReachSettings()),
       { note = { text = "The bobber has to land where your camera can see it. Zoomed all the way in or looking "
           .. "down at your feet, far casts always read as out of reach: zoom out a little and look out over the water.",
           color = "textMuted" } },
-      { check = C("Extend the interact key's reach while fishing",
+      { check = C("钓鱼期间扩展交互按键有效距离",
           function() return (SBF.ReachYards and SBF.ReachYards() or 0) > 0 end,
           function(v) SBFDB.bobberReach = (not v) and 0 or nil; if not v and SBF.RestoreBobberReach then SBF.RestoreBobberReach() end end,
           "set.bobberReach") },
       -- the saved fishing camera: on/off + which view slot it lives in + "Save current camera"
-      { check = C("Use my saved camera when I start fishing",
+      { check = C("开始钓鱼时自动切换至保存的视角",
           function() return SBF.UseSavedCamera and SBF.UseSavedCamera() end,
           function(v) SBFDB.reachCamera = v and "saved" or nil end, "set.reachCamera") },
       { dir = "row", align = "center", gap = 6,
-        { note = { text = "Camera view slot:", color = "text" } }, { frame = cam.slot }, { frame = cam.save } },
-      { check = C("Recast when the bobber lands out of reach",
+        { note = { text = "视角槽位:", color = "text" } }, { frame = cam.slot }, { frame = cam.save } },
+      { check = C("当浮漂超出距离时自动重新抛竿",
           function() return SBF.ReachMode and SBF.ReachMode() == "recast" end,
           function(v) SBFDB.reachMode = v and "recast" or "mouseover" end, "set.reachRecast") },
       -- the checkbox is the whole alert (message + sound); Test previews both
-      soundRowSpec("Out of reach", { enable = "reachSound", mode = "reachSoundMode", id = "reachSoundId" },
+      soundRowSpec("超出距离提示", { enable = "reachSound", mode = "reachSoundMode", id = "reachSoundId" },
         function() SBF.PlayReachSound(); SBF.ShowReachAlert() end, "set.reachSound", { silent = "No sound (message only)" }),
     },
 
-    { section = "Audio feedback",
+    { section = "音效提示",
       -- a SINGLE left-aligned column: all 5 sound rows stacked, each row left-packed (check with no grow,
       -- then dropdown + Test next to it). A half-width column couldn't fit a check+dropdown+Test row.
-      soundRowSpec("Fishing start", { enable = "castSound", mode = "castSoundMode", id = "castSoundId" }, SBF.PlayCastSound, "set.castSound"),
-      soundRowSpec("Cast fail", { enable = "castFailSound", mode = "castFailSoundMode", id = "castFailSoundId" }, SBF.PlayCastFailSound, "set.castFailSound"),
-      soundRowSpec("No fish hooked", { enable = "noFishSound", mode = "noFishSoundMode", id = "noFishSoundId" }, SBF.PlayNoFishSound, "set.noFishSound"),
-      soundRowSpec("Expired (ran full, no bite)", { enable = "expiredSound", mode = "expiredSoundMode", id = "expiredSoundId" }, SBF.PlayExpiredSound, "set.expiredSound"),
-      soundRowSpec("Nothing (empty line)", { enable = "nothingSound", mode = "nothingSoundMode", id = "nothingSoundId" }, SBF.PlayNothingSound, "set.nothingSound"),
+      soundRowSpec("抛竿入水", { enable = "castSound", mode = "castSoundMode", id = "castSoundId" }, SBF.PlayCastSound, "set.castSound"),
+      soundRowSpec("抛竿失败", { enable = "castFailSound", mode = "castFailSoundMode", id = "castFailSoundId" }, SBF.PlayCastFailSound, "set.castFailSound"),
+      soundRowSpec("脱钩/未钓到鱼", { enable = "noFishSound", mode = "noFishSoundMode", id = "noFishSoundId" }, SBF.PlayNoFishSound, "set.noFishSound"),
+      soundRowSpec("超时未咬钩", { enable = "expiredSound", mode = "expiredSoundMode", id = "expiredSoundId" }, SBF.PlayExpiredSound, "set.expiredSound"),
+      soundRowSpec("空竿", { enable = "nothingSound", mode = "nothingSoundMode", id = "nothingSoundId" }, SBF.PlayNothingSound, "set.nothingSound"),
       prSoundRowSpec,
     },
 
-    { section = "Visuals",
+    { section = "外观设置",
       { dir = "row", align = "center",
-        { note = { text = "Window opacity", color = "text", onBuild = function(fs) helpLabel(fs, "set.bgAlpha") end } },
+        { note = { text = "窗口透明度", color = "text", onBuild = function(fs) helpLabel(fs, "set.bgAlpha") end } },
         { frame = osl }, { note = { text = "0%", color = "textDim" }, id = "oval" }, { frame = rw },
       },
     },
@@ -1864,8 +1864,9 @@ local function Build()
   -- new season's seed row lands in the right group with no UI work.
   if pages.world then
     local pWo = attachPageScroll(pages.world, 490, 1)
-    local intro = { section = "世界追踪事件",
-      { note = { text = "资料片、赛季及特殊区域钓鱼事件追踪。触发时支持全屏光晕告警、屏幕公告以及音频提示。事件按所属资料片内容分组归类。",
+    local intro = { section = "Watches",
+      { note = { text = "Expansion, season and zone watches. Each row can glow the screen edges in its own "
+          .. "color, announce on screen, and play a sound. Rows are grouped by the content they belong to.",
           color = "textMuted" } },
     }
     local wtree = { gap = "section", pad = { t = 8, r = 10, b = 12, l = 4 }, intro }
@@ -1952,12 +1953,12 @@ local function Build()
   -- now a chip inside the GECStoreView widget (action chip replaces the old standalone checkbox).
   local logCountLbl = pLog:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   logCountLbl:SetPoint("TOPRIGHT", -8, 0); logCountLbl:SetJustifyH("RIGHT")
-  logCountLbl:SetText(#SBF.FishLog() .. " 条记录")
+  logCountLbl:SetText(#SBF.FishLog() .. " logged")
   local logMaxEb = CreateFrame("EditBox", nil, pLog, "InputBoxTemplate")
   logMaxEb:SetSize(46, 18); logMaxEb:SetAutoFocus(false); logMaxEb:SetNumeric(true); Theme.EditBox(logMaxEb)
   logMaxEb:SetPoint("RIGHT", logCountLbl, "LEFT", -8, 0); logMaxEb:SetText(tostring(SBFDB.fishlogMax or 150))
   local logMaxLbl = pLog:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-  logMaxLbl:SetPoint("RIGHT", logMaxEb, "LEFT", -4, 0); logMaxLbl:SetText("显示")
+  logMaxLbl:SetPoint("RIGHT", logMaxEb, "LEFT", -4, 0); logMaxLbl:SetText("显示条数")
   local function commitLogMax(s)
     local n = tonumber(s:GetText())
     if n and n >= 1 then
@@ -1970,7 +1971,7 @@ local function Build()
   logMaxEb:SetScript("OnEditFocusLost", commitLogMax)
   logMaxEb:SetScript("OnEscapePressed", function(s) commitLogMax(s); s:ClearFocus() end)
   logMaxEb:SetScript("OnEnter", function(self)
-    showTip(self, "显示记录行数", "最多在界面中显示的最新钓鱼记录条数。完整日志始终完整保存，默认 150 条。")
+    showTip(self, "Lines to show", "How many of the most recent log lines to DISPLAY. The full log is always kept (never trimmed). Default 150.")
   end)
   logMaxEb:SetScript("OnLeave", GameTooltip_Hide)
   -- Shared log-viewer widget: chip row (per-kind show/hide) + scrolling text body. The `action` chip
@@ -1989,7 +1990,7 @@ local function Build()
   local function kcol(name, fb) return (Theme.ColorToHex and Theme.ColorToHex(name)) or fb end
   local KIND_COLOR = { caught = kcol("caught","33ff33"), expired = kcol("expired","aaaaaa"), nothing = kcol("nothing","dd8faf"), missed = kcol("missed","ffaa44"), interrupt = kcol("interrupt","ff6060"), castfail = kcol("castfail","ff8844"), action = kcol("action","7fb0e6"), buff = kcol("buff","ffcf40"), skill = kcol("skill","c7a2ff"), chest = kcol("chest","c0d860"), gathered = kcol("gathered","c0d860"), unreachable = kcol("unreachable","e0b050"),
     start = kcol("start","45c4a0"), stop = kcol("stop","ff6060"), pause = kcol("pause","ffaa44"), resume = kcol("resume","45c4a0"), fold = kcol("fold","c080ff"), include = kcol("include","808080"), exclude = kcol("exclude","a0a0a0") }   -- session lifecycle markers
-  local KIND_LABEL = { caught = "已钓起", expired = "超时", nothing = "无鱼上钩", missed = "脱钩", interrupt = "打断", castfail = "抛竿失败", action = "动作", buff = "宝箱出现", skill = "技能提升", chest = "钓起宝箱", gathered = "采集", unreachable = "距离过远",
+  local KIND_LABEL = { caught = "CAUGHT", expired = "EXPIRED", nothing = "NOTHING", missed = "MISSED", interrupt = "interrupt", castfail = "cast-fail", action = "ACTION", buff = "chest up", skill = "SKILL UP", chest = "CHEST", gathered = "gathered", unreachable = "out of reach",
     start = "start", stop = "stop", pause = "pause", resume = "resume", fold = "fold", include = "incl", exclude = "excl" }
   -- Kinds we don't currently PRODUCE — hidden from the Kind filter dropdown so it isn't cluttered with dead
   -- entries. They stay in KIND_COLOR/LABEL (so any stray legacy row still renders a real label), and any that
@@ -2155,7 +2156,7 @@ local function Build()
     elseif rec.k == "interrupt" and rec.cause then
       base.item = "|cffff6060(" .. ((SBF.INTERRUPT_CAUSE_LABEL and SBF.INTERRUPT_CAUSE_LABEL[rec.cause]) or rec.cause) .. ")|r"
     elseif rec.k == "castfail" and rec.cause then
-      local nice = (rec.cause == "los" and "视线受阻") or (rec.cause == "nowater" and "无有效水域") or (rec.cause == "shallow" and "水域过浅") or (rec.cause == "movement" and "移动打断")
+      local nice = (rec.cause == "los" and "line of sight") or (rec.cause == "nowater" and "no fishable water")
         or (rec.cause == "shallow" and "too shallow") or rec.cause
       base.item = "|cffff8844(" .. nice .. ")|r"
     elseif rec.k == "skill" then
@@ -2235,7 +2236,7 @@ local function Build()
     if not (pLog and pLog:IsShown()) then return end
     logViewOpts.maxLines = tonumber(SBFDB.fishlogMax) or 150   -- re-read the display cap each refresh
     logView:Refresh()
-    logCountLbl:SetText(#SBF.FishLog() .. " 条记录")            -- total kept (the raw log is never trimmed)
+    logCountLbl:SetText(#SBF.FishLog() .. " logged")            -- total kept (the raw log is never trimmed)
   end
 
   -- ===== PAGE: Stats (permanent rollup + on-the-fly period views; reuses the Log tab's KIND_COLOR + GSV) =====
@@ -2551,7 +2552,7 @@ local function Build()
     local avgCast = casts > 0 and string.format("%.1fs", castSecs / casts) or "-"
     local fph = secs > 0 and string.format("%.1f", totalFish / (secs / 3600)) or "-"
     local blocks = {
-      { tostring(totalFish), "条鱼" }, { tostring(casts), "抛竿数" }, { avgCast, "平均耗时" },
+      { tostring(totalFish), "fish" }, { tostring(casts), "casts" }, { avgCast, "avg cast" },
       { rate, "catch rate" }, { fmtDur(secs), "time fished" }, { fph, "fish / hr" },
     }
     local bw = math.max(76, (W - PAD * 2) / #blocks)
@@ -2571,7 +2572,7 @@ local function Build()
       local oorN = roll.oor or 0
       local pct = lineOuts > 0 and string.format("%d%%", math.floor(oorN / lineOuts * 100 + 0.5)) or "-"
       local ol = fsAcquire("GameFontHighlightSmall"); ol:SetPoint("TOPLEFT", PAD, y)
-      ol:SetText(("超出距离: |cffe0b050%d|r / %d 次甩竿 (%s)   重新抛竿: %d   |cff808080不计入抛竿数与上钩率|r")
+      ol:SetText(("Out of reach: |cffe0b050%d|r of %d line-outs (%s)   recast: %d   |cff808080left out of casts, avg cast and catch rate|r")
         :format(oorN, lineOuts, pct, kc.unreachable or 0))
       Theme.Font(ol, "textDim")
       tipAcquire(W - PAD * 2, 16, "Out of reach", "Casts whose bobber landed beyond the interact key's reach. Recast ones are logged as 'out of reach' and left out of casts and catch rate. Ones you still reeled in by pointing at them count as their real outcome."
@@ -2581,7 +2582,7 @@ local function Build()
 
     -- divider + 3) event tally bars ----------------------------------------------------------------------
     local div1 = texAcquire(); div1:SetPoint("TOPLEFT", PAD, y); div1:SetSize(W - PAD * 2, 1); div1:SetColorTexture(unpack(Theme.colors.divider)); y = y - 10
-    local eh = fsAcquire("GameFontNormal"); eh:SetPoint("TOPLEFT", PAD, y); eh:SetText(Theme.Accent("事件记录"))
+    local eh = fsAcquire("GameFontNormal"); eh:SetPoint("TOPLEFT", PAD, y); eh:SetText(Theme.Accent("事件统计"))
     tipAcquire(120, 16, "Cast outcomes", "caught = landed loot · expired = ran full length, no bite · nothing = reeled on time but delivered no loot · missed = clicked too early/late · interrupt = cut short (moved/combat/jump, a chest took the press, or canceled with no reel) · cast-fail = never started (not aimed at water)."):SetPoint("TOPLEFT", PAD, y)
     y = y - 18
     local tallyOrder = { "caught", "expired", "nothing", "missed", "interrupt", "castfail", "unreachable" }
@@ -2589,7 +2590,7 @@ local function Build()
     for _, kk in ipairs(tallyOrder) do local n = kc[kk] or 0; if n > 0 then trows[#trows + 1] = { kk, n }; if n > maxN then maxN = n end end end
     table.sort(trows, function(a, b) return a[2] > b[2] end)
     if #trows == 0 then
-      local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 4, y); e:SetText("该时段内无记录事件。"); Theme.Font(e, "textDim"); y = y - 18
+      local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 4, y); e:SetText("此期间无事件记录。"); Theme.Font(e, "textDim"); y = y - 18
     else
       local LBLW, NUMW = 66, 44
       local barX = PAD + LBLW
@@ -2633,10 +2634,10 @@ local function Build()
 
     -- divider + 4) segmented By fish | By zone ---------------------------------------------------------
     local div2 = texAcquire(); div2:SetPoint("TOPLEFT", PAD, y); div2:SetSize(W - PAD * 2, 1); div2:SetColorTexture(unpack(Theme.colors.divider)); y = y - 10
-    local segF = btnAcquire(72, "按鱼种")
+    local segF = btnAcquire(72, "By fish")
     segF:SetPoint("TOPLEFT", PAD, y); paintToggle(segF, statsSeg == "fish"); segF:SetScript("OnClick", function() statsSeg = "fish"; SBF.RefreshStats() end)
     setBtnTip(segF, "By fish", "Every distinct item caught, with counts. Sort by count, name, most-recent, or quality.")
-    local segZ = btnAcquire(72, "按区域")
+    local segZ = btnAcquire(72, "By zone")
     segZ:SetPoint("TOPLEFT", PAD + 76, y); paintToggle(segZ, statsSeg == "zone"); segZ:SetScript("OnClick", function() statsSeg = "zone"; SBF.RefreshStats() end)
     setBtnTip(segZ, "By zone", "Catches grouped by continent, then zone (sub-areas merged). Sort reorders the zones; click a zone to expand its top fish.")
     do                                                           -- the sort toggle drives BOTH the fish list and the zone view
@@ -2666,7 +2667,7 @@ local function Build()
       end
       if trashN > 0 then list[#list + 1] = { trash = true, n = trashN, kinds = trashKinds, last = trashLast, q = 0 } end
       if #list == 0 then
-        local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 4, y); e:SetText("该时段内无钓鱼记录。"); Theme.Font(e, "textDim"); y = y - 18
+        local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 4, y); e:SetText("此期间无钓鱼记录。"); Theme.Font(e, "textDim"); y = y - 18
       else
         local function rN(r) return r.trash and r.n or (r.it and r.it.n or 0) end
         table.sort(list, function(a, b)
@@ -2717,7 +2718,7 @@ local function Build()
       local clist = {}
       for _, c in pairs(conts) do clist[#clist + 1] = c end
       if #clist == 0 then
-        local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 4, y); e:SetText("该时段内无区域记录。"); Theme.Font(e, "textDim"); y = y - 18
+        local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 4, y); e:SetText("此期间无区域记录。"); Theme.Font(e, "textDim"); y = y - 18
       else
         table.sort(clist, function(a, b) return a.name < b.name end)
         for _, c in ipairs(clist) do
@@ -2766,7 +2767,7 @@ local function Build()
                 else return a.n > b.n end
               end)
               if #fl == 0 and ztrash == 0 then
-                local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 26, y); e:SetText("（此处无已收录鱼类）"); Theme.Font(e, "textDim"); y = y - 15
+                local e = fsAcquire(); e:SetPoint("TOPLEFT", PAD + 26, y); e:SetText("(no catalogued fish here)"); Theme.Font(e, "textDim"); y = y - 15
               else
                 -- each fish's percent is its share of THIS ZONE's items (zr.nItems), computed independently per zone
                 for i = 1, math.min(8, #fl) do                 -- top 8 real fish keeps the expansion compact
@@ -2792,7 +2793,7 @@ local function Build()
 
     -- 5) reset all-time stats (confirm-gated; the only path that clears the rollup) + refresh-rate cycle ---
     y = y - 12
-    local reset = btnAcquire(150, "重置累计统计"); reset:SetPoint("TOPLEFT", PAD, y)
+    local reset = btnAcquire(150, "Reset all-time stats"); reset:SetPoint("TOPLEFT", PAD, y)
     reset:SetScript("OnClick", function() StaticPopup_Show("SBF_RESET_STATS") end)
     setBtnTip(reset, "Reset stats", "Starts your stats fresh from now - all-time, Today, and This session all reset to zero and rebuild as you fish. Your fishing log keeps its full history (it is never deleted).")
     -- refresh-rate cycle button (right of Reset): Live -> 1s -> 2s -> 5s -> Off -> (wrap). "Live" updates on
@@ -2837,7 +2838,7 @@ local function Build()
   do
     local pSkill = attachPageScroll(pages.skillbook, 420, 500)
     local sbStore = LibStub("GECStore-1.0")
-    Theme.SectionHeader(pSkill, 4, -8, "各资料片钓鱼技能等级")
+    Theme.SectionHeader(pSkill, 4, -8, "Fishing skill by expansion")
     -- Character selector (single-select; defaults to the current character): view any character's skill book.
     local sbSelectedChar   -- nil = current character
     local function sbCurIdx() return sbSelectedChar or (sbStore.CharIndex and sbStore.CharIndex()) end
@@ -2871,8 +2872,8 @@ local function Build()
     -- Short intro over the list (broken across lines so it's not one crammed run).
     local note = pSkill:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
     note:SetPoint("TOPLEFT", 6, -62); note:SetWidth(380); note:SetJustifyH("LEFT"); note:SetSpacing(3)
-    note:SetText(SBF.CLASSIC_GEAR and "当前角色的钓鱼技能等级 / 上限。\n\"-\" 表示尚未学习钓鱼。"
-      or "各资料片的钓鱼技能等级 / 上限。\n\"-\" 表示尚未学习该资料片的钓鱼。")
+    note:SetText(SBF.CLASSIC_GEAR and "Your Fishing level / max.\n\"-\" means no Fishing skill yet."
+      or "Fishing level / max in each expansion.\n\"-\" means no skill in that line yet.")
     -- one row per expansion (created once; RefreshSkillBook fills them). Two columns: name | level/max.
     local SB_ROW_TOP, SB_ROW_H = -100, 22
     local skillRows = {}
@@ -2897,7 +2898,8 @@ local function Build()
     -- refresh-on-cast option that rides the existing fishing button (no new secure frames). See the SBF spec.
     local skillNote = pSkill:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
     skillNote:SetPoint("TOPLEFT", 12, listBottom - 26); skillNote:SetWidth(360); skillNote:SetJustifyH("LEFT"); skillNote:SetSpacing(2)
-    skillNote:SetText("请在此角色上打开一次专业技能或钓鱼日志以加载技能数据（暴雪客户端接口要求，之后技能点数将自动显示），或勾选下方选项在下次抛竿时自动刷新。")
+    skillNote:SetText("请在本角色上打开一次专业技能面板以加载钓鱼数据 (暴雪客户端机制要求，之后将自动显示)，或 check the box below "
+      .. "and we'll do it for you on your next cast.")
 
     -- Refresh-on-cast toggle, placed right where the journal note is. SHARES SBFDB.refreshSkillOnCast with the
     -- same checkbox on the Settings page (same key, same help tooltip); re-reads on show so the two stay in
@@ -2907,7 +2909,7 @@ local function Build()
     rocCb:SetChecked(SBFDB.refreshSkillOnCast ~= false)
     rocCb:SetScript("OnClick", function(self) SBFDB.refreshSkillOnCast = self:GetChecked() and true or false end)
     local rocLbl = pSkill:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    rocLbl:SetPoint("LEFT", rocCb, "RIGHT", 4, 0); rocLbl:SetText("甩竿时刷新钓鱼技能点数"); Theme.Font(rocLbl, "text")
+    rocLbl:SetPoint("LEFT", rocCb, "RIGHT", 4, 0); rocLbl:SetText("抛竿时刷新技能等级"); Theme.Font(rocLbl, "text")
     local rocZone = CreateFrame("Frame", nil, pSkill); rocZone:EnableMouse(true)
     rocZone:SetPoint("TOPLEFT", rocCb, "TOPLEFT", 0, 0); rocZone:SetPoint("BOTTOMRIGHT", rocLbl, "BOTTOMRIGHT", 4, -2)
     helpTip(rocCb, "set.refreshSkillOnCast"); helpTip(rocZone, "set.refreshSkillOnCast")
@@ -2927,7 +2929,7 @@ local function Build()
         if not d then
           r.name:SetText(""); r.val:SetText("")
         else
-          r.name:SetText(d.label .. ((d.current and viewSelf) and "  |cff45c4a0(当前)|r" or ""))
+          r.name:SetText(d.label .. ((d.current and viewSelf) and "  |cff45c4a0(here)|r" or ""))
           if d.has then
             r.name:SetTextColor(1, 1, 1)
             r.val:SetText((d.level or 0) .. "/" .. (d.max or d.level or 0)); r.val:SetTextColor(1, 1, 1)
@@ -2963,11 +2965,11 @@ local function Build()
     banner:SetTexCoord(0, 1, 0.2266, 0.7715)
 
     local title = pAbout:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOP", banner, "BOTTOM", 0, -10); title:SetText(Theme.Accent("Single-Button Fishing"))
+    title:SetPoint("TOP", banner, "BOTTOM", 0, -10); title:SetText(Theme.Accent("一键钓鱼 (Single-Button Fishing)"))
 
     local verFS = pAbout:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     verFS:SetPoint("TOP", title, "BOTTOM", 0, -4)
-    verFS:SetText("版本 " .. tostring(ver) .. (SBF.ChannelBadge and SBF.ChannelBadge() or ""))   -- badge dev/prerelease/local
+    verFS:SetText("Version " .. tostring(ver) .. (SBF.ChannelBadge and SBF.ChannelBadge() or ""))   -- badge dev/prerelease/local
     Theme.Font(verFS, "textDim")
 
     -- Report a bug — deliberately at the TOP of About. When something is wrong this is the page people open
@@ -2975,7 +2977,7 @@ local function Build()
     -- self-contained copy window with no dependency on any other addon.
     local bug = CreateFrame("Button", nil, pAbout, "UIPanelButtonTemplate")
     bug:SetSize(150, 24); bug:SetPoint("TOP", verFS, "BOTTOM", 0, -10)
-    bug:SetText("反馈问题"); Theme.Button(bug)
+    bug:SetText("提交错误报告"); Theme.Button(bug)
     bug:SetScript("OnClick", function() if SBF.ShowBugReport then SBF.ShowBugReport() end end)
     bug:SetScript("OnEnter", function(self)
       showTip(self, "Report a bug",
@@ -2988,13 +2990,12 @@ local function Build()
     -- tagline — EXACTLY the welcome screen's line: same brand-gold colour code (e8c679) + wording, per request.
     local tag = pAbout:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     tag:SetPoint("TOP", bug, "BOTTOM", 0, -14)
-    tag:SetText("|cffe8c679The only fishing add-on that does it all.|r")
+    tag:SetText("|cffe8c679功能最全面的魔兽世界一键钓鱼插件。|r")
 
     -- the "does it all automatically" one-liner (restored): everything the single key handles for you.
     local desc = pAbout:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     desc:SetPoint("TOP", tag, "BOTTOM", 0, -8); desc:SetWidth(440); desc:SetJustifyH("CENTER")
-    desc:SetText("一个按键即可搞定抛竿、等待、拾取、再次抛竿的全套钓鱼循环，同时自动打理进食、 "
-      .. "drink, lures, chum, buffs, the dinghy, and fighting back when something attacks you, all automatically.")
+    desc:SetText("一个按键即可全自动完成钓鱼循环：抛竿、等待、收杆、拾取与再抛竿，同时自动处理增益食物、饮品、鱼饵、诱饵、增益效果、充气木筏以及遇敌自动反击。")
     Theme.Font(desc, "textDim")
 
     local div = pAbout:CreateTexture(nil, "ARTWORK")
@@ -3004,7 +3005,7 @@ local function Build()
     -- other add-ons + the roadmap they can vote on. The vote/donate ASK itself stays on the site (Blizzard).
     local wlbl = pAbout:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     wlbl:SetPoint("TOP", div, "BOTTOM", 0, -12); wlbl:SetWidth(440); wlbl:SetJustifyH("CENTER")
-    wlbl:SetText("查看我们的其他插件，并为您期待的新功能投票：")
+    wlbl:SetText("欢迎查看我们的其他插件：")
     Theme.Font(wlbl, "text")
 
     local urlEb = CreateFrame("EditBox", nil, pAbout, "InputBoxTemplate")
@@ -3017,7 +3018,7 @@ local function Build()
     urlEb:SetScript("OnEnterPressed", function(s) s:ClearFocus() end)
 
     local wbtn = CreateFrame("Button", nil, pAbout, "UIPanelButtonTemplate")
-    wbtn:SetSize(190, 24); wbtn:SetPoint("TOP", urlEb, "BOTTOM", 0, -16); wbtn:SetText("显示欢迎引导"); Theme.Button(wbtn)
+    wbtn:SetSize(190, 24); wbtn:SetPoint("TOP", urlEb, "BOTTOM", 0, -16); wbtn:SetText("显示欢迎新手引导"); Theme.Button(wbtn)
     wbtn:SetScript("OnClick", function() if SBF.ShowWelcome then SBF.ShowWelcome() end end)
 
     -- Licensing — the short version of LICENSE.txt (proprietary Goblin Engineering Company license; the embedded
@@ -3026,7 +3027,7 @@ local function Build()
     licDiv:SetPoint("TOP", wbtn, "BOTTOM", 0, -18); licDiv:SetSize(430, 1); licDiv:SetColorTexture(unpack(Theme.colors.divider))
 
     local licHdr = pAbout:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    licHdr:SetPoint("TOP", licDiv, "BOTTOM", 0, -10); licHdr:SetText(Theme.Accent("许可证"))
+    licHdr:SetPoint("TOP", licDiv, "BOTTOM", 0, -10); licHdr:SetText(Theme.Accent("许可协议"))
 
     local licCopy = pAbout:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     licCopy:SetPoint("TOP", licHdr, "BOTTOM", 0, -6); licCopy:SetWidth(440); licCopy:SetJustifyH("CENTER")
@@ -3035,7 +3036,7 @@ local function Build()
 
     local licBody = pAbout:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     licBody:SetPoint("TOP", licCopy, "BOTTOM", 0, -6); licBody:SetWidth(440); licBody:SetJustifyH("CENTER")
-    licBody:SetText("可免费安装、使用和阅读源码。未经许可不得重新分发、托管或发布 "
+    licBody:SetText("Free to install, use, and read the source. You may not redistribute, re-host, publish "
       .. "modified or derivative versions, or use this code commercially without written permission. Embedded "
       .. "libraries under Libs\\ are separately MIT-licensed under their own terms. See LICENSE.txt for full terms.")
     Theme.Font(licBody, "textDim")
@@ -3105,7 +3106,7 @@ local function Build()
 
     local intro = pKeysChild:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     intro:SetPoint("TOPLEFT", 4, y); intro:SetPoint("TOPRIGHT", -4, y); intro:SetJustifyH("LEFT")
-    intro:SetText("为任何 SBF 动作设置按键或手柄按钮。（手柄：请先在设置中启用手柄支持，然后在此按手柄按钮。）")
+    intro:SetText("为任何 SBF 动作设置键盘按键或手柄按钮。(手柄：请先在设置中启用，然后在此处按下手柄按键。)")
     y = y - 30
 
     -- the header row (one font string per column, repositioned/shown on relayout). No "Action" header — the
@@ -3202,7 +3203,7 @@ local function Build()
     tableRow("restoreGear", "恢复常规装备")
 
     -- Slots: every keyable slot in display order. Skip fishing/interact (their rows are under Main). DEV-ONLY.
-    sectionAt("栏位", true)
+    sectionAt("栏位动作", true)
     local ordered = {}
     for _, s in ipairs(ns.SLOTS) do ordered[#ordered + 1] = s end
     table.sort(ordered, function(a, b) return (a.display or 99) < (b.display or 99) end)
@@ -3403,11 +3404,11 @@ function SBF.ShowFocusAudio()
     f:SetBackdropBorderColor(unpack(Theme.colors.panelBorder))
     tinsert(UISpecialFrames, "SBFFocusAudio")
     local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    title:SetPoint("TOPLEFT", 12, -10); title:SetText(Theme.Accent("钓鱼专注音效"))
+    title:SetPoint("TOPLEFT", 12, -10); title:SetText(Theme.Accent("Focus fishing audio"))
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", 2, 2)
     local note = f:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
     note:SetPoint("TOPLEFT", 12, -28); note:SetWidth(296); note:SetJustifyH("LEFT")
-    note:SetText("钓鱼时切换的音频音量——在此调整即可实时试听。关闭窗口后恢复。")
+    note:SetText("Sound levels SBF switches to while fishing - you hear changes live here. Restored when you close.")
 
     f._sliders = {}
     -- one labelled 0-100% slider bound to fa()[key]; live-applies the CVar while the preview/fishing is on.
@@ -3441,7 +3442,7 @@ function SBF.ShowFocusAudio()
     slider(5, "Dialog", "dialog")
 
     local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    reset:SetSize(130, 22); reset:SetPoint("BOTTOMLEFT", 12, 10); reset:SetText("恢复默认"); Theme.Button(reset)
+    reset:SetSize(130, 22); reset:SetPoint("BOTTOMLEFT", 12, 10); reset:SetText("Reset to default"); Theme.Button(reset)
     reset:SetScript("OnClick", function()
       local d = { master = 1.0, sfx = 1.0, music = 0.0, ambience = 0.0, dialog = 0.3 }
       for k, v in pairs(d) do
@@ -3453,7 +3454,7 @@ function SBF.ShowFocusAudio()
       f._sync()
     end)
     local doneBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    doneBtn:SetSize(80, 22); doneBtn:SetPoint("BOTTOMRIGHT", -12, 10); doneBtn:SetText("关闭"); Theme.Button(doneBtn)
+    doneBtn:SetSize(80, 22); doneBtn:SetPoint("BOTTOMRIGHT", -12, 10); doneBtn:SetText("Close"); Theme.Button(doneBtn)
     doneBtn:SetScript("OnClick", function() f:Hide() end)
 
     -- re-sync every slider from saved values (used on open + after Reset)

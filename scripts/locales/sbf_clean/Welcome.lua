@@ -88,7 +88,7 @@ local function build()
   -- a themed, movable window. NOT a UISpecialFrame: Escape must not close it (you open bags/collections to
   -- drag items in, and Escape-to-close-those would otherwise kill the welcome). Close via its X button only.
   local f = Theme.Window({
-    name = "SBFWelcome", title = "欢迎使用 Single-Button Fishing 单键钓鱼",
+    name = "SBFWelcome", title = "欢迎使用 SBF 一键钓鱼",
     width = 460, height = 560, minWidth = 420, minHeight = 360,
     strata = "DIALOG", specialFrame = false, resizable = true, collapsible = false,
     savedKey = (function() SBFDB.welcomeWin = SBFDB.welcomeWin or {}; return SBFDB.welcomeWin end)(),
@@ -115,14 +115,14 @@ local function build()
   -- 1) tagline + the "one key does it ALL" showcase -----------------------------
   local tag = body:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
   tag:SetPoint("TOPLEFT", PAD, y); tag:SetWidth(W); tag:SetJustifyH("LEFT"); tag:SetWordWrap(true)
-  tag:SetText("|cffe8c679唯一一个全功能一体化钓鱼插件。|r")   -- brand gold
+  tag:SetText("|cffe8c679功能最全面的魔兽世界一键钓鱼插件。|r")   -- brand gold
   y = y - 38
   -- the core loop stays WHITE; everything the one key ALSO does is tucked BETWEEN loot and recast, colour-coded
-  local actions = "单个按键搞定所有钓鱼流程：抛竿、等待、拾取、"
-    .. "|cffe8c679进食、喝水、鱼饵、浮标、诱饵、增益、|r "
-    .. "|cfff28c28战斗、治疗、|r "
-    .. "|cff7cb83a乘船、下坐骑，|r "
-    .. "然后自动重新抛竿。"
+  local actions = "One key runs your whole fishing loop - cast, wait, loot, "
+    .. "|cffe8c679eat, drink, lures, bobbers, chum, buffs,|r "
+    .. "|cfff28c28fight, heal,|r "
+    .. "|cff7cb83aboat, dismount,|r "
+    .. "then recast - automatically."
   local acts = para(body, PAD, y, W, actions, "text")
   local _f, _sz, _fl = acts:GetFont(); if _f then acts:SetFont(_f, (_sz or 12) + 2, _fl) end   -- a touch bigger
   y = y - 62
@@ -135,8 +135,8 @@ local function build()
   -- (only the active one is shown), so flipping between them keeps each input's configuration.
   if not SBFDB.welcomeInput then SBFDB.welcomeInput = "keyboard" end
 
-  header(body, PAD, y, W, "你想如何操作钓鱼？  |header(body, PAD, y, W, "你想如何钓鱼？  |cffff8a4c(必填)|r"); y = y - 26
-  para(body, PAD, y, W, "选择输入方式并在下方设置快捷键。绑定控件会随之调整，设置按键后将自动为您启用对应模式。", "textDim"); y = y - 30
+  header(body, PAD, y, W, "您希望使用哪种操作方式？  |cffff8a4c(必选)|r"); y = y - 26
+  para(body, PAD, y, W, "请选择您的输入方式，然后在下方设置快捷键。设置完成后系统将自动为您开启对应操作模式。", "textDim"); y = y - 30
 
   -- forward decls so the selector buttons + panel refreshers can see each other
   local selButtons = {}        -- { keyboard = btn, mouse = btn, controller = btn }
@@ -186,9 +186,9 @@ local function build()
     selButtons[which] = b
     return b
   end
-  makeSelBtn("keyboard", "键盘", PAD)
-  makeSelBtn("mouse", "鼠标", PAD + (SEL_W + SEL_GAP))
-  makeSelBtn("controller", "手柄", PAD + 2 * (SEL_W + SEL_GAP))
+  makeSelBtn("keyboard",   "键盘",   PAD)
+  makeSelBtn("mouse",      "鼠标",      PAD + (SEL_W + SEL_GAP))
+  makeSelBtn("controller", "游戏手柄", PAD + 2 * (SEL_W + SEL_GAP))
   y = y - 34
 
   -- a fixed-height container the three input panels stack inside (all anchored to its TOPLEFT). It is sized
@@ -225,7 +225,7 @@ local function build()
     -- setting, not three — so refreshPanel re-ticks this checkbox from the flag whenever any panel flips it or
     -- you switch panels. (Capturing the checkbox is what lets the others mirror the change.)
     local twoChk = labeledCheck(p, 0, -30,
-      "使用独立" .. (kind == "mouse" and "鼠标键" or "按键") .. "拾取",
+      "Use a separate " .. (kind == "mouse" and "button" or "key") .. " to loot",
       function() return SBFDB.requireTwoButtons end,
       function(v)
         SBFDB.requireTwoButtons = v and true or nil
@@ -237,7 +237,7 @@ local function build()
         -- the OTHER panels' checkboxes mirror the same flag — re-sync them all
         for _, r in pairs(panelRefresh) do r() end
       end,
-      "双键模式", "开启：钓鱼键只负责抛竿，按第二个键拾取。关闭：单键同时完成抛竿与拾取。")
+      "双按键模式", "开启：钓鱼按键仅用于抛竿；第二按键用于收杆拾取。关闭：单键完成全部操作。")
 
     -- ROW 3: loot label (left) + loot bind button (right) — shown only when two-button is on
     local lootLbl = para(p, 0, -62, LBL_W, mkLootLabel, "textDim")
@@ -278,9 +278,9 @@ local function build()
   -- every required button is set (fishing always; loot only in two-button mode), else unticks — both widgets.
   buildInputPanel("controller",
     recomputeController,
-    "钓鱼手柄按钮",
+    "钓鱼手柄按键",
     function(p, px, py, after) return ns.MakeNativeBindButton(p, px, py, SBF.FISHING_CMD, 130, after, "pad") end,
-    "拾取手柄按钮",
+    "拾取手柄按键",
     function(p, px, py, after) return ns.MakeNativeBindButton(p, px, py, "INTERACTTARGET", 130, after, "pad") end)
 
   -- show the active panel + tint the selected segment button (bold gold label = active)
@@ -300,26 +300,26 @@ local function build()
   y = y - PANEL_H - 4
 
   -- 4) combat --------------------------------------------------------------------
-  header(body, PAD, y, W, "战斗动作  |cff9aa0aa(可选项)|r"); y = y - 26
+  header(body, PAD, y, W, "战斗反击  |cff9aa0aa(可选)|r"); y = y - 26
   para(body, PAD, y, W, SBF.CLASSIC_GEAR
-    and "战斗默认使用自动攻击（猎人自动射击）。可拖入您自己的技能宏。"
-    or "战斗默认使用单键战斗助手。可拖入您自己的技能宏进行覆盖。", "textDim"); y = y - 38
+    and "Combat defaults to auto-attack (hunters also fire Auto Shot). Drag in your own macro for real abilities."
+    or "Combat defaults to WoW's Single-Button Assistant, cast at whatever you are already fighting. Drag in your own macro to override.", "textDim"); y = y - 38
   -- the REAL action-slot widget; SBF.SlotDef("combat") routes to the PER-CHARACTER combat config
   ns.MakeItemButton(body, PAD, y, SBF.SlotDef("combat"), nil, "combat")
   y = y - (ICON + 12)
 
   -- 5) heal ----------------------------------------------------------------------
-  header(body, PAD, y, W, "治疗动作  |cff9aa0aa(可选项)|r"); y = y - 26
-  para(body, PAD, y, W, "默认无 - 可在此拖入您自己的治疗宏/法术/物品。", "textDim"); y = y - 38
+  header(body, PAD, y, W, "应急治疗  |cff9aa0aa(可选)|r"); y = y - 26
+  para(body, PAD, y, W, "无默认设置 - 可拖入自定义治疗宏、法术或药水。", "textDim"); y = y - 38
   ns.MakeItemButton(body, PAD, y, SBF.SlotDef("heal"), nil, "heal")
   y = y - (ICON + 16)
 
   -- Sign-off instead of more setup. Advanced mode stays ON by default (SBFDB.advancedMode ~= false); the
   -- Settings checkbox still toggles it — it's just not surfaced on this welcome panel anymore. The fishing
   -- skill loads itself once you open your Fishing Journal, so there's nothing to click here either.
-  header(body, PAD, y, W, "来自渔协的备忘录"); y = y - 26
+  header(body, PAD, y, W, "来自管理层的备忘录"); y = y - 26
   para(body, PAD, y, W,
-    "一切准备就绪！枯燥的配置已搞定，快去尽情享受钓鱼的乐趣吧！让水里的鱼儿见识见识谁才是老大！祝竿竿中大鱼，盆满钵满！\n\n- 渔协管理团队",
+    "一切准备就绪！枯燥的设置已完成，快去水边大显身手吧。享受轻松惬意的垂钓时光，祝您满载而归！\n\n—— SBF 团队敬上",
     "textDim"); y = y - 78
 
   -- size the scroll child to the laid-out content (a little tail so the last line isn't flush to the edge)
@@ -334,24 +334,24 @@ local function build()
   local footer = CreateFrame("Frame", nil, content)
   footer:SetPoint("BOTTOMLEFT", 12, 8); footer:SetPoint("BOTTOMRIGHT", -12, 8); footer:SetHeight(58)
 
-  -- "不再显示此向导" persists to SBFDB.welcomeHide (the auto-pop reads it).
+  -- "Don't show this again" persists to SBFDB.welcomeHide (the auto-pop reads it).
   local hideChk = labeledCheck(footer, 0, -2,
-    "不再显示此向导",
+    "Don't show this again",
     function() return welcomeHidden() end,
     function(v) setWelcomeHidden(v) end,
-    "不再显示此向导", "登录时不再弹出此欢迎向导。随时可在聊天框输入 /sbf welcome 重新打开。")
+    "不再自动显示", "登录时不再弹出此欢迎向导。您可以随时输入 /sbf welcome 重新打开。")
   hideChk:ClearAllPoints(); hideChk:SetPoint("TOPLEFT", footer, "TOPLEFT", 0, -2)
 
   -- Open Settings (jumps to the full options window)
   local openBtn = CreateFrame("Button", nil, footer, "UIPanelButtonTemplate")
   openBtn:SetSize(120, 24); openBtn:SetPoint("BOTTOMLEFT", footer, "BOTTOMLEFT", 0, 0)
-  openBtn:SetText("打开设置"); Theme.Button(openBtn)
+  openBtn:SetText("详细设置"); Theme.Button(openBtn)
   openBtn:SetScript("OnClick", function() if SBF.ShowOptions then SBF.ShowOptions() end end)
 
   -- Website (community link)
   local webBtn = CreateFrame("Button", nil, footer, "UIPanelButtonTemplate")
   webBtn:SetSize(90, 24); webBtn:SetPoint("LEFT", openBtn, "RIGHT", 8, 0)
-  webBtn:SetText("访问网站"); Theme.Button(webBtn)
+  webBtn:SetText("官方网站"); Theme.Button(webBtn)
   webBtn:SetScript("OnClick", function() SBF.ShowWebsite() end)
 
   -- Start fishing (close)
@@ -367,7 +367,7 @@ end
 -- Show the website link. WoW addons can't open a browser, so present the URL in a copyable popup.
 function SBF.ShowWebsite()
   StaticPopupDialogs["SBF_WEBSITE"] = StaticPopupDialogs["SBF_WEBSITE"] or {
-    text = "|cff45c4a0SBF|r\n\nCopy this link (Ctrl+C):",
+    text = "|cff45c4a0SBF|r\n\n复制链接 (Ctrl+C):",
     button1 = CLOSE or "Close",
     hasEditBox = true, editBoxWidth = 280,
     OnShow = function(self)

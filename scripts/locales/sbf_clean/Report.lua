@@ -452,7 +452,7 @@ function SBF.ShowBugReport(note)
 
     local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", 14, -28)
-    hint:SetText("Already selected - press Ctrl+C to copy, then paste it into your report. No character name, realm or guild is included.")
+    hint:SetText("已全选 - 按 Ctrl+C 复制，然后粘贴到您的报告中。不包含任何角色名、服务器或公会信息。")
     hint:SetWidth(660); hint:SetJustifyH("LEFT")
 
     local sf = CreateFrame("ScrollFrame", "SBFBugReportScroll", f, "UIPanelScrollFrameTemplate")

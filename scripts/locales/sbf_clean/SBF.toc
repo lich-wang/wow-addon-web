@@ -1,8 +1,6 @@
 ## Interface: 120100, 16001
 ## Title: Single-Button Fishing
-## Title-zhCN: |cff00ff00[钓鱼]|r Single-Button Fishing (单键钓鱼)
 ## Notes: One key runs the whole fishing loop. Keybound item/macro slots (food, drink, lure, boat, cast, interact), built for combo keys (modifier combos supported).
-## Notes-zhCN: 单键完成钓鱼循环（抛竿、浮漂交互、自动拾取、换装上饵），完美支持无限服与各经典版本。
 ## Category: GEC
 ## Author: Goblin Engineering Company
 ## Version: 2026.11.05.1
@@ -49,5 +47,4 @@ Options.lua
 Report.lua
 Indicator.lua
 Welcome.lua
-Locale\zhCN.lua
 Uplink.lua

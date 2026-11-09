@@ -50,7 +50,7 @@ function lib.ComboString(key)
 end
 -- friendly label for a key token (uses WoW's own prettifier when present); "Set key" when unbound.
 function lib.Pretty(key)
-  if not key or key == "" then return "设置按键" end
+  if not key or key == "" then return "Set key" end
   if GetBindingText then local t = GetBindingText(key); if t and t ~= "" then return t end end
   return key
 end
@@ -118,7 +118,8 @@ end
 
 -------------------------------------------------------------------- confirm popup --
 StaticPopupDialogs["GECBIND_REBIND_CONFLICT"] = {
-  text = "|cffffd100%s|r 已经被绑定到 |cffffffff%s|r。\n\n是否重新分配到此处？原有的绑定将被清除。",
+  text = "|cffffd100%s|r is already bound to |cffffffff%s|r.\n\nReassign that key here? "
+    .. "The other binding will be cleared.",
   button1 = YES, button2 = CANCEL,
   OnAccept = function(self) local d = self.data; if d and d.accept then d.accept() end end,
   OnCancel = function(self) local d = self.data; if d and d.cancel then d.cancel() end end,

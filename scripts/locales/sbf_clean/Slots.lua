@@ -188,19 +188,19 @@ local SLOTS = {
   -- oversized FIRST (priority 1): it's a keep-up overlay that stacks ON TOP of a regular bobber, so it must be
   -- (re)applied BEFORE the base bobber casts, not after (the base bobber's own cast would otherwise land first
   -- and the overlay only follows on the next press). display order is unchanged (bobber still shows first).
-  { id = "oversized",   label = "超大浮标",  effect = "aura",    priority = 1, display = 4, overlay = true, allowsRandom = true, verb = "applying", defaultMode = "cycle" },
-  { id = "bobber",      label = "浮标",            effect = "aura",    priority = 2, display = 3, allowsRandom = true, verb = "applying", defaultMode = "cycle" },
+  { id = "oversized",   label = "加大浮漂",  effect = "aura",    priority = 1, display = 4, overlay = true, allowsRandom = true, verb = "applying", defaultMode = "cycle" },
+  { id = "bobber",      label = "浮漂外观",            effect = "aura",    priority = 2, display = 3, allowsRandom = true, verb = "applying", defaultMode = "cycle" },
   { id = "lure",        label = "鱼饵 (增益)",       effect = "aura",    priority = 3, display = 5, verb = "applying", defaultMode = "cycle" },
   { id = "poleenchant", label = "鱼竿附魔",      effect = "enchant", priority = 4, display = 6, verb = "applying" },   -- enchant: no learn, no random
-  { id = "food",        label = "食物",              effect = "aura",    priority = 5, display = 1, postFire = "channel", verb = "eating" },
-  { id = "drink",       label = "饮料",             effect = "aura",    priority = 6, display = 2, postFire = "channel", verb = "drinking" },
+  { id = "food",        label = "增益食物",              effect = "aura",    priority = 5, display = 1, postFire = "channel", verb = "eating" },
+  { id = "drink",       label = "增益饮品",             effect = "aura",    priority = 6, display = 2, postFire = "channel", verb = "drinking" },
   -- Chum is the LOWEST rotation priority (fires LAST, right before fishing): its buff is short (~30s), so if it
   -- went out before the slow lure/food/drink/buff setup, that setup time would waste it. Priority 8/9 > Buffs (7).
   { id = "chum1",       label = "诱饵 (技能)",      effect = "aura",    priority = 8, display = 7, allowsRandom = true, allowsRepeat = true, verb = "throwing", defaultMode = "deplete" },
   { id = "chum2",       label = "诱饵 (感知)", effect = "aura",    priority = 9, display = 8, allowsRandom = true, allowsRepeat = true, verb = "throwing", defaultMode = "deplete" },
   -- boat: a rotation slot (rotates dinghies, learns its buff) whose due/fire is special (role="boat").
   -- refresh defaults higher than the 5s consumable default so the recast finishes before you'd drop.
-  { id = "boat",        label = "船只 / 木筏",              effect = "aura",    role = "boat", display = 9, postFire = "climb", allowsRandom = true, allowsSpell = true, verb = "activating", defaultMode = "cycle", refreshDefault = 30 },
+  { id = "boat",        label = "充气木筏 / 船只",              effect = "aura",    role = "boat", display = 9, postFire = "climb", allowsRandom = true, allowsSpell = true, verb = "activating", defaultMode = "cycle", refreshDefault = 30 },
   -- the additive "keep ALL of these up" slot: holds N arbitrary buff items and fires whichever one's
   -- own buff is gone/low, one item per press, until all are up. `fireAll = true` is the flag the engine
   -- branches on (slotDue/pickItem -> nextDueItem). priority 9 (after chum2=8; boat is role-gated so no
@@ -209,8 +209,8 @@ local SLOTS = {
   -- action slots (display bumped to 11..14 so they stay LAST after the new Buffs row at 10)
   { id = "fishing",     label = "施放钓鱼",      role = "fishing",  display = 11 },   -- empty = built-in "/cast Fishing"
   { id = "interact",    label = "交互 / 拾取",   role = "interact", display = 12, gameBinding = "INTERACTTARGET" },
-  { id = "combat",      label = "战斗 (攻击)",   role = "combat",   display = 13 },    -- fires via [combat] mid-fight
-  { id = "heal",        label = "治疗",              role = "heal",     display = 14 },    -- out of combat, until full
+  { id = "combat",      label = "战斗反击 (攻击)",   role = "combat",   display = 13 },    -- fires via [combat] mid-fight
+  { id = "heal",        label = "应急治疗",              role = "heal",     display = 14 },    -- out of combat, until full
 }
 ns.SLOTS = SLOTS
 
@@ -1394,10 +1394,10 @@ end
 SBF.PetCfg = petCfg
 
 local PET_STANCES = {
-  { key = "passive",    label = "Passive",    slash = "SLASH_PET_PASSIVE1",    fallback = "/petpassive" },
-  { key = "defensive",  label = "Defensive",  slash = "SLASH_PET_DEFENSIVE1",  fallback = "/petdefensive" },
-  { key = "assist",     label = "Assist",     slash = "SLASH_PET_ASSIST1" },
-  { key = "aggressive", label = "Aggressive", slash = "SLASH_PET_AGGRESSIVE1" },
+  { key = "passive",    label = "被动",    slash = "SLASH_PET_PASSIVE1",    fallback = "/petpassive" },
+  { key = "defensive",  label = "防御",  slash = "SLASH_PET_DEFENSIVE1",  fallback = "/petdefensive" },
+  { key = "assist",     label = "协助",     slash = "SLASH_PET_ASSIST1" },
+  { key = "aggressive", label = "主动", slash = "SLASH_PET_AGGRESSIVE1" },
 }
 -- The stances this client has a slash command for, as { key, label, cmd }. Passive and Defensive exist on every
 -- client, so they fall back to the English command if the global is missing.

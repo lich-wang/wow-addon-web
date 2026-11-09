@@ -50,11 +50,11 @@ local feed = Data.Provide("SBF", {
     if button == "LeftButton" and SBF.ToggleOptions then SBF.ToggleOptions() end
   end,
   OnTooltipShow = function(tt)
-    tt:AddLine("Single-Button Fishing")
-    tt:AddLine("状态: " .. (SBF.GetState and SBF.GetState() or "?"))
+    tt:AddLine("一键钓鱼 (Single-Button Fishing)")
+    tt:AddLine("当前状态: " .. (SBF.GetState and SBF.GetState() or "?"))
     tt:AddLine("技能等级: " .. (SBF.GetFishing and SBF.GetFishing() or "?"))
-    tt:AddLine("感知: " .. tostring(SBF.GetPerception and SBF.GetPerception() or 0))
-    tt:AddLine("下一步: " .. (SBF.GetNext and SBF.GetNext() or "?"))
+    tt:AddLine("感知加成: " .. tostring(SBF.GetPerception and SBF.GetPerception() or 0))
+    tt:AddLine("下一步动作: " .. (SBF.GetNext and SBF.GetNext() or "?"))
     local n, word; if SBF.PoleCounter then n, word = SBF.PoleCounter() end
     if n then tt:AddLine(("%s: %d  (+%d this session)"):format(word or "Venom", n, SBF.PoleCounterSession() or 0)) end
   end,
