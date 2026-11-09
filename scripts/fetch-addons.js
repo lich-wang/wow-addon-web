@@ -41,8 +41,20 @@ async function processSBF() {
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
-  console.log('Injecting zhCN localization for Single-Button Fishing...');
-  await patchSBF(zip);
+  console.log('Injecting clean 100% zhCN localization for Single-Button Fishing...');
+  const cleanDir = path.resolve('scripts/locales/sbf_clean');
+  if (fs.existsSync(cleanDir)) {
+    for (const f of fs.readdirSync(cleanDir)) {
+      const fullPath = path.join(cleanDir, f);
+      if (fs.statSync(fullPath).isFile()) {
+        zip.file(`SBF/${f}`, fs.readFileSync(fullPath, 'utf-8'));
+      }
+    }
+    const gecBind = path.join(cleanDir, 'Libs/GECBind-1.0/GECBind-1.0.lua');
+    if (fs.existsSync(gecBind)) {
+      zip.file('SBF/Libs/GECBind-1.0/GECBind-1.0.lua', fs.readFileSync(gecBind, 'utf-8'));
+    }
+  }
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
@@ -55,25 +67,11 @@ async function processBlackthornes() {
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
-  console.log('Generating zhCN localization for Blackthornes Tradeskills...');
-  const deDE = await zip.file('Blackthornes_TS/Locale/deDE.lua').async('string');
-  const lines = deDE.split('\n');
-  const entries = [];
-  for (const line of lines) {
-    const m = line.match(/^L\[(".*?")\]\s*=\s*(".*?")/);
-    if (m) {
-      try {
-        const key = JSON.parse(m[1]);
-        const deVal = JSON.parse(m[2]);
-        entries.push({ key, deVal });
-      } catch (e) {
-        // pass
-      }
-    }
+  console.log('Injecting clean 100% complete zhCN for Blackthornes Tradeskills...');
+  const btZhCNPath = path.resolve('scripts/locales/bt_zhCN.lua');
+  if (fs.existsSync(btZhCNPath)) {
+    zip.file('Blackthornes_TS/Locale/zhCN.lua', fs.readFileSync(btZhCNPath, 'utf-8'));
   }
-
-  const zhCNLua = generateBTZhCN(entries);
-  zip.file('Blackthornes_TS/Locale/zhCN.lua', zhCNLua);
 
   const themeFile = zip.file('Blackthornes_TS/UI/Theme.lua');
   if (themeFile) {
@@ -98,7 +96,7 @@ async function processBlackthornes() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
-  console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB) with ${entries.length} localized strings`);
+  console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function processIceHUD() {

@@ -1,0 +1,3881 @@
+-- SBF — fishing helper. Each "slot" (food/drink/lure/boat/cast/interact + custom
+-- buttons) is backed by a hidden SecureActionButton pre-loaded with an item or
+-- macro, and bound to a key combo via an override binding. An addon can't press
+-- keys itself — you press the combo (one key), and the secure button fires the
+-- item/macro. That's why combos (CTRL/ALT/SHIFT) matter.
+local ADDON, ns = ...
+-- Forever (interface 16001) ships the modern API WITHOUT the deprecated item globals; alias them to C_Item
+-- file-locally (never write _G, so other addons' own version checks are untouched). Retail: unchanged.
+local GetItemInfo = GetItemInfo or (C_Item and C_Item.GetItemInfo)
+local GetItemInfoInstant = GetItemInfoInstant or (C_Item and C_Item.GetItemInfoInstant)
+local GetItemCount = GetItemCount or (C_Item and C_Item.GetItemCount)
+SBF = SBF or {}
+
+-- BUILD STAMP — the SINGLE source of truth is the `## Version` in SBF.toc (the canonical delivery key the
+-- website/Uplink compare). Read it via metadata instead of hand-keeping a second constant that WILL drift
+-- (it did: the toc bumped while this string didn't, so the in-game "build" stamp disagreed with the toc /
+-- website). Now the header + login message ALWAYS match the toc. NOTE: GetAddOnMetadata reflects the toc as
+-- parsed at CLIENT LAUNCH, so a `## Version` bump only shows after a FULL restart, not a bare /reload.
+SBF.BUILD = (((C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata)("SBF", "Version")) or "?"
+
+-- Release CHANNEL of THIS installed copy, read from the `## X-GEC-Channel` .toc field the publish scripts
+-- stamp in ("dev" | "prerelease" | "public"). nil when running from unpublished SOURCE (a plain rsync/dev
+-- copy carries no marker) — that's a local dev build. (X-prefixed .toc fields are readable via metadata.)
+function SBF.Channel()
+  local get = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+  local ch = get and get("SBF", "X-GEC-Channel")
+  return (ch and ch ~= "") and ch or nil
+end
+-- A colored "[channel]" badge for the version / build readouts — shown for every channel EXCEPT public (the
+-- default needs no badge). Unpublished source shows [local]. "" when nothing to show. Prerelease=amber, else teal.
+function SBF.ChannelBadge()
+  local ch = SBF.Channel() or "local"
+  if ch == "public" then return "" end
+  local col = (ch == "prerelease") and "ffcf40" or "45c4a0"
+  return "  |cff" .. col .. "[" .. ch .. "]|r"
+end
+
+-- ===== Fishing cast: native binding (menu/source-of-truth) + override-click (the actual trigger) =====
+-- The fishing key is a real WoW binding, "CLICK SBFBtn_fishing:LeftButton", declared in Bindings.xml so it
+-- appears in WoW's Key Bindings menu (under the SBF header) and ConsolePort's picker, and is the SINGLE
+-- SOURCE OF TRUTH (SBF.BindsFor reads it via GetBindingKey). The globals below are its menu label + header.
+--   * Setting BINDING_NAME_* / BINDING_HEADER_SBF taints Blizzard's keybinding UI the same BENIGN way every
+--     keybind addon does (incl. our own Haul: BINDING_NAME_HAUL_*). It does NOT block the cast — we chased
+--     that ghost for hours; the real cast failures were an override-install gap (fixed via UPDATE_BINDINGS)
+--     plus a restricted test account, never this taint.
+--   * The CAST itself fires via an OVERRIDE-click that SBF.Apply installs over the key — the "blessed"
+--     hardware path that carries the protected cast for our INSECURE smart button. The bare native binding
+--     alone runs the PreClick but silently drops the cast, so the override is what actually fishes.
+_G["BINDING_HEADER_SBF"] = "SBF - Single-Button Fishing"
+_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "Action / Cast"
+
+-- Lazy GECReader handle (the one live-getter layer — the ONLY code that touches Blizzard APIs). Looked up
+-- at call time (never cached at load) with silent=true so a load-order slip / missing lib yields nil instead
+-- of erroring. Mirrors how GECStore fetches the Reader.
+local function reader()
+  return (LibStub and LibStub.GetLibrary and LibStub:GetLibrary("GECReader-1.0", true)) or nil
+end
+
+-- Lazy GECStore handle (the per-character state cache / professions data). Same call-time, silent=true pattern
+-- as reader() so a load-order slip yields nil. (A module-level `local GECStore` also exists lower down for the
+-- fishlog store; this getter serves code declared ABOVE that line — e.g. SBF.FishingSkill.)
+local function gecStore()
+  return (LibStub and LibStub.GetLibrary and LibStub:GetLibrary("GECStore-1.0", true)) or nil
+end
+
+-- Stable per-character key for ALL per-character SBF storage (charGear, charSlots, charScope, charStore,
+-- skillCache, welcomeHide). The GUID is the true identity — it survives a rename, and a delete+recreate of
+-- a same-name character never collides. Name-Realm is a pre-login fallback only (a GUID can be absent before
+-- PLAYER_LOGIN). Read through GECReader.Current.identity() so SBF never touches Blizzard APIs directly here.
+function SBF.CharKey()
+  local R = reader()
+  local id = R and R.Current and R.Current.identity and R.Current.identity()
+  return (id and id.guid)
+    or (id and id.name and (id.name .. "-" .. (id.realm or "?")))
+    or "?"
+end
+
+-- ===== Dev mode =====
+SBF.DEV = false
+function SBF.IsDev()
+  return SBF.DEV                                            -- public: hard-false
+end
+
+-- The slot descriptor table (SLOTS) + the unified slot engine now live in Slots.lua; Core
+-- reads them through the shared `ns` table. These locals alias what Core uses a lot, so the
+-- rest of this file reads the same as before without re-qualifying ns.* everywhere.
+local SLOTS = ns.SLOTS   -- the descriptor list (load-time read; ipairs'd in ADDON_LOADED)
+
+local DB_DEFAULTS = {
+  -- (no `slots` default: the per-slot config tree now lives inside the active profile, reached via
+  -- SBF.ActiveSlots(); the profile migration + descriptor seeding build it. See Profiles.lua.)
+  advancedMode = true,  -- show the full profile/binding UI on the Buttons page. false = SIMPLE (Default-only:
+                        -- profiles, zone binding, and Save/Revert hidden; edits auto-commit). Default true
+                        -- preserves current behavior; onboarding can flip it for new users.
+  autoSwap = true,      -- auto-swap the active profile by location (zone-driven; see Profiles.OnZoneMaybeChanged)
+                        -- (runtime field SBFDB._lastTiers is set in code, not defaulted here)
+  warnUnsavedOnClose = true, -- closing the SBF window with unsaved profile edits asks Save / Discard / Keep editing
+  swapFlash = true,     -- flash the swapped-in profile's name as a raid-warning on an auto-swap
+  autoDismount = false, -- on a GROUND mount, fire /dismount so you can fish (never while flying)
+  -- Observation lane (see learnBuff): keep watching what a CATALOGUED item's buff actually is, once per
+  -- item per session, purely as evidence. Never changes what the engine watches (the catalog owns that) —
+  -- it fills the per-item record that rides to the server, so a wrong shipped fact can be contradicted by
+  -- data instead of only by a player bug report. Set false to stop contributing observations.
+  observeCatalogued = true,
+  observeMaxTries = 3,       -- attempts per item per session before giving up (the aura may never land)
+  requireTwoButtons = false, -- two-button mode: the action key only casts; loot via the loot key.
+                             -- Choosing it also IMPLIES the game's "Enable interact key" option stays on
+                             -- (EnsureInteractKeyCVar) - looting rides that option, no separate toggle.
+  gamepadEnable = false, -- "Enable controller support": ticking sets the GamePadEnable CVar to "1" so
+                         -- controller buttons generate PAD* binding tokens SBF can bind. Unticking leaves
+                         -- the CVar alone (the user may use the gamepad elsewhere). May need a /reload.
+  sitBeforeCast = true, -- prepend /sit to each fishing cast (stationary = safer)
+  combatRangedAuto = true, -- Forever default combat action: a known ranged auto-attack (hunter Auto Shot) follows melee auto
+  combatReleasesLoot = true, -- entering combat with a bobber out hands the fishing key back from loot to the combat
+                          -- action, so you defend yourself like on retail (false = keep the loot key for the fight).
+                          -- Replaces the old opt-in combatFreesKey (off by default), which is no longer read.
+  guardFishingOff = true, -- turning the Cast Fishing slot OFF from its row name takes a Shift+click (a stray
+                          -- click there silently turned the action key into a combat-only key)
+  refreshSkillOnCast = true, -- one-shot: flash the Fishing Journal on the FIRST fishing press when the
+                        -- per-expansion skill isn't loaded yet (Blizzard only hands it over after the journal
+                        -- opens once). Rides the existing fishing button; replaced the old secure buttons.
+  journalWarmTimeout = 5, -- seconds the skill-warm's auto-close flag stays valid. Past this the flag is stale
+                        -- (the warm never completed) and the next TRADE_SKILL_LIST_UPDATE is the player opening
+                        -- their OWN profession window, which must not be closed out from under them.
+  combatWindowMode = "collapse", -- what the OPTIONS window does when combat starts: "collapse" | "hide" | "off".
+                        -- Welcome always HIDES in combat (it blocks the screen on a combat-time login). No secure
+                        -- frames remain in either window, so both are safe. See combatWindowRestore.
+  combatWindowRestore = true, -- re-show/expand whatever combat auto-hid/collapsed, once combat ends
+  healSeconds = 12,     -- backstop: never heal longer than this after leaving combat
+  healStable = 3,       -- stop healing once health hasn't risen for this long (= full).
+                        -- must be a bit longer than your heal's cast time + GCD.
+  lastFired = {},       -- slotKey -> unix time it was last injected (interval tracking)
+  fastLoot = false,     -- fast, silent, framerate-independent auto-loot via GECLoot-1.0 (replaces the client's
+                        -- built-in auto-loot; the real loot window still surfaces for locked/high-quality/BoP/bags-full)
+  gatherFishGuardSec = 3, -- after a fishing channel stops, ignore GameObject loot for this long (it's the
+                        -- fished catch's own loot — the caught path owns it; this prevents double-logging)
+  debug = false,        -- print state/next-action/macro + each action fired to chat on every key press
+  buffDebug = false,    -- DEV: dedicated buff/enchant DETECTION channel — every learn/reject/known hit prints, alone
+  lootDebug = false,    -- DEV: dump the fish-vs-chest classification signals on every loot window (fishing-tail state + per-slot t)
+  decisionTrace = false,-- DEV: dump the full per-press decision matrix (pre-gates + slot due/ready) to chat
+  buffRefresh = 5,      -- recast a consumable when its buff has < this many sec left
+  applyMaxTries = 3,    -- a buff-applying slot fires this many times with no detectable buff -> back off + notify
+  applyBackoff = 30,    -- how long (sec) a slot naps after tripping applyMaxTries before it retries
+  applyGrace = 12,      -- after firing a consumable, wait this long before re-checking
+                        -- (food/drink buffs take ~10s to land; don't restart them)
+  consumeSeconds = 10,  -- after firing food/drink, the button is idle this long so a
+                        -- press can't interrupt the eat/drink before the buff applies
+  climbSeconds = 6,     -- after casting the dinghy, jump to climb on for this long
+  surfaceMaxSeconds = 5,-- keep JUMPing onto the raft up to this long; if still not on it, recast to reposition
+                        -- (then stop, so falling off later doesn't bounce forever)
+  bounceJump = true,    -- when airborne/falling (e.g. the post-dinghy "bounce" WoW bug), the fishing key
+                        -- becomes JUMP to break the bounce loop — like the surfacing climb. Set false to disable.
+  boatCastBuffer = 0.5, -- padding (s) added to a boat action's real cast time before re-casting is allowed,
+                        -- so an INSTANT boat (Levitate) can't double-cast before its buff registers.
+  boatBuffWait = 1.5,   -- after a boat cast, keep waiting up to this long for its buff to REGISTER before
+                        -- allowing another boat cast — covers the gap between cast-complete and buff-applied.
+  boatJumpDelay = 0.5,  -- after a climb-onto-boat JUMP, hold off the next jump this long so a fast key-mash
+                        -- can't jump in place forever (never settling onto the surface to fish).
+  jumpActiveWindow = 5, -- the addon only takes over your key with a JUMP override while you've fished (an action
+                        -- press or the fishing channel) within this many seconds — so swimming past never jumps.
+  ascentBreaker = true, -- Zen ascent breaker (band-aid): when Zen is flying you UP, the key becomes JUMP so a
+                        -- press breaks the climb. Turn OFF to reproduce the raw stuck-jump bug for a real fix.
+  bounceBreakWithBuff = false, -- let the bounce-breaker fire even with a boat/water-walk buff up (the SURFACE
+                        -- bounce). Off historically because the OLD stuck-jump fed it; with IsKeyDown the jump is
+                        -- clean, so a fishing-key press should now BREAK that bounce. Toggle on to test it.
+  surfaceClimbJump = false, -- Surfacing(): JUMP to hop onto the raft while at the SURFACE with a boat buff. Default
+                        -- OFF — at the surface a jump just feeds the water-walk bounce; we only jump to ascend when
+                        -- SUBMERGED. Turn ON only if a PHYSICAL raft (dinghy) needs the at-surface hop to climb on.
+  zenArmWindow = 2,     -- falling-boat (Zen Flight): after jumping out of the water with one DUE, how long the
+                        -- cast-while-falling stays armed. Short on purpose: covers the jump arc, then the key
+                        -- re-arms to JUMP so you bounce + retry quickly rather than drifting armed for seconds.
+  -- ---- jump/override diagnostics (isolate the bounce mechanics; see /sbf jumpdiag) ----
+  jumpLock = false,     -- DIAGNOSTIC: when true, the fishing key is ALWAYS the JUMP override (out of combat) —
+                        -- nothing else. Lets you test whether a single press = a single jump, and whether a
+                        -- second press recovers from a bounce. Toggle with /sbf jumplock.
+  pollInterval = 0.15,  -- how often (s) the override poll re-evaluates the key. Exposed so timing can be tuned:
+                        -- lower = snappier state->override (catches the falling window sooner) but more CPU.
+  jumpKeyState = true,  -- JumpController: use IsKeyDown (real physical key read) to defer binding changes while
+                        -- the key is HELD — the definitive fix for the stuck-jump. Off = fall back to the timer below.
+  jumpKeyupHold = 0.25, -- JumpController FALLBACK (used only when IsKeyDown can't read the key — mouse/controller,
+                        -- or jumpKeyState off): min time a JUMP is held before it can be replaced so its key-UP lands.
+  winPos = nil,         -- saved options-window position { point, x, y }
+  poleSlot = 28,        -- inventory slot of the fishing tool (for pole-enchant checks + pole equip)
+  autoAddPole = true,   -- RETAIL only: an empty pole box picks up the pole in your fishing tool slot, until you clear
+                        -- the box yourself. WoW: Forever never fills it from what you wear (Gear.lua AutoPopulatePole).
+  -- gear snapshot + "in fishing gear" flag are PER-CHARACTER now: SBFDB.charGear[name-realm].{snapshot,on}
+  -- (see Gear.lua SBF.CharGear). The old account-wide gearSnapshot/profileGearOn are migrated then dropped.
+  warnNoPole = true,        -- Forever: a fishing press with no pole to put on stops and says why (Gear.lua WarnNoPole)
+  gearFollowMax = 3,        -- Forever: the Equip-gear key's follow-up applies (pole first, then the set)
+  gearFollowDelay = 0.6,    -- seconds between those follow-ups
+  restoreMaxTries = 4,      -- gear restore gives up after this many passes in a row that put nothing back
+  restoreRetryDelay = 0.6,  -- seconds between gear-restore passes (each re-checks what's still not back on)
+  idleRestoreEnabled = true,  -- ON by default: after this long with no action press, auto-restore your normal gear
+  idleRestoreSeconds = 30,    -- THE idle window (s): one clock, three effects — gear auto-restore (gated by the
+                              -- flag above), focus-audio restore, and dropping fishing mode into standby (always;
+                              -- see SBF.fishingModeActive). The next action press re-arms fishing mode.
+  focusAudio = {        -- reconfigure WoW's own sound while fishing (isolate the bobber splash), parallel to gear
+    enabled = false,
+    -- the "focus" preset: isolate the splash (full SFX/master, mute music/ambience, low dialog). The 5
+    -- volumes are the only controls; apply forces Sound_EnableMusic/EnableAmbience on so volume rules.
+    master = 1.0, sfx = 1.0, music = 0.0, ambience = 0.0, dialog = 0.3,
+  },
+  castSound = false,    -- play a sound when the fishing channel starts
+  castSoundMode = "kit",-- "kit" = built-in SoundKit id, "file" = bundled sound file
+  castSoundId = 5274,   -- SoundKit id for "kit" mode (5274 = AUCTION_WINDOW_OPEN chime)
+  castFailSoundMode = "kit",
+  castFailSoundId = 8959,-- 8959 = RAID_WARNING (cast-fail alert sound)
+  castSoundFile = "Interface\\AddOns\\SBF\\sounds\\cast.ogg",  -- path for "file" mode
+  logActions = true,    -- Log-tab VIEW filter: show action lines (food/drink/chum/lure/…) in the list. Actions
+                        -- are ALWAYS logged; this only shows/hides them. true = shown.
+  fishlogMax = 150,     -- DISPLAY cap: how many recent log lines the Log tab RENDERS (raw log is never trimmed);
+                        -- kept modest so the columnar list stays smooth — editable ("show") on the Log tab
+  logSearchMode = "highlight",  -- Log-tab search mode: "highlight" (tint + next/prev jump) | "filter" (show only matches)
+  statsRefresh = "live",-- Stats-tab auto-refresh: "live" (redraw on each logged event) | 1/2/5 (timer secs) | "off" (manual)
+  reachSound = true,    -- the out-of-reach alert (on-screen message + sound) once per far cast (Reach.lua)
+  -- reachSoundMode "none" = message only, no sound
+  reachSoundMode = "kit",
+  reachSoundId = 8959,
+  reachSoundFile = "",
+  noFishSound = false,  -- play a sound when a cast ends with no fish hooked (optional warning)
+  noFishSoundMode = "kit",
+  noFishSoundId = 8959, -- SoundKit id (kit mode); 8959 = RAID_WARNING
+  noFishSoundFile = "",
+  -- "Expired" cast alert: the cast ran its FULL channel with no bite (not a cast-fail, not a missed bite).
+  -- Classified in the channel-stop grace (Core), so this sound fires there, not on an immediate event.
+  expiredSound = false, -- play a sound when a cast expires (ran full length, nothing hooked)
+  expiredSoundMode = "kit",
+  expiredSoundId = 8959,-- SoundKit id (kit mode); 8959 = RAID_WARNING
+  expiredSoundFile = "",
+  nothingSound = false, -- play a sound when a cast comes up empty (reeled, nothing on the line)
+  nothingSoundMode = "kit",
+  nothingSoundId = 8959,-- SoundKit id (kit mode); 8959 = RAID_WARNING
+  nothingSoundFile = "",
+  -- "Patiently Rewarded" buff alert: the FIRST consumer of the Buffs.lua watcher. Plays the chosen
+  -- sound once when the named buff appears (rising edge). The name is configurable (the buff may be
+  -- localised/renamed) — anything later (other buff alerts) reuses the same WatchBuff API.
+  prSound = false,
+  prSoundMode = "file",   -- default the Patiently Rewarded alert to the bundled "Yay" sound (below)
+  prSoundId = 8960,       -- SoundKit fallback (kit mode); 8960 = READY_CHECK ding — a clear, positive ping
+  prSoundFile = "Interface\\AddOns\\SBF\\sounds\\YAY.mp3",   -- bundled "Yay" (needs a full game restart to load)
+  prBuffName = "Patiently Rewarded",
+  bgAlpha = 0.94,       -- window background opacity (Options slider)
+  minimap = { minimapPos = 220 },  -- minimap button (LibDBIcon db): angle in degrees around the ring, + hide
+  -- Mouse double-click fishing: fire SBF's secure fishing button (and optionally loot/interact) from a
+  -- DOUBLE-CLICK of a chosen mouse button, WITHOUT stealing normal single clicks. See SBF.MouseInit /
+  -- the GLOBAL_MOUSE_DOWN handler below: a double-click momentarily arms a secure override binding so the
+  -- 2nd click fires the button, then clears it (single clicks pass through untouched). doubleSec = the
+  -- max gap (s) between the two presses that still counts as a double-click.
+  -- fishButton/lootButton default UNSET (nil): a "BUTTON2" default re-applied right-click on every load via
+  -- ApplyDefaults, so clearing it never stuck (and a fresh char showed "right button" for no reason). The user
+  -- picks the button; mouse mode only enables once it's set.
+  mouse = { enabled = false, fishButton = nil, lootButton = nil, doubleSec = 0.4, debug = false },
+  -- boat spells that must be cast while FALLING, not submerged (Zen Flight): press jumps you out of the water,
+  -- then the next press casts once you're falling. [spellId]=true; add any other flight-type "boat" here.
+  fallingBoats = { [125883] = true },   -- Zen Flight
+}
+SBF.DB_DEFAULTS = DB_DEFAULTS   -- exposed as the canonical settings-key list
+
+-- The rotation order (CONSUMABLE_ORDER), the generic-aura learn skip-list (LEARN_SKIP), the
+-- channel/postFire data (was CHANNELED), and the firing/due/effect engine all live in Slots.lua
+-- now. Core reads them through `ns` (ns.ROTATION_ORDER, ns.LEARN_SKIP, ns.SlotDef, ns.slotDue, …).
+-- (generic-consume skip is ns.isLearnSkipped now — locale-resolved, not a raw English table)
+
+local function ApplyDefaults(dst, def)
+  for k, v in pairs(def) do
+    if type(v) == "table" then
+      if type(dst[k]) ~= "table" then dst[k] = {} end
+      ApplyDefaults(dst[k], v)
+    elseif dst[k] == nil then dst[k] = v end
+  end
+end
+
+------------------------------------------------------------------- iterate ----
+-- call fn(key, def) for every slot + custom button (key = unique button suffix)
+function SBF.EachDef(fn)
+  local slots = SBF.ActiveSlots()
+  for _, s in ipairs(SLOTS) do
+    slots[s.id] = slots[s.id] or {}
+    fn(s.id, slots[s.id], s)
+  end
+end
+
+------------------------------------------------------------- secure buttons ---
+local buttons = {}         -- key -> SecureActionButton
+SBF._buttons = buttons     -- read-only reference to the button registry
+local bindOwner = CreateFrame("Frame")   -- owns the override bindings
+local GECBind = LibStub:GetLibrary("GECBind-1.0")   -- shared keybind lib (owns the secure click-edge handling)
+local GECLoot = LibStub:GetLibrary("GECLoot-1.0", true)   -- shared fast-loot lib (optional: nil-safe if not embedded)
+
+-- Push SBF's fast-loot preference into the shared looter: enable/disable SBF as a requester and mirror SBF's
+-- debug-log state into the lib's chat dump. Idempotent — safe to call on load and on every toggle change.
+function SBF.ApplyFastLoot()
+  if not GECLoot then return end
+  if SBFDB and SBFDB.fastLoot then GECLoot:Enable("SBF") else GECLoot:Disable("SBF") end
+  -- Observe (independent of fast-loot) so GECLoot tracks the action context (Fishing/gather casts) and its
+  -- ClassifyLootSlot returns a real src for the fishlog even when fast-loot is off. Idempotent.
+  if GECLoot.Observe then GECLoot:Observe("SBF") end
+  GECLoot:SetDebug("SBF", SBFDB and SBFDB.debug or false)
+end
+
+-- Phase-5 gear pseudo-actions: two bindable, NON-secure actions (gear equip/restore are protected only via
+-- their own combat guards, not secure casts) keyed in SBFDB.binds like slots. Plain Buttons whose OnClick
+-- runs the function; SBF.Apply wires their override bindings off SBFDB.binds["equipGear"/"restoreGear"].
+local GEAR_ACTIONS = {
+  -- stamps the action clock, or an earlier fishing session's idle timer undoes the equip within a second (QC 9 S1)
+  equipGear   = function() SBF.lastActionAt = GetTime(); SBF.EquipProfileGearFull() end,
+  restoreGear = function() SBF.RestoreNormalGear() end,
+}
+local gearActionBtns = {}
+for id, fn in pairs(GEAR_ACTIONS) do
+  local b = CreateFrame("Button", "SBFGear_" .. id, UIParent)
+  b:RegisterForClicks("AnyUp")
+  b:SetScript("OnClick", fn)
+  b:Hide()
+  gearActionBtns[id] = b
+end
+
+-- A secure button fires its protected action on key-DOWN or key-UP per the ActionButtonUseKeyDown CVar; a
+-- fixed "AnyUp" silently DROPS the cast on key-down clients (the long "won't cast on the new account" bug).
+-- GECBind.RegisterSecureClicks owns this now — it registers the matching edge AND keeps the button re-synced
+-- on CVAR_UPDATE for the life of the session. NEVER hardcode RegisterForClicks on a secure cast button.
+local function EnsureButton(key)
+  if buttons[key] then return buttons[key] end
+  local b = CreateFrame("Button", "SBFBtn_" .. key, UIParent, "SecureActionButtonTemplate")
+  GECBind.RegisterSecureClicks(b)
+  b:Hide()
+  buttons[key] = b
+  return b
+end
+
+-- shared low-level helpers now live in Slots.lua (defName/itemKey/curItemId/seedItemBuff/
+-- hasAction/slotBuffName/…). Core aliases the few it uses directly so the code below reads
+-- the same; cross-file calls resolve at runtime via `ns`.
+local defName, hasAction = ns.defName, ns.hasAction
+local itemKey, curItemId = ns.itemKey, ns.curItemId
+
+-- load a slot's item/macro onto its secure button (macro wins if both set). Items
+-- and toys go through a "/use <name>" macro for the learn-vs-summon reason above.
+local function Configure(b, def)
+  GECBind.RegisterSecureClicks(b)   -- keep the click edge matched to ActionButtonUseKeyDown on every (re)apply
+  b:SetAttribute("type", nil)
+  b:SetAttribute("item", nil); b:SetAttribute("macrotext", nil)
+  b:SetAttribute("spell", nil); b:SetAttribute("toy", nil)
+  if def.macro and def.macro ~= "" then
+    b:SetAttribute("type", "macro"); b:SetAttribute("macrotext", def.macro)
+  else
+    -- everything else fires via "/cast <name>": it resolves items, toys AND spells,
+    -- and crucially still works for items that teach a toy then get consumed (e.g.
+    -- the Bat Visage Bobber) where "/use <name>" finds no bag item and does nothing.
+    local name = defName(def)
+    if name then
+      b:SetAttribute("type", "macro"); b:SetAttribute("macrotext", "/cast " .. name)
+    elseif def.item and def.item ~= "" then
+      b:SetAttribute("type", "item"); b:SetAttribute("item", "item:" .. (GetItemInfoInstant(def.item) or def.item))
+    elseif def.toy then
+      b:SetAttribute("type", "item"); b:SetAttribute("item", "item:" .. def.toy)
+    end
+  end
+end
+
+-- ---- buff-based consumable timing -------------------------------------------
+-- A rotation slot is "due" when its tracked effect (aura or enchant) is gone or within its
+-- refresh threshold — the engine's slotDue (Slots.lua) decides that for every slot. The aura
+-- reads route through Buffs.lua (SBF.GetBuff / SBF.ScanBuffs), the ONE secret-guarded source.
+
+-- Learn which buff a consumable applied: poll for the FIRST new (or refreshed), non-generic,
+-- un-taken buff after the cast. "First to appear" (not "biggest") is what keeps two consumables
+-- fired back-to-back (the skill & perception chums) from grabbing each other's buff, since each
+-- one's buff shows up when IT fires. Diffs two ScanBuffs snapshots (secret-named auras already
+-- dropped there), keyed name -> expirationTime, so a refresh (a bumped expiry on an existing
+-- buff) is caught too, not just a brand-new name.
+local function expiryMap()
+  local m = {}
+  for name, d in pairs((SBF.ScanBuffs())) do m[name] = d.expirationTime or 0 end
+  return m
+end
+-- ================================ ANOMALY channel (things that should never happen) ================================
+-- ONE reporter for every "we detected something wrong" case, so they can be MONITORED in one place instead of
+-- each one inventing its own chat print that scrolls away unnoticed.
+--
+-- It RECORDS: a per-tag counter and a bounded ring of the last lines. That is the whole shipping behaviour, and
+-- it's the part that matters — an anomaly that happened while nobody was watching is still answerable
+-- afterwards. Deliberately NOT gated behind a debug toggle: these fire only when something is genuinely wrong,
+-- so the normal output is silence, and silence is the assertion that the checks are holding.
+--
+-- The recorder itself SHIPS because the detections live on shipping paths (the cast classifier, the reel gate)
+-- and must not become nil there.
+local ANOMALY_KEEP = 50
+function SBF.Anomaly(tag, fmt, ...)
+  local msg = select("#", ...) > 0 and string.format(fmt, ...) or fmt
+  SBF._anomalyCount = SBF._anomalyCount or {}
+  SBF._anomalyCount[tag] = (SBF._anomalyCount[tag] or 0) + 1
+  local log = SBF._anomalyLog or {}
+  log[#log + 1] = { tag = tag, msg = msg, t = time(), n = SBF._anomalyCount[tag] }
+  while #log > ANOMALY_KEEP do table.remove(log, 1) end
+  SBF._anomalyLog = log
+  return SBF._anomalyCount[tag]
+end
+
+-- ONE output funnel for diagnostics. RULE: ANY trace/diagnostic text goes through SBF.Emit, never a bare print(),
+-- so there is exactly one place that decides where output lands.
+function SBF.Emit(msg)
+  print(msg)
+end
+
+
+-- ============================ buff/enchant DETECTION debug channel (compartmentalized) ============================
+-- A dedicated trace for how SBF learns / rejects / already-knows each item's buff or enchant. Gated on its OWN
+-- flag SBFDB.buffDebug so it can run ALONE (no other debug noise), and it also rides SBFDB.debug so a general
+-- debug session still sees it. Every learn, mount-reject, and already-known hit prints — the source tag marks
+-- whether a KNOWN value was learned live or hard-coded (a future shipped seed reads source="seed"). Toggle it
+-- with SBFDB.buffDebug. Kept in one place so it's easy to keep an eye on.
+local function bdbg(fmt, ...)
+  if not (SBFDB and (SBFDB.buffDebug or SBFDB.debug)) then return end
+  print("|cff88ccffSBF buff|r " .. string.format(fmt, ...))
+end
+SBF._buffDbg = bdbg   -- exposed so the enchant-capture block elsewhere logs on the SAME channel
+
+-- Reject a MOUNT aura from learning: you can't fish mounted, so a mount aura in the learn window is the
+-- "mounted right after casting" pollution. Authoritative + PER-AURA — C_MountJournal.GetMountFromSpell maps the
+-- aura's spellId to a mount. (A blanket IsMounted() skip would wrongly drop a legit fishing buff that's up
+-- alongside the mount, so we reject the SPECIFIC aura and keep scanning for the real one.)
+local function auraIsMount(spellId)
+  if not (spellId and C_MountJournal and C_MountJournal.GetMountFromSpell) then return false end
+  return C_MountJournal.GetMountFromSpell(spellId) and true or false
+end
+
+-- The ONE learning entry point. Every aura-slot fire routes through here unconditionally (from the single
+-- arm point); THIS function owns the whole "is there anything to learn, and for which item?" decision — the
+-- caller carries no per-slot guard, so nothing has to be rewired per slot. A fireAll slot (Buffs) tracks each
+-- item's buff SEPARATELY, so learning is PER-ITEM: gate on the pinned item's own learned record, not the
+-- slot-level cdef.buff (which one item would set, blocking the rest).
+-- itemID -> attempt count, or "done" once an observation landed. SESSION-scoped on purpose (a plain local,
+-- never saved): re-observing each login is exactly the point — it is how a catalog fact earns continued
+-- trust, and how a value that changed in a patch gets contradicted.
+local observeTries = {}
+
+local function learnBuff(slotKey, cdef, deadline)
+  if not cdef then return end
+  -- PIN the item we're learning FOR at CALL time. The aura that lands is from THIS item's cast; a
+  -- rotating slot (e.g. boat with two boats) may re-arm cdef to a different item before the async poll
+  -- fires, so reading the id inside the poll would mis-attribute the buff to the wrong boat.
+  local atIid, atKey = curItemId(cdef), itemKey(cdef)
+  local sdFA = ns.SlotDef and ns.SlotDef(slotKey); local fireAll = sdFA and sdFA.fireAll
+  -- SPELL-PICK persist: a spell armed in a slot (boat/buffs) has no item id, so today it never reaches
+  -- db.items and never flows to the server (only the slot-level cdef.buff). Record its identity under a
+  -- "spell:N" key so it exports like an item; DB2 fills authoritative duration/effect. Runs for fireAll AND
+  -- rotation slots. buffSpell may be nil until the aura is learned — the spell id + name are the identity.
+  if cdef.spell and SBF.ObserveItem then
+    -- prefer a READABLE learned name; if cdef.buff went secret in combat, fall back to the spell's own name
+    -- (a secret would be dropped by ObserveItem anyway, but the `or` must not short-circuit ON the secret).
+    local learnedName = cdef.buff
+    if learnedName and issecretvalue and issecretvalue(learnedName) then learnedName = nil end
+    SBF.ObserveItem("spell:" .. cdef.spell, { kind = (sdFA and sdFA.effect) or "aura",
+      name = ns.spellName and ns.spellName(cdef.spell) or nil,
+      buff = learnedName or (ns.spellName and ns.spellName(cdef.spell)) or nil,
+      buffSpell = cdef.buffSpell, slots = { [slotKey] = true } })
+    bdbg("|cff80ff80SPELL|r %s -> |cffffd100%s|r (spell %s)", slotKey,
+      tostring(ns.spellName and ns.spellName(cdef.spell) or cdef.spell), tostring(cdef.spell))
+  end
+  -- a fireAll pick with no numeric id is a SPELL entry ("spell:N"): it names its own buff (entryBuffName ->
+  -- spellName) and there's no per-item ItemKnow to write, so there is nothing more to LEARN — skip cleanly.
+  -- (Non-fireAll spell slots still learn into the slot-level cdef.buff below, which IS how they're tracked.)
+  if fireAll and not atIid then return end
+  local function alreadyLearned()
+    -- Gate on the DURABLE identity (buffSpell), not just the display NAME: the buff name can go secret in
+    -- combat (and is no longer persisted when it does — see Items.lua ObserveItem), so a record with a valid
+    -- buffSpell but a transiently-blank buff must still read as LEARNED, or the item churns through the learn
+    -- loop every fire. A non-empty name alone also counts (pre-buffSpell records / spell-less learns).
+    if fireAll then local r = atIid and SBF.ItemKnow(atIid)
+      return r and ((r.buffSpell and r.buffSpell ~= 0) or (r.buff and r.buff ~= "")) and true or false end
+    return ((cdef.buffSpell and cdef.buffSpell ~= 0) or (cdef.buff and cdef.buff ~= "")) and true or false
+  end
+  -- OBSERVATION LANE. A catalogued item takes its identity from the shipped catalog (seedItemBuff returns
+  -- before the learned cache is ever read), so `alreadyLearned()` was true on the very first fire and this
+  -- function early-returned — meaning we recorded NOTHING about the items we most need evidence for. Proven
+  -- on the server 2026-09-16: Toxic Tlhapi and friends arrive with maps/slots but no buff, no buffSpell, no
+  -- duration, so `learned_sightings` (the curation evidence table) holds empty knowledge for every
+  -- catalogued item and a wrong shipped value can never be contradicted by data.
+  -- So: the catalog stays authoritative for BEHAVIOUR (nothing below touches cdef.*), but we still watch the
+  -- aura land ONCE PER ITEM PER SESSION and write what we actually saw into the item's learned record, which
+  -- is what rides to the server. A disagreement then shows up as its own sighting row instead of silence.
+  local observeOnly = false
+  if alreadyLearned() then
+    local tries = atIid and observeTries[atIid]
+    -- CATALOGUED items only, and never in a fire-all slot: the observation writes the item's learned record, which
+    -- is the identity a LEARNED item (and every fire-all entry) is matched by, so observing those could let a
+    -- sibling's aura overwrite a correct identity (QC 2026-09-29). A catalogued single-pick item takes its identity
+    -- from the catalog, so its learned record is evidence only.
+    local due = atIid and not fireAll and ns.CatalogKnow and ns.CatalogKnow(atIid)
+      and SBFDB and SBFDB.observeCatalogued ~= false
+      and tries ~= "done" and (tries or 0) < (SBFDB.observeMaxTries or 3)
+    if not due then
+      if SBFDB and (SBFDB.buffDebug or SBFDB.debug) then   -- report WHAT is already known + its source (learned vs hard-coded)
+        local rec = atIid and SBF.ItemKnow(atIid)
+        local src = (rec and rec.source) or "?"
+        local tag = (src == "seed" or src == "builtin") and "  |cff80ff80(hard-coded)|r" or ("  |cff808080(" .. src .. ")|r")
+        bdbg("known %s item=%s buff=|cffffd100%s|r%s", slotKey, tostring(atIid),
+          tostring((rec and rec.buff) or cdef.buff or "?"), tag)
+      end
+      return   -- nothing to learn AND nothing left to observe — cheap early-out (no ScanBuffs snapshot)
+    end
+    observeOnly = true
+    observeTries[atIid] = (tries or 0) + 1   -- capped so an aura that never lands can't poll every fire
+  end
+  local before = expiryMap()
+  -- COMBAT BOUNDARY GUARD: in 12.x combat an aura's NAME goes secret, and a secret-named aura is NOT keyed
+  -- in the name-keyed snapshot (Buffs.lua ScanBuffs). So a permanent buff that was up the whole time (the
+  -- player's fishing-gear "Fishing For Attention") drops OUT of `before` while in combat and "appears" to a
+  -- poll tick after combat ends - reading as freshly-landed and getting learned as the fired item's buff
+  -- (the Toxic Tlhapi wedge, player-reported 2026-09-05). Never compare snapshots across a combat-state
+  -- change: re-baseline and keep polling instead.
+  local beforeCombat = (UnitAffectingCombat and UnitAffectingCombat("player")) or false
+  local function poll()
+    -- in observe-only mode alreadyLearned() is true BY DEFINITION (the catalog seeded it), so the usual
+    -- "stop, someone else learned it" guard would abort the observation before it began.
+    if not cdef or (not observeOnly and alreadyLearned()) then return end
+    local nowCombat = (UnitAffectingCombat and UnitAffectingCombat("player")) or false
+    if nowCombat ~= beforeCombat then
+      before, beforeCombat = expiryMap(), nowCombat
+      bdbg("combat %s mid-learn for %s: re-baselined the before-snapshot (secret names skew the diff)",
+        nowCombat and "STARTED" or "ENDED", slotKey)
+      if GetTime() < deadline then C_Timer.After(0.5, poll) end
+      return
+    end
+    -- buffs OTHER slots already own — never steal one (that's the oversized-bobber/chum cross-contamination:
+    -- a slot in its 4s learn window grabs a neighbour's still-up aura). Guard on BOTH the display NAME and the
+    -- durable spellID identity: the name can go secret in combat / be renamed, so a slot that owns the aura by
+    -- spellID must still block it even when its name reads blank. This is the "never override a catalog/locked
+    -- item's buff" rule at the slot level — the owner keeps it, the interloper skips and learns its own.
+    local taken, takenSpell = {}, {}
+    for sk, sd in pairs(SBF.ActiveSlots()) do
+      if sk ~= slotKey then
+        if sd.buff and sd.buff ~= "" then taken[sd.buff] = true end
+        if sd.buffSpell and sd.buffSpell ~= 0 then takenSpell[sd.buffSpell] = true end
+      end
+    end
+    for name, exp in pairs(expiryMap()) do
+      if not ns.isLearnSkipped(name) and not taken[name]
+        and (before[name] == nil or (exp or 0) > (before[name] or 0) + 1) then
+        local d = SBF.GetBuff and SBF.GetBuff(name)   -- the just-landed aura's details (duration + spellId)
+        local spellId = d and d.spellId
+        if spellId and takenSpell[spellId] then
+          -- another slot already owns this aura by its stable spellID — don't steal it, keep scanning
+          bdbg("reject |cffff6060%s|r (spell %s) for %s: |cffff6060owned by another slot|r", name, tostring(spellId), slotKey)
+        elseif auraIsMount(spellId) then
+          -- a mount aura (mounted mid-learn) — reject it and keep scanning for the real fishing buff
+          bdbg("reject |cffff6060%s|r (spell %s) for %s: |cffff6060mount aura|r", name, tostring(spellId), slotKey)
+        elseif atIid and not (d and d.duration and d.duration > 0) then
+          -- PERMANENT-AURA GUARD: an ITEM fire (chum/food/lure/toy) always yields a FINITE buff — an aura
+          -- with no duration is equipment/stance pollution (readable live: no expiry), and learning one
+          -- wedges the slot forever (always "up" -> never due -> the 3-miss self-heal can never trip).
+          -- Determined at scan time from the aura itself, no pre-built list. Spell picks (atIid nil, e.g.
+          -- Zen Flight legitimately duration-less) are exempt. d==nil (details unreadable) also rejects
+          -- for an item: an identity we can't verify is not worth a permanent wrong learn.
+          bdbg("reject |cffff6060%s|r (spell %s) for %s: |cffff6060no duration (permanent aura)|r",
+            name, tostring(spellId), slotKey)
+        else
+          -- observe-only: the CATALOG owns this item's identity, so never write the slot-level buff here.
+          -- We are recording evidence, not changing what the engine watches.
+          if not fireAll and not observeOnly then   -- fireAll uses PER-ITEM buffs (entryBuffName), never a slot-level one
+            cdef.buff = name             -- display name (localised; can go secret in combat)
+            cdef.buffSpell = spellId     -- IDENTITY: survives rename + secret-name; the preferred match key
+            cdef.buffFor = atKey         -- the item (pinned at call time) this buff was learned for
+          end
+          -- snapshot the spell into the shared registry so log/{spell} rendering can show the buff uniformly.
+          if spellId and GECStore and GECStore.Note then GECStore.Note("spell", spellId) end
+          local iid = atIid              -- cache per-item (account-wide) so we never re-learn it
+          if iid then
+            -- also capture the aura's FULL length (buffDuration) + its spellId so the due-check has a fallback
+            -- timer AND a stable identity when the live aura name can't be read.
+            SBF.ObserveItem(iid, { kind = "aura", buff = name, buffSpell = spellId,
+              buffDuration = (d and d.duration and d.duration > 0) and d.duration or nil })
+            -- CATALOG REPAIR (dev builds only). The apply-fail path sets `relearn` on an item whose SHIPPED
+            -- buff identity never showed up live. Reaching here means we've now watched the real aura land,
+            -- so promote it to a devOverride that outranks the catalog (seedItemBuff reads it first) and
+            -- clear the relearn flag. Public builds never set `relearn`, so they never write an override and
+            -- the shipped catalog stays absolute. The override is kept as EVIDENCE for fixing
+            -- items-catalog.json — it is not a substitute for fixing it.
+            local rr = SBF.ItemKnow(iid)
+            if rr and rr.relearn and SBF.IsDev and SBF.IsDev() then
+              rr.devOverride = { buff = name, buffSpell = spellId, at = time(),
+                                 wasBuff = rr.relearn.buff, wasSpell = rr.relearn.buffSpell }
+              rr.relearn = nil
+              if SBF.Anomaly then
+                SBF.Anomaly("catalog-repaired", "item %s: live aura is \"%s\"(%s), catalog said \"%s\"(%s). "
+                  .. "DEV override applied so the slot works now - still fix items-catalog.json.",
+                  tostring(iid), tostring(name), tostring(spellId),
+                  tostring(rr.devOverride.wasBuff or "?"), tostring(rr.devOverride.wasSpell or "?"))
+              end
+            end
+          end
+          if observeOnly then
+            observeTries[atIid] = "done"        -- one good look is enough for this session
+            -- Say so loudly in the buff channel when what we SAW disagrees with what we SHIP: that is the
+            -- whole reason this lane exists, and it is the signal the server-side mismatch flag will read.
+            local ck = ns.CatalogKnow and ns.CatalogKnow(atIid)
+            local mismatch = ck and ((ck.buffSpell and spellId and ck.buffSpell ~= spellId)
+              or (not ck.buffSpell and ck.buff and ck.buff ~= "" and ck.buff ~= name))
+            bdbg("%s %s -> |cffffd100%s|r (spell %s, dur %s) item=%s%s",
+              mismatch and "|cffff6060OBSERVED (DISAGREES WITH CATALOG)|r" or "|cff80c0ffOBSERVED|r",
+              slotKey, name, tostring(spellId), tostring((d and d.duration) or "?"), tostring(atIid),
+              mismatch and (" |cffff6060catalog says \"" .. tostring(ck.buff) .. "\"(" .. tostring(ck.buffSpell) .. ")|r") or "")
+          else
+            bdbg("|cff80ff80LEARNED|r %s -> |cffffd100%s|r (spell %s, dur %s) item=%s", slotKey, name,
+              tostring(spellId), tostring((d and d.duration) or "?"), tostring(atIid))
+          end
+          return
+        end
+      end
+    end
+    if GetTime() < deadline then C_Timer.After(0.5, poll) end
+  end
+  C_Timer.After(0.5, poll)
+end
+
+-- ComputeNext / GetNext, the rotation due/effect engine, the boat due/surface helpers
+-- (BoatBuffUp / IsOnBoat / Surfacing), WatchedBuff / SlotBuffLeft / ClearLearnedBuff, the
+-- item-availability checks, the firing-mode resolver, and the macro builders ALL live in
+-- Slots.lua now. Core just calls them via SBF.* / ns.*. The boat helpers Core's footing/
+-- state code uses are aliased here.
+local BoatBuffUp = ns.BoatBuffUp
+
+-- current state (live): Combat > Fishing > Boat > Surfacing > Swimming > Falling > Ground.
+-- Combat wins even though we can't act on it (it's still the real state). "Fishing" =
+-- the line is out (a channel); that's when the key flips to loot. (No "Underwater" —
+-- IsSubmerged() reads true even while treading at the surface, so it's meaningless.)
+-- Falling (airborne — jumped, fell off, or stuck in the post-dinghy bounce) MUST be reported:
+-- it was previously falling through to "Ground", so {sbf.state} lied ("Ground") while the
+-- footing panel correctly read airborne. Mirrors ns.ReadState()'s footing (swimming beats falling).
+function SBF.GetState()
+  if InCombatLockdown() then return "Combat" end
+  if UnitChannelInfo and UnitChannelInfo("player") then return "Fishing" end
+  if SBF.IsOnBoat() then return "Boat" end
+  if SBF.Surfacing() then return "Surfacing" end   -- dinghy up, still in the water
+  if IsSwimming() then return "Swimming" end
+  if IsFalling and IsFalling() then return "Falling" end   -- airborne: jumped / fell / post-boat bounce
+  return "Ground"
+end
+
+-- ZONE-LOCAL fishing skill. There's no API for "this zone's fishing line", so (like FishingTracker) we map
+-- the current zone's CONTINENT to its expansion fishing skill-line ID, then read that line directly with
+-- C_TradeSkillUI.GetProfessionInfoBySkillLineID (works window-closed). Skill-line IDs verified in-game via
+-- /sbf fishlines. Both tables are EDITABLE here — add a continent (e.g. Midnight's) or fix an overlap with
+-- no rebuild. The continent UI-map IDs are stable Blizzard map ids; resolve by walking C_Map parents.
+SBF.FISHING_LINE = {                 -- expansion -> skillLineID (for reference / future use)
+  classic = 2592, outland = 2591, northrend = 2590, cataclysm = 2589, pandaria = 2588,
+  draenor = 2587, legion = 2586, bfa = 2585, shadowlands = 2754, dragonflight = 2826,
+  warwithin = 2876, midnight = 2911, base = 356,
+}
+SBF.FISHING_LINE_BY_CONTINENT = {    -- continent UI-map id -> fishing skillLineID
+  [13]  = 2592, [12]  = 2592,        -- Eastern Kingdoms / Kalimdor -> Classic
+  [101] = 2591,                      -- Outland
+  [113] = 2590,                      -- Northrend
+  [424] = 2588,                      -- Pandaria
+  [572] = 2587,                      -- Draenor
+  [619] = 2586,                      -- Broken Isles (Legion)
+  [875] = 2585, [876] = 2585,        -- Zandalar / Kul Tiras (BfA)
+  [1550] = 2754,                     -- Shadowlands
+  [1978] = 2826,                     -- Dragon Isles (Dragonflight)
+  [2274] = 2876,                     -- Khaz Algar (War Within)
+  [2537] = 2911,                     -- Quel'Thalas (Midnight) — its own continent, nested under EK(13), so it
+                                     -- wins on the parent-walk before the EK->Classic rule is reached
+}
+
+-- the fishing skill line for the player's current zone, or nil. Reads the RAW map ancestry from GECReader
+-- (best->root) and returns the first level whose mapID is a known continent — same "first ancestor in the
+-- table wins" walk as before (so Quel'Thalas still beats its EK parent), just sourced from the getter layer.
+local function zoneFishingLine()
+  local R = reader()
+  local chain = R and R.Current and R.Current.mapChain and R.Current.mapChain()
+  if not chain then return nil end
+  for _, lv in ipairs(chain) do
+    local line = lv.mapID and SBF.FISHING_LINE_BY_CONTINENT[lv.mapID]
+    if line then return line end
+  end
+end
+
+-- Returns level, maxLevel, modifier for the CURRENT ZONE's fishing line, or nil when absent (never a wrong
+-- live 0). The BASE level/max is read from the GECStore per-character professions cache — the library owns
+-- caching, warming, and updates (GECStore.ProfessionsWarmed() reports live-vs-cached; the header colors on it),
+-- and .lines[lineID] is nil when the char has no skill in that line. The MODIFIER (green +gear/lure boost) is
+-- SBF-owned and gear-derived — the library doesn't carry it — so SBF reads it live and only when the data is
+-- warm (0 otherwise; the full gear-derived boost catalog is future work).
+-- WoW: Forever / Classic have ONE Fishing skill on the old base line 356 (probed 2026-09-23: 356 = "Fishing 75/75",
+-- the per-expansion lines 2592/2591/... answer 0/0), so SBF.FishingLine() is 356 there and the zone's expansion line
+-- on retail. The header readout, the {sbf.fishing} data token and the Skill Book all read it through here.
+function SBF.FishingLine()
+  if SBF.CLASSIC_GEAR then return SBF.FISHING_LINE.base end
+  return zoneFishingLine() or SBF.FISHING_LINE.midnight          -- unmapped continent -> current-expansion line
+end
+function SBF.FishingSkill()
+  local line = SBF.FishingLine()
+  local S = gecStore()
+  if not (line and S and S.CharInfo and S.CharIndex) then return nil end
+  local ch = S.CharInfo(S.CharIndex())
+  local prof = ch and ch.state and ch.state.professions
+  local base = prof and prof.lines and prof.lines[line]
+  if not base then return nil end                              -- nil = no cached/live skill for this line
+  local mod = 0
+  if C_TradeSkillUI and C_TradeSkillUI.GetProfessionInfoBySkillLineID then
+    local p = C_TradeSkillUI.GetProfessionInfoBySkillLineID(line)
+    if p and (p.maxSkillLevel or 0) > 0 then mod = p.skillModifier or 0 end   -- gear-derived, live-only (SBF owns it)
+  end
+  return base.level or 0, base.max, mod
+end
+
+-- "300/300 (+116)" with the bonus in green — the shared string for Haul's {sbf.fishing} token AND the SBF
+-- window header readout. "" when you have no Fishing skill (so a Haul watcher of just {sbf.fishing} hides).
+function SBF.GetFishing()
+  local level, maxLevel, mod = SBF.FishingSkill()
+  if not level then return "" end
+  local s = level .. "/" .. (maxLevel or level)
+  if mod and mod > 0 then s = s .. " |cff33ff33(+" .. mod .. ")|r" end
+  return s
+end
+
+-- ===== Skill Book =====
+-- Ordered expansion list for the Skill Book tab (release order). {catalogKey, displayName}; catalogKey indexes
+-- SBF.FISHING_LINE. The generic "base" line (356) is intentionally omitted — it's the legacy pre-split fishing
+-- skill, not an expansion, and reports odd values.
+SBF.SKILLBOOK_ORDER = {
+  { "classic",      "经典旧世" },        { "outland",     "外域" },
+  { "northrend",    "诺森德" },          { "cataclysm",   "大地的裂变" },
+  { "pandaria",     "潘达利亚" },        { "draenor",     "德拉诺" },
+  { "legion",       "军团再临" },        { "bfa",         "争霸艾泽拉斯" },
+  { "shadowlands",  "暗影国度" },        { "dragonflight","巨龙时代" },
+  { "warwithin",    "地心之战" },        { "midnight",    "至暗之夜" },
+}
+
+-- Per-expansion fishing skill for a GECStore character index (nil = current character). Reads the professions
+-- cache (.lines[lineID], populated + owned by GECStore). Returns an ordered list of rows:
+--   { label, line, level, max, has, current }   -- has=false when the char has no skill in that line;
+-- current=true for the expansion of the zone you're standing in. nil when the store is unavailable.
+function SBF.SkillBookFor(charIdx)
+  local S = gecStore(); if not (S and S.CharInfo and S.CharIndex) then return nil end
+  local idx = charIdx or S.CharIndex()
+  local ch = idx and S.CharInfo(idx)
+  local lines = ch and ch.state and ch.state.professions and ch.state.professions.lines
+  if SBF.CLASSIC_GEAR then                                       -- Forever / Classic: one Fishing skill, one row
+    local line = SBF.FISHING_LINE.base
+    local l = lines and lines[line]
+    return { { label = "钓鱼技能", line = line, level = l and l.level, max = l and l.max, has = l ~= nil, current = true } }
+  end
+  local curLine = zoneFishingLine()
+  local out = {}
+  for _, e in ipairs(SBF.SKILLBOOK_ORDER) do
+    local line = SBF.FISHING_LINE[e[1]]
+    local l = line and lines and lines[line]
+    out[#out + 1] = {
+      label = e[2], line = line,
+      level = l and l.level, max = l and l.max, has = l ~= nil,
+      current = (line ~= nil and line == curLine),
+    }
+  end
+  return out
+end
+
+-- Characters to offer in the Skill Book selector: ordered { idx, name } (GECStore char index + display name),
+-- the CURRENT character pinned first, then every other registry character that has professions data cached.
+function SBF.SkillBookChars()
+  local S = gecStore(); if not (S and S.CharInfo and S.EnsureDB) then return nil end
+  local cur = S.CharIndex and S.CharIndex()
+  local db = S.EnsureDB()
+  local items = db and db.registry and db.registry.char and db.registry.char.items or {}
+  local out, seen = {}, {}
+  local function add(idx)
+    if not idx or seen[idx] then return end
+    local info = S.CharInfo(idx); if not info then return end
+    seen[idx] = true
+    out[#out + 1] = { idx = idx, name = info.name or ("char " .. tostring(idx)) }
+  end
+  add(cur)                                   -- current character first (even with no data yet)
+  local rest = {}
+  for i = 1, #items do
+    local it = items[i]
+    if it and not seen[i] and it.state and it.state.professions then rest[#rest + 1] = i end
+  end
+  table.sort(rest, function(a, b) return (items[a].name or "") < (items[b].name or "") end)
+  for _, i in ipairs(rest) do add(i) end
+  return out
+end
+
+-- pull the perception value out of a structured tooltip (C_TooltipInfo) — a leftText may hold several
+-- \n-joined sub-lines, so we take the number from the sub-line that actually says "perception".
+-- The label is matched via the client's OWN stat global (ITEM_MOD_PERCEPTION_SHORT = "Perception" on enUS):
+-- the hardcoded English word returned 0 on every other locale — display-only, but Feed.lua fed that zero
+-- straight into Haul's bar. English stays as the fallback if the global ever vanishes. plain find (no
+-- patterns): a translated label may legally contain Lua pattern magic.
+local PERCEPTION_LABEL = (type(ITEM_MOD_PERCEPTION_SHORT) == "string" and ITEM_MOD_PERCEPTION_SHORT ~= ""
+  and ITEM_MOD_PERCEPTION_SHORT:lower()) or "perception"
+local function scanPerception(data)
+  if not (data and data.lines) then return nil, 0 end
+  local txt, val = nil, 0
+  for _, line in ipairs(data.lines) do
+    local t = line.leftText
+    -- 12.0 "secret value" taint: some aura tooltip text is a secret string that can't be string-operated
+    -- (errors on index/concat, esp. in combat). Skip those lines — we can't read them anyway.
+    if t and not (issecretvalue and issecretvalue(t)) then
+      for sub in (t .. "\n"):gmatch("(.-)\n") do
+        if sub:lower():find(PERCEPTION_LABEL, 1, true) then
+          local digits = ((sub:match("([%d,]+)") or ""):gsub(",", ""))   -- (gsub returns str,count)
+          local n = tonumber(digits)
+          txt = (txt and (txt .. " | ") or "") .. sub
+          if n then val = val + n end
+        end
+      end
+    end
+  end
+  return txt, val
+end
+ns.scanPerception = scanPerception
+
+-- Total fishing perception from normal gear (slots 1-19, incl. enchants) + the Fishing Tool (slot 28) +
+-- active buffs (lure/chum/food/the Grand Line buff). SKIPS profession slots 20-27 (other professions carry
+-- their own perception). Returns total (number) + a contributors list { {src, name, text, val} } for /sbf perc.
+function SBF.Perception()
+  local total, contrib = 0, {}
+  for slot = 1, 28 do
+    if slot < 20 or slot == 28 then
+      local link = GetInventoryItemLink and GetInventoryItemLink("player", slot)
+      local data = link and C_TooltipInfo and C_TooltipInfo.GetInventoryItem and C_TooltipInfo.GetInventoryItem("player", slot)
+      local txt, val = scanPerception(data)
+      if txt then total = total + val; contrib[#contrib + 1] = { src = "gear", name = (GetItemInfo(link)), text = txt, val = val } end
+    end
+  end
+  -- 12.1 SECRET AURAS: index-based buff access HARD ERRORS for a tainted addon while auras are
+  -- secret (combat / encounters / M+ / PvP) — "GetUnitBuff(): Auras cannot be accessed when secret
+  -- while tainted by 'SBF'". Same family as the GECReader-1.0 MINOR 12 guard; see the long note
+  -- there. No API exists to test secrecy first, so the call is its own probe: pcall it and stop.
+  -- Degrades rather than disappears — the gear/tool perception above still totals; only the buff
+  -- contributions drop out while secret. This runs on Haul's {sbf.perception} token too, so an
+  -- unguarded throw here surfaces as a Haul error (Window.lua BuildFields) on every field build.
+  local i = 1
+  while i <= 60 and C_TooltipInfo and C_TooltipInfo.GetUnitBuff do
+    local ok, data = pcall(C_TooltipInfo.GetUnitBuff, "player", i)
+    if not ok then break end                                    -- auras secret: keep the gear total
+    if not (data and data.lines and data.lines[1]) then break end
+    local txt, val = scanPerception(data)
+    if txt then total = total + val; contrib[#contrib + 1] = { src = "buff", name = data.lines[1].leftText, text = txt, val = val } end
+    i = i + 1
+  end
+  return total, contrib
+end
+
+-- just the perception number (for the header readout + Haul's {sbf.perception} token).
+function SBF.GetPerception() return (SBF.Perception()) or 0 end
+
+-- Is the player CURRENTLY channeling the FISHING spell specifically (not a combat/other channel)? Uses the
+-- same precise test as the cast tracker (SBF.IsFishingCast — id set + locale-resolved name), so the idle observer treats only
+-- real fishing as "still active" — a combat channel must never keep gear/audio applied forever.
+function SBF.IsFishingChannel()
+  if not UnitChannelInfo then return false end
+  local cname, _, _, _, _, _, _, cid = UnitChannelInfo("player")
+  if not cname then return false end
+  return SBF.IsFishingCast(cname, cid)
+end
+
+-- seconds of air left if the BREATH mirror timer is running, else nil. This is the
+-- RELIABLE "actually underwater" test (IsSubmerged reads true at the surface too).
+local function breathSecondsLeft()
+  if not GetMirrorTimerInfo then return nil end
+  for i = 1, 3 do
+    local timer, value = GetMirrorTimerInfo(i)
+    if timer == "BREATH" then return (value or 0) / 1000 end
+  end
+  return nil
+end
+SBF.BreathLeft = breathSecondsLeft
+
+-- Macro-line builders (actionLine / guardNoCombat / guardCombat / combatLine), the firing-mode resolver,
+-- describeAction, and buildPressMacro all live in Slots.lua; Core aliases the few PreClick calls here.
+local combatLine = ns.combatLine
+local guardCombat, describeAction = ns.guardCombat, ns.describeAction
+local buildPressMacro = ns.buildPressMacro
+
+-- Chat a one-line note of what an action-key press fired (Debug-log only; no-op presses stay quiet).
+local function announce(txt)
+  if SBFDB and SBFDB.debug then print("|cff45c4a0SBF|r |cffffd100" .. tostring(txt) .. "|r") end
+end
+
+-- ===== refresh-on-cast: one-shot skill warm (replaces the old secure journal buttons) =====
+-- WoW only hands the addon your per-expansion fishing skill AFTER the Fishing Journal has been opened once on
+-- this character. Instead of a SecureActionButton (which tainted the window in combat), we flash the journal
+-- on the FIRST fishing press when the skill isn't warm yet — the press already fires a secure button, so we
+-- just point THAT press at "/cast Fishing Journal" for one press. The warmer below closes it a tick later.
+-- The Fishing Journal opener, resolved from the PLAYER'S OWN SPELLBOOK rather than the English literal
+-- "Fishing Journal". That literal only works on an enUS client: everywhere else the warm armed, cast nothing,
+-- silently ate a keypress every login, and left the auto-close flag set for some unrelated profession window
+-- to walk into twenty minutes later.
+--
+-- Reading the spellbook (not a hardcoded spell id) is deliberate — it is locale-proof AND it answers the other
+-- half of the same bug for free: a character with no Fishing has no such entry, so it returns nil and we never
+-- arm. GetProfessions()'s 4th return is the fishing index; the profession's spells live at
+-- [spellOffset+1 .. spellOffset+numSpells], and the journal opener is the entry that is NOT the Fishing cast
+-- itself (131474). Returns nil on anything unexpected — the caller treats nil as "don't arm".
+-- Both ids CONFIRMED against a live client (2026-08-04): the Fishing profession reports numSpells=2 at its
+-- offset, slot+1 = 271990 "Fishing Journal", slot+2 = 131474 "Fishing". We still resolve the NAME through the
+-- spellbook rather than C_Spell.GetSpellName(JOURNAL) so it stays locale-correct and so a character without
+-- Fishing returns nil instead of a castable-looking name for a spell they don't have.
+-- (the fishing CAST ids now live in Slots.lua behind SBF.IsFishingCast — there is more than one in the
+-- wild, so a single constant here was the bug, not the fix)
+local JOURNAL_SPELL_ID = 271990
+local function journalSpellName()
+  if not (GetProfessions and GetProfessionInfo and C_SpellBook) then return nil end
+  local _, _, _, fishingIdx = GetProfessions()
+  if not fishingIdx then return nil end                       -- no Fishing on this character
+  local _, _, _, _, numSpells, spellOffset = GetProfessionInfo(fishingIdx)
+  if not (numSpells and spellOffset) then return nil end
+  local fallback
+  for i = 1, numSpells do
+    local info = C_SpellBook.GetSpellBookItemInfo
+      and C_SpellBook.GetSpellBookItemInfo(spellOffset + i, Enum.SpellBookSpellBank.Player)
+    local sid  = info and (info.spellID or info.actionID)
+    local nm   = info and info.name
+    if sid and nm and nm ~= "" and not (issecretvalue and issecretvalue(nm)) then
+      if sid == JOURNAL_SPELL_ID then return nm end           -- exact match wins outright
+      -- else remember the first non-Fishing entry. Only used if the id ever changes (a patch renumber): taking
+      -- "whatever isn't the Fishing cast" would pick the wrong spell the day Blizzard adds a third entry here.
+      -- exclude every known fishing CAST id, not just 131474: a client reporting 131476 would otherwise
+      -- have the fishing cast itself offered as the "journal" fallback.
+      if not SBF.IsFishingCast(nil, sid) and not fallback then fallback = nm end
+    end
+  end
+  return fallback
+end
+SBF._JournalSpellName = journalSpellName   -- read-only: what the Fishing Journal spell name resolves to
+
+local function shouldFlashJournal()
+  if not SBFDB or SBFDB.refreshSkillOnCast == false then return false end   -- default ON; opt-out
+  if SBF._skillFlashed then return false end                               -- one attempt per login
+  if InCombatLockdown() then return false end                              -- protected cast: out of combat only
+  local S = gecStore()
+  if S and S.ProfessionsWarmed and S.ProfessionsWarmed() then return false end  -- already loaded
+  -- DON'T ARM WHAT CAN'T FIRE. If the spell doesn't resolve (no Fishing on this character, or an unexpected
+  -- client), casting it would do nothing while still consuming the press and arming the auto-close flag —
+  -- which then sits there until some unrelated profession window trips it. Just fish instead.
+  if not journalSpellName() then return false end
+  return true
+end
+
+-- Auto-close listener, created at LOAD (so refresh-on-cast works even if the options window is never opened).
+-- When something flashed the journal (SBF._journalAutoClose set), close ProfessionsFrame one tick after
+-- TRADE_SKILL_LIST_UPDATE (cache-reading handlers run first) and refresh the Skill Book. Singleton-guarded so
+-- the older Options-side copy is a no-op. (Kept dormant when nothing sets the flag.)
+if not SBF._journalWarmer then
+  local w = CreateFrame("Frame")
+  w:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
+  w:SetScript("OnEvent", function()
+    local armedAt = SBF._journalAutoClose
+    if not armedAt then return end
+    SBF._journalAutoClose = nil
+    -- EXPIRED = not ours. The flag is a timestamp (see the arming site); anything older than the warm window
+    -- belongs to a warm that never completed, and the event we're seeing now is the player deliberately
+    -- opening Cooking or Blacksmithing. Clear it and leave their window alone.
+    if type(armedAt) == "number" and (GetTime() - armedAt) > (SBFDB.journalWarmTimeout or 5) then return end
+    -- NEVER drive the UIParent panel manager from an event handler in combat. TRADE_SKILL_LIST_UPDATE fires on
+    -- skill-ups, which happen mid-fight, and HideUIPanel in lockdown is the standard taint vector.
+    if InCombatLockdown and InCombatLockdown() then return end
+    C_Timer.After(0, function()
+      if InCombatLockdown and InCombatLockdown() then return end     -- re-check: the tick lands a frame later
+      if _G.ProfessionsFrame and _G.ProfessionsFrame:IsShown() then HideUIPanel(_G.ProfessionsFrame) end
+      if SBF.RefreshSkillBook then SBF.RefreshSkillBook() end
+    end)
+  end)
+  SBF._journalWarmer = w
+end
+
+-- ===== combat-safe windows: step SBF's windows out of the way when combat starts =====
+-- No secure frames remain in either window (the journal buttons were removed), so Hide/collapse is NOT
+-- protected and is safe in combat. Welcome always HIDES (a full-screen blocker on a combat-time login); the
+-- options window follows SBFDB.combatWindowMode ("collapse" | "hide" | "off"). Restored on combat end unless
+-- SBFDB.combatWindowRestore == false. Tracks what WE changed so a user-collapsed/closed window is left alone.
+local combatWin = CreateFrame("Frame")
+combatWin:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatWin:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatWin:SetScript("OnEvent", function(_, ev)
+  local p = SBF._optionsPanel
+  if ev == "PLAYER_REGEN_DISABLED" then
+    if SBF.WelcomeShown and SBF.WelcomeShown() then SBF._welcomeAutoHid = true; SBF.HideWelcome() end
+    local mode = (SBFDB and SBFDB.combatWindowMode) or "collapse"
+    if mode ~= "off" and p and SBFDB and SBFDB.shown then
+      -- snapshot the true pre-combat window state BEFORE we touch it, so a mid-combat reload/disconnect can be
+      -- un-stranded at ADDON_LOADED (the auto-collapse's SBFDB.collapsed write survives a reload; the flag doesn't).
+      SBFDB._combatSnap = { shown = SBFDB.shown, collapsed = SBFDB.collapsed or false }
+      if mode == "hide" then SBF._optAutoHid = true; p:Hide()
+      elseif not SBFDB.collapsed and p.SetCollapsed then SBF._optAutoCollapsed = true; p:SetCollapsed(true) end
+    end
+  elseif ev == "PLAYER_REGEN_ENABLED" then
+    if not SBFDB or SBFDB.combatWindowRestore ~= false then
+      if SBF._welcomeAutoHid and SBF.ShowWelcome then SBF.ShowWelcome() end
+      if SBF._optAutoHid and p then p:Show() end
+      if SBF._optAutoCollapsed and p and p.SetCollapsed then p:SetCollapsed(false) end
+    end
+    SBF._welcomeAutoHid, SBF._optAutoHid, SBF._optAutoCollapsed = nil, nil, nil
+    if SBFDB then SBFDB._combatSnap = nil end   -- combat ended cleanly — the un-strand snapshot is no longer needed
+  end
+end)
+
+
+-- An addon can't jump or interact-with-target on its own, but it CAN rebind the
+-- fishing key to those built-in actions. The key dynamically becomes: JUMP while
+-- surfacing onto the dinghy, INTERACT while the line is out (loot the bobber),
+-- else the smart button. You just keep pressing one key. Polled
+-- (no event for submerged/channeling), throttled, skipped in combat.
+
+-- Does the boat slot need FALLING-cast (Zen Flight)? The armed pick (boat.spell) is only set DURING a boat
+-- press (buildPressMacro), so it's unreliable at decision time — instead detect from the CONFIGURED items:
+-- true if the armed pick OR any configured boat item is a falling-boat. Safe on a mixed slot because every
+-- boat spell casts fine mid-fall (the water-walk ones just apply as you land), so jump-then-cast never breaks
+-- a normal boat. Without this the detection reads false, and the bounce-breaker keeps the key on JUMP → bounce.
+local function boatIsFalling(boat)
+  if not (boat and SBFDB and SBFDB.fallingBoats) then return false end
+  if boat.spell and SBFDB.fallingBoats[boat.spell] then return true end
+  if boat.items then
+    for _, e in ipairs(boat.items) do
+      local sid = ns.spellEntry and ns.spellEntry(e)
+      if sid and SBFDB.fallingBoats[sid] then return true end
+    end
+  end
+  return false
+end
+SBF.BoatIsFalling = boatIsFalling   -- exposed for the /sbf boat debug readout
+
+-- The UNIQUE "cast the falling-boat now" signal (the combination that breaks the bounce-vs-cast collision):
+-- a configured falling-boat (Zen Flight) whose OWN buff is DOWN. Checked per-spell, NOT via BoatBuffUp() —
+-- which any configured water-walk boat (Levitate/Path of Frost up) trips, wrongly blocking Zen Flight. Returns
+-- the spell id that needs casting, or nil. When this is set + FALLING, we cast (not bounce); when nil + falling,
+-- the bounce-breaker runs as normal. That's the whole disambiguation.
+local function fallingBoatNeeded(boat)
+  if not (boat and hasAction(boat) and not boat.skip and SBFDB and SBFDB.fallingBoats) then return nil end
+  for _, e in ipairs(boat.items or {}) do
+    local sid = ns.spellEntry and ns.spellEntry(e)
+    if sid and SBFDB.fallingBoats[sid] then
+      local nm = ns.spellName and ns.spellName(sid)
+      local up = nm and SBF.GetBuff and SBF.GetBuff(nm)
+      if not (up and up.secondsLeft and up.secondsLeft > 0) then return sid end   -- its own buff down -> cast it
+    end
+  end
+  return nil
+end
+SBF.FallingBoatNeeded = fallingBoatNeeded
+
+-- The inverse: a configured falling-boat whose buff is currently UP = Zen Flight ACTIVE. Zen Flight is a
+-- FLYING state (IsFlying/IsFalling can read true) yet you CAN fish from the hover, and its buff can be
+-- permanent (GetBuff -> secondsLeft = math.huge), so presence is what matters. Used to (a) let canCast be YES
+-- while flying and (b) stop the bounce-breaker from hijacking the key once you're hovering. Returns spell id or nil.
+local function fallingBoatActive(boat)
+  if not (boat and SBFDB and SBFDB.fallingBoats) then return nil end
+  for _, e in ipairs(boat.items or {}) do
+    local sid = ns.spellEntry and ns.spellEntry(e)
+    if sid and SBFDB.fallingBoats[sid] then
+      local nm = ns.spellName and ns.spellName(sid)
+      if nm and SBF.GetBuff and SBF.GetBuff(nm) then return sid end
+      -- Robust fallback: Zen Flight IS a flying state and is NOT a mount. If you're flying and not mounted with a
+      -- falling-boat configured, treat it as ACTIVE even when the buff read misses (name/ID drift or the post-cast
+      -- registration lag) — that gap is what let the bounce-breaker re-arm JUMP and fly you into space.
+      if IsFlying and IsFlying() and not (IsMounted and IsMounted()) then return sid end
+    end
+  end
+  return nil
+end
+SBF.FallingBoatActive = fallingBoatActive
+
+-- SELF-CONTAINED band-aid: should the fishing key become JUMP to DISRUPT a Zen Flight ASCENT? A cast landing at
+-- the top of the jump arc can leave you climbing; a JUMP press then delivers a clean key-down+up that breaks the
+-- stuck climb. True ONLY when Zen is ACTIVE (flying) AND you're actually MOVING (ascending) — so hovering to fish
+-- (flying, not moving) stays untouched and the press still casts/fishes. One responsibility, no side effects.
+local function zenAscentBreaker(boat)
+  if SBFDB.ascentBreaker == false then return false end               -- band-aid toggled off (test the raw bug)
+  if not (boat and hasAction(boat)) then return false end
+  if not (SBF.FallingBoatActive and SBF.FallingBoatActive(boat)) then return false end
+  if not (IsFlying and IsFlying()) then return false end
+  return (GetUnitSpeed and GetUnitSpeed("player") or 0) > 0            -- moving = ascending; a press breaks it
+end
+SBF.ZenAscentBreaker = zenAscentBreaker
+
+-- ==== JumpController: the SOLE owner of the fishing key's dynamic override binding ====
+-- EVERY dynamic override for the fishing key — JUMP (surfacing / bounce-breaker / Zen jump-out), the loot
+-- INTERACT, or none — flows through here, and nothing else calls SetOverrideBinding/ClearOverrideBindings on
+-- this key. Its defining rule (the reason it exists): when a JUMP binding is released, the physical key-UP must
+-- have already landed on JUMP. Clearing a JUMP binding mid-press drops the key-up and WoW treats jump as HELD —
+-- that is the continuous "flying into space". So a JUMP is held for a minimum settle time before it can be
+-- replaced or cleared. Pure state machine over (desired action, keys): DesiredOverride decides intent only; the
+-- controller owns ALL the wiring, so jump behaves exactly one way everywhere it is used.
+local JumpController = {}
+do
+  local owner = CreateFrame("Frame")
+  local applied = nil        -- the binding currently on the key ("JUMP" | an interact binding | nil)
+  local appliedKeys = ""     -- the key-set 'applied' was bound to (re-applied when the key-set changes)
+  local jumpSince = 0        -- GetTime() when the current JUMP was applied (0 when 'applied' isn't JUMP)
+
+  -- `SBFDB.x or default` does NOT guard against 0 — in Lua zero is TRUTHY, so a stored 0 wins and the guard
+  -- silently turns itself off. jumpKeyupHold=0 disables the key-up settle entirely; pollInterval=0 makes the
+  -- override re-evaluate EVERY FRAME instead of every 0.15s. Both were sitting at 0 on a real client, set by
+  -- the (now removed) /sbf jump switches, which happily accepted 0 via `n >= 0`. Treat a non-positive value
+  -- as "unset" so a degenerate stored number can't disable a safety guard.
+  local function num(v, default) return (type(v) == "number" and v > 0) and v or default end
+  ns.numOrDefault = num
+  local function minHold() return num(SBFDB.jumpKeyupHold, 0.25) end   -- settle time so a JUMP's key-up lands first
+  local heldSince = nil            -- when the current "key is held" defer started (nil = not deferring)
+  local desyncSaid = nil           -- last time an override-desync anomaly was raised (rate limit)
+
+  -- Is any fishing key PHYSICALLY held right now? Reads the RAW key state (IsKeyDown excludeBindingState=true) so
+  -- our own override-to-JUMP doesn't mask it. This is the real read that replaces the key-up TIMER: we simply
+  -- never touch the binding while a key is down. Strips a modifier prefix (SHIFT-F -> F); pcall-guarded because a
+  -- mouse/controller "key" may not be an IsKeyDown name (those fall back to the timer path in Apply).
+  local function anyKeyHeld(keys)
+    if not (IsKeyDown and SBFDB.jumpKeyState ~= false) then return nil end   -- nil = "couldn't read" -> use timer
+    local read = false
+    for _, k in ipairs(keys or {}) do
+      local base = (type(k) == "string" and k:match("[^-]+$")) or k
+      local ok, down = pcall(IsKeyDown, base, true)
+      if ok then read = true; if down then return true end end
+    end
+    return read and false or nil   -- false = read & up; nil = never read a valid key -> timer fallback
+  end
+
+  local function bind(action, sig, keys)
+    ClearOverrideBindings(owner)
+    if action then for _, key in ipairs(keys) do SetOverrideBinding(owner, true, key, action) end end
+    jumpSince = (action == "JUMP") and GetTime() or 0
+    applied, appliedKeys = action, sig
+    SBF._dynOverride = action                                        -- for /sbf next + diagnostics
+  end
+
+  -- Is the override we THINK we applied actually on the key right now? `applied`/`appliedKeys` are a cache,
+  -- and a cache that silently disagrees with reality is how the loot key dies with no error: something else
+  -- clears or outranks our override, the cache still says "already applied", and Apply's early-return means
+  -- we never re-bind. That gate cannot self-detect by construction — so ask the game instead of trusting the
+  -- cache. GetBindingAction reflects override bindings, so a mismatch is a real desync, not a guess.
+  local function bindingLive(action, keys)
+    if not (action and GetBindingAction) then return true end   -- nothing to verify (no override wanted)
+    for _, k in ipairs(keys or {}) do
+      -- `true` = checkOverride. It defaults to FALSE, and everything JumpController applies is an OVERRIDE
+      -- binding, while the fishing key's BASE action is permanently CLICK SBFBtn_fishing (Bindings.xml).
+      -- Without it the compared values can never be equal, so this returned false on every single call and
+      -- the "desync" was 100% self-inflicted. GECBind-1.0:81 and OptionsWidgets:790 both pass it.
+      local ok, act = pcall(GetBindingAction, k, true)
+      if ok and act ~= action then return false end
+    end
+    return true
+  end
+
+  -- Request the desired binding for 'keys'. Returns true iff the applied binding actually CHANGED.
+  function JumpController.Apply(action, keys)
+    local sig = table.concat(keys or {}, "|")
+    if action == applied and sig == appliedKeys then
+      -- cache says we're done — VERIFY it before believing it. Re-bind on a desync and say so, because a
+      -- dead loot key with no error is exactly the "it just stops working" report we cannot reproduce.
+      if bindingLive(action, keys) then return false end
+      -- Rate-limited: this ring is what Report.lua ships as the player's entire bug history (ANOMALY_KEEP=50).
+      -- A per-tick anomaly would evict every genuine fire-noop / reel-blind / catalog-buff-wrong before anyone
+      -- could click Report, which is exactly what the un-fixed version above did at 6.7 Hz.
+      local now = GetTime()
+      if SBF.Anomaly and (not desyncSaid or (now - desyncSaid) > 5) then
+        desyncSaid = now
+        SBF.Anomaly("override-desync", "the '%s' override is cached as applied on [%s] but the game does not "
+          .. "have it - something cleared or outranked it. Re-binding.", tostring(action), sig)
+      end
+      -- FALL THROUGH rather than bind() + return here. Returning skipped anyKeyHeld()/minHold() below — the
+      -- documented core fix against a dropped key-up leaving a stuck jump. A desync is never urgent enough to
+      -- justify clearing a binding while the key is physically down.
+    end
+    -- THE FIX: never change the binding while the fishing key is PHYSICALLY HELD (real read via IsKeyDown, not a
+    -- timer guess). Clearing a JUMP mid-hold drops the key-up -> WoW keeps jump held -> fly-up; binding JUMP onto
+    -- an already-held key makes it a held-jump -> ascend. Deferring every change until the key is UP prevents
+    -- both. The poll re-checks within pollInterval, so the change lands the instant you release.
+    local held = anyKeyHeld(keys)
+    if held == true then
+      -- ESCAPE VALVE. Deferring while a key is physically held is correct (see below), but it trusts the key
+      -- read, and a key that gets STUCK reading down defers every binding change FOREVER — the loot key
+      -- simply never appears and nothing reports it. The reel gate taught us these reads do fail. So bound
+      -- the defer: past the limit, force the change through and raise it. A brief wrong-binding risk beats a
+      -- permanently dead key, and the anomaly names the culprit instead of leaving it a mystery.
+      heldSince = heldSince or GetTime()
+      local waited = GetTime() - heldSince
+      local maxDefer = num(SBFDB.jumpHeldMaxDefer, 3)
+      if waited < maxDefer then return false end
+      if SBF.Anomaly then
+        SBF.Anomaly("held-key-stuck", "a fishing key has read HELD for %.1fs (limit %.1fs) - binding changes "
+          .. "were frozen that whole time. Forcing '%s' through; if this repeats the key state is stuck, not held.",
+          waited, maxDefer, tostring(action))
+      end
+      heldSince = nil
+    else
+      heldSince = nil
+    end
+    -- Fallback ONLY when IsKeyDown couldn't read the key (mouse/controller, or SBFDB.jumpKeyState=false): the old
+    -- key-up settle TIMER, so those inputs still get some protection.
+    if held == nil and applied == "JUMP" and action ~= "JUMP" and (GetTime() - jumpSince) < minHold() then
+      return false
+    end
+    bind(action, sig, keys)
+    return true
+  end
+
+  function JumpController.Clear() if applied ~= nil or appliedKeys ~= "" then bind(nil, "", {}) end end
+  function JumpController.Current() return applied end                     -- the live binding (or nil)
+  function JumpController.Applied() return appliedKeys ~= "" end           -- is an owner override in place?
+  -- The physical jump just landed (swimming->falling) while JUMP is bound: restart the key-up hold from HERE so
+  -- it protects THIS press's release, not the stale bind time. Without this the hold expired during a long swim
+  -- and a slow/held press dropped its key-up -> stuck jump -> the intermittent fly-up.
+  function JumpController.NoteJumpEdge() if applied == "JUMP" then jumpSince = GetTime() end end
+end
+SBF.JumpController = JumpController
+
+local function DesiredOverride()
+  local s = SBF.ActiveSlots()
+  -- never bind JUMP while combat-flagged (we couldn't unbind it again until combat
+  -- ends, leaving the key stuck jumping)
+  local combat = UnitAffectingCombat and UnitAffectingCombat("player")
+  -- DIAGNOSTIC jump-lock: force the key to JUMP and nothing else, to isolate the override/bounce mechanics
+  -- from the whole decision tree. Still respects the combat guard (can't rebind mid-fight). See /sbf jumpdiag.
+  if SBFDB.jumpLock and not combat then return "JUMP", "jumpLock" end
+  -- GATE: the fishing-loop JUMP overrides (surfacing, Zen jump-out, bounce-breaker) only engage while you're
+  -- ACTIVELY fishing — a recent action press or fishing-channel activity. Just swimming past with a boat/Zen in
+  -- the slot must NOT let the addon hijack your key to JUMP (the "swam by, pressed nothing, jumps forever" bug).
+  local active = math.max(SBF.lastActionAt or 0, SBF.lastFishingAt or 0)
+  local fishing = active > 0 and (GetTime() - active) < (SBFDB.jumpActiveWindow or 5)
+  if fishing and hasAction(s.boat) and SBF.Surfacing() and not combat then
+    return "JUMP", "surface"
+  end
+  -- Falling-cast boats (Zen Flight): the collision with the bounce-breaker below (both want the key on "falling")
+  -- is broken by the UNIQUE combination fallingBoatNeeded() — a falling-boat whose OWN buff is down. ONLY in that
+  -- combination do we diverge: SWIMMING -> JUMP (drop into the fall), FALLING -> return nil so the press CASTS
+  -- (beats the bounce-breaker). Every other falling state (no falling-boat needed) falls straight through to the
+  -- bounce-breaker, so a normal bounce still gets its JUMP. This is the state-combo disambiguation.
+  do
+    local zenDue = fishing and ns.zenBoatDue and ns.zenBoatDue(s.boat)
+    if zenDue and not combat then
+      SBF._zenArm = GetTime() + (SBFDB.zenArmWindow or 2)     -- over water, falling-boat due: arm + jump out
+      SBF._zenPickId = zenDue
+      -- Over water with Zen due: a STABLE JUMP — NO debounce. The JumpController binds it once and re-applying
+      -- the same JUMP is a no-op, so a steady "swimming" state yields a steady JUMP that can't re-fire (jumpLock
+      -- proved a stable jump never bounces). The old debounce flipped JUMP<->nil on a TIMER while the state never
+      -- changed, and that self-inflicted oscillation was the "override over and over" loop + the climb. The cast
+      -- happens on the real swimming->falling change (arm block below); hold=true covers that one handoff's key-up.
+      if IsSwimming and IsSwimming() then return "JUMP", "zenJump" end
+    end
+    -- Keep the cast window OPEN for the whole bounce: while FALLING with a falling-boat still needed (configured,
+    -- no boat buff, not yet hovering), refresh the arm every frame so it can't expire mid-bounce (zenBoatDue only
+    -- fires on SWIMMING frames, so a fall-dominant bounce would otherwise time the arm out after zenArmWindow and
+    -- drop you to the bounce-breaker / the falling->fishing fall-through). _zenPickId stays set from the jump.
+    if fishing and IsFalling and IsFalling() and boatIsFalling(s.boat)
+        and not (ns.BoatBuffUp and ns.BoatBuffUp()) and not fallingBoatActive(s.boat) then
+      SBF._zenArm = GetTime() + (SBFDB.zenArmWindow or 2)
+    end
+    -- inside the arm window + airborne + not yet hovering: return nil so the press CASTS (beats the bounce-breaker)
+    if SBF._zenArm and GetTime() < SBF._zenArm and IsFalling and IsFalling() and not combat
+        and not fallingBoatActive(s.boat) then
+      return nil, "armCast"
+    end
+  end
+  -- Zen Flight ASCENT BREAKER (self-contained; see zenAscentBreaker): if Zen is flying you UPWARD (active +
+  -- moving), make the key JUMP so a press breaks the climb with a clean key-up. Hovering-to-fish (not moving)
+  -- falls right past this to the normal cast/fish path.
+  if fishing and zenAscentBreaker(s.boat) and not combat then
+    return "JUMP", "ascent"
+  end
+  -- Bounce-bug breaker: dismissing the dinghy (or an awkward landing) can trap you airborne in a
+  -- water "bounce" loop — you bob up/down endlessly. WoW breaks it the instant you JUMP. So while
+  -- we're falling/airborne the fishing key becomes JUMP, exactly like the surfacing climb. Mid-air
+  -- JUMP is a no-op in WoW, so this can't double-jump — it only fires on the split-second of surface
+  -- contact that ends each bounce, then the override clears once you're grounded/swimming again.
+  -- ...with three exclusions, so JUMP only fires in the case it was built for (the dismissed-raft airborne trap:
+  -- NO boat buff, falling, over/near water):
+  --   * FLYING/GLIDING (Zen hover, dragonriding) — reads as falling but a JUMP just flies you up.
+  --   * a BOAT BUFF is up — then a "falling" flicker is the water-walk SURFACE BOUNCE, and JUMP FEEDS it
+  --     (your reload-into-a-loop). #2 handles a real submerged ascent; the bounce-breaker must stay out of it.
+  if fishing and SBFDB.bounceJump ~= false and IsFalling and IsFalling() and not combat
+      and not (IsFlying and IsFlying()) and not (IsGliding and IsGliding())
+      and (SBFDB.bounceBreakWithBuff or not (ns.BoatBuffUp and ns.BoatBuffUp()))   -- with-buff test: the surface bounce
+      and not fallingBoatActive(s.boat) then
+    return "JUMP", "bounce"
+  end
+  if UnitChannelInfo and UnitChannelInfo("player") and not hasAction(s.interact)
+    and not SBFDB.requireTwoButtons then                   -- two-button mode: action key doesn't loot
+    -- pet fighting (opt-in): leave the key on the fishing button so the press swings instead of looting. Checked
+    -- before the reach branch (an out-of-reach bobber must not turn the press into a mouseover loot), and only
+    -- when the press really has a fight macro to send (Combat off/empty keeps the key on loot).
+    if SBF.PetFightMacro and SBF.PetFightMacro() then return nil, "petFight" end
+    if SBF.BobberOutOfReach and SBF.BobberOutOfReach() then   -- the key can't reach this bobber
+      if SBF.REACH_MOUSEOVER and SBF.REACH_MOUSEOVER[SBF.ReachMode()] then return "INTERACTMOUSEOVER", "reachMouseover" end
+      return nil, "reachRecast"                                -- no override: the press runs the loop and recasts
+    end
+    return ((s.interact and s.interact.gameBinding) or "INTERACTTARGET"), "interact"
+  end
+  return nil, "idle"
+end
+-- (Bobber reach: out-of-reach detection, the mouseover/recast modes and the interact-key switch live in
+-- Reach.lua; DesiredOverride and UpdateFishKey below call into it.)
+
+-- Entering combat with a bobber out: the fishing key is on the loot override, and overrides can't be changed
+-- once combat lockdown starts, so the key would stay "loot" for the whole fight and never reach the combat
+-- action. PLAYER_REGEN_DISABLED fires just BEFORE lockdown, so this is the one moment the key can be handed
+-- back to the fishing button (whose frozen macro carries the combat half, which starts by stopping the Fishing
+-- channel). On by default (SBFDB.combatReleasesLoot), like retail where you fight straight away; always on for a
+-- character with "Fight when my pet is fighting". Only when the Combat slot has an action: with Combat off or empty
+-- the button would hold nothing for the fight but the cast, so the key stays on loot. A JUMP override is left
+-- alone (releasing JUMP mid-press is the stuck-jump bug the controller exists to prevent).
+do
+  local f = CreateFrame("Frame")
+  f:RegisterEvent("PLAYER_REGEN_DISABLED")
+  f:SetScript("OnEvent", function()
+    if not SBFDB then return end
+    -- only when there's a combat action to hand the key to (Combat off/empty: keep loot)
+    if not (SBF.PetCanFight and SBF.PetCanFight()) then return end
+    local petOn = SBF.PetCfg and SBF.PetCfg().fight
+    if not (SBFDB.combatReleasesLoot ~= false or petOn) then return end
+    local cur = JumpController.Current()
+    if cur and cur ~= "JUMP" and not InCombatLockdown() then JumpController.Clear() end
+  end)
+end
+
+local prevFalling = false   -- for the swimming->falling RISING edge (the physical jump landing)
+local function UpdateFishKey()
+  if InCombatLockdown() then return end
+  if SBF.UpdateReachInteractKeys then SBF.UpdateReachInteractKeys() end   -- interact keys -> mouseover while out of reach (Reach.lua)
+  local keys = SBF.BindsFor("fishing")   -- Key1/Key2/Controller — override ALL of them while the line is out
+  if #keys == 0 then JumpController.Clear(); prevFalling = false; return end
+  -- JUMPING IS ACTIVITY. A jump press fires the binding, NOT the secure button, so it never runs PreClick and
+  -- never refreshes lastActionAt — so a long HOLD (or a jump sequence longer than jumpActiveWindow) would let the
+  -- activity gate expire and clear the JUMP override out from under your still-held key -> stuck key-down. While
+  -- the override is ALREADY JUMP, keep the window alive. The FIRST activation still needs a real press, so
+  -- swimming past with nothing pressed stays quiet (the override is never JUMP there, so this never fires).
+  if JumpController.Current() == "JUMP" then SBF.lastActionAt = GetTime() end
+  -- Physical jump just landed (swimming->falling) while JUMP is bound: restart the key-up hold from HERE, so it
+  -- protects THIS press's release (the bind-time hold went stale over a long swim -> slow presses lost the key-up).
+  local falling = (IsFalling and IsFalling()) or false
+  if falling and not prevFalling then JumpController.NoteJumpEdge() end
+  prevFalling = falling
+  local action, reason = DesiredOverride()
+  -- (The "wait"/disabled suppression is handled in PreClick with a combat-safe macro, not a no-op override —
+  -- an override would also block the combat attack off this key.) The controller owns capture/hold/release.
+  local changed = JumpController.Apply(action, keys)
+  SBF._ovrReason = reason   -- which DesiredOverride branch decided the current override (for the trace)
+  if changed and SBFDB.debug then
+    local bt = SBF.ActiveSlots().boat
+    print(string.format("|cff45c4a0SBF|r key override -> |cffffd100%s|r  (state=%s swim=%s fall=%s fly=%s zenDue=%s active=%s armed=%s)",
+      JumpController.Current() or "none (fires the button)", tostring(SBF.GetState()),
+      tostring(IsSwimming and IsSwimming()), tostring(IsFalling and IsFalling()),
+      tostring(IsFlying and IsFlying()), tostring(ns.zenBoatDue and ns.zenBoatDue(bt)),
+      tostring(fallingBoatActive(bt)), tostring((SBF._zenArm and GetTime() < SBF._zenArm) or false)))
+  end
+  if SBF._tracing and SBF.Trace then                       -- per-poll trace (diagnostics)
+    SBF.Trace((changed and "*" or " ") .. tostring(reason or "-"))   -- * = the override changed this tick
+  end
+end
+
+
+-- Set a button's macrotext: the one place every press writes its macro.
+local function applyMacro(btn, text, tag)
+  btn:SetAttribute("macrotext", text)
+end
+
+
+-- ===== the REEL GATE (did a reel-in actually happen this channel?) =====
+-- `nothing` means "you reeled on time and proper, the line just delivered no loot". It used to be inferred
+-- from shape alone — stopped SHORT, no cause, no loot, no 413 — but hitting ESCAPE cancels the channel and
+-- looks exactly like that, so a cancel mislogged as `nothing` when it is really an INTERRUPT. So `nothing`
+-- now requires positive evidence that a reel was performed.
+-- Detecting it is awkward on purpose: while the line is out the fishing key is override-bound to the RAW game
+-- binding INTERACTTARGET (JumpController), so the reel press never runs through a secure button we could hook.
+-- We therefore watch the PHYSICAL key, every frame a fishing channel is live. Three rules:
+--   * RISING EDGE ONLY — the cast press is often STILL HELD when the channel starts, so a key must be seen UP
+--     once before a DOWN counts as the reel. Without this every cast would self-report "reeled".
+--   * EVERY FRAME, not per poll — a tap can be shorter than the 0.15s poll interval.
+--   * UNREADABLE = UNKNOWN (nil), never false. If a bound key can't be read (no IsKeyDown, or a pad/mouse combo
+--     it doesn't understand) the classifier falls back to the old behavior rather than claiming an interrupt it
+--     cannot prove. We only ever downgrade a cast on evidence.
+-- The mouse path doesn't need any of this: mouseOnDown knows the moment it arms the interact binding, and sets
+-- the flag directly (SBF._chanReeled).
+local reelWatchKeys, reelEdgeReady, reelSawKeys = nil, false, false
+local function resetReelWatch()
+  reelWatchKeys, reelEdgeReady, reelSawKeys = nil, false, false
+  SBF._chanReeled = false           -- false = "no reel seen yet"; nil = "couldn't tell"; true = reeled
+  SBF._reelBlindWhy = nil           -- and WHY it couldn't tell, set at the moment of blinding
+  -- NOTE: the chest veto is deliberately NOT reset here. It is keyed on the owning cast's start time
+  -- (SBF._chanOtherLootFor), because the window that sets it opens during the PREVIOUS cast's grace — after
+  -- this reset would have run. Zeroing it on channel start is what made a fast recast wipe the veto.
+end
+SBF._ResetReelWatch = resetReelWatch
+
+local function reelWatchRefresh()   -- poll-rate: rebuild the key set we physically watch
+  if not SBF._logCast then reelWatchKeys = nil; return end
+  local out, cur = {}, JumpController.Current()
+  -- single-button: while the line is out the FISHING key itself carries the interact binding
+  if cur and cur ~= "JUMP" then
+    for _, k in ipairs(SBF.BindsFor("fishing")) do out[#out + 1] = k end
+  end
+  -- two-button (and any native interact key): keeps its own binding for the whole channel
+  local s = SBF.ActiveSlots()
+  local gb = (s and s.interact and s.interact.gameBinding) or "INTERACTTARGET"
+  for _, k in ipairs(GECBind.Keys(gb) or {}) do out[#out + 1] = k end
+  reelWatchKeys = out
+end
+
+local function reelWatchTick()      -- per FRAME while channeling
+  if not (SBF._logCast and reelWatchKeys and SBF._chanReeled == false) then return end
+  -- THREE different reasons the gate can go blind, and they are NOT the same problem. Lumping them under
+  -- one "keys unreadable" message sent a real debugging session down the wrong path: the readability probe
+  -- reported both keys perfectly readable while the gate kept reporting blindness, because the actual cause
+  -- was an EMPTY watch list, not an unreadable key. Record which one it was.
+  if not IsKeyDown then
+    SBF._chanReeled, SBF._reelBlindWhy = nil, "IsKeyDown API unavailable"
+    return
+  end
+  if #reelWatchKeys == 0 then
+    -- reelWatchRefresh built nothing THIS tick. The fishing key is only watched while a jump/interact
+    -- override is live (cur ~= "JUMP"), and that override flips per poll — so an empty list here is a
+    -- MOMENTARY state, not a verdict. Latching nil here was a one-way door: the tick's own entry guard
+    -- requires _chanReeled == false, so one empty tick blinded the whole cast even when reelWatchRefresh
+    -- rebuilt a perfectly good list a tick later. Skip the tick; the CHANNEL_STOP freeze downgrades to
+    -- nil only if the list stayed empty for the ENTIRE channel (reelSawKeys never set).
+    return
+  end
+  reelSawKeys = true                                                -- the gate had eyes at least once this cast
+  local anyDown = false
+  for _, k in ipairs(reelWatchKeys) do
+    local base = (type(k) == "string" and k:match("[^-]+$")) or k   -- SHIFT-F -> F (IsKeyDown wants the base key)
+    local ok, down = pcall(IsKeyDown, base, true)                   -- raw state: our own override must not mask it
+    if not ok then                                                  -- a key we can't read -> can't prove anything
+      SBF._chanReeled, SBF._reelBlindWhy = nil, ("key '%s' is not readable"):format(tostring(base))
+      return
+    end
+    if down then anyDown = true end
+  end
+  if anyDown then
+    if reelEdgeReady then SBF._chanReeled = true end   -- down AFTER an up = a real press = the reel
+  else
+    reelEdgeReady = true                               -- seen up: the cast press has been released
+  end
+end
+
+-- ==== FISHING MODE: the master on/off for the background machinery ====
+-- SBF.fishingModeActive is armed by the FIRST action-key press (PreClick) and dropped by the idle observer
+-- below after the idle window (the SAME timer that swaps gear back and restores audio — one clock, three
+-- effects). While it's OFF the addon is on standby: the per-frame reel watch + the 0.15s key-override poll
+-- (this frame) and the buff-watch scan (Buffs.lua) all early-return, so parking in a city costs ~nothing.
+-- Runtime-only (not saved): after a /reload you're in standby until the next press, which is correct.
+SBF.fishingModeActive = false
+local pollFrame, pollAccum = CreateFrame("Frame"), 0
+pollFrame:SetScript("OnUpdate", function(_, elapsed)
+  if not SBF.fishingModeActive then return end   -- standby: no reel watch, no override poll (see above)
+  reelWatchTick()                        -- EVERY frame: a reel tap can be shorter than pollInterval
+  pollAccum = pollAccum + elapsed
+  if pollAccum >= (ns.numOrDefault and ns.numOrDefault(SBFDB.pollInterval, 0.15) or 0.15) then
+    pollAccum = 0
+    UpdateFishKey()
+    reelWatchRefresh()                   -- after UpdateFishKey so it reads the override just applied
+    -- Stamp fishing-activity while the line is out (the bobber sits 10-20s with NO keypress). The idle
+    -- auto-restore measures inactivity from max(lastActionAt, lastFishingAt), so it can't conclude "idle"
+    -- mid-channel and yank gear/audio while you're still fishing. Only the real Fishing channel counts.
+    if SBF.IsFishingChannel() then SBF.lastFishingAt = GetTime() end
+  end
+end)
+
+-- Phase-5 idle auto-restore: ~1s throttle. When enabled, after idleRestoreSeconds with no action press while
+-- wearing the profile gear package, restore your normal gear ONCE (the next press re-equips it — see PreClick).
+-- The whole decision (feature on? something actually applied? idle long enough? not still channeling?) lives
+-- in the pure SBF.ShouldIdleRestore(now) in Gear.lua so it's unit-tested; critically it gates on CharGear().on
+-- /.audioOn, so once RevertToNormal clears those flags the observer stops firing instead of re-equipping the
+-- snapshot every tick and fighting a manual gear change while you stand idle. Idle = no ACTION press AND no
+-- FISHING activity for the full window (measured from max(lastActionAt, lastFishingAt), so a bobber sitting
+-- out still counts as active and the clock only starts after fishing genuinely stops).
+local idleFrame, idleAccum = CreateFrame("Frame"), 0
+idleFrame:SetScript("OnUpdate", function(_, elapsed)
+  idleAccum = idleAccum + elapsed
+  if idleAccum < 1 then return end
+  idleAccum = 0
+  local now = GetTime()
+  -- genuinely idle long enough with fishing state applied: return everything fishing reconfigured (gear +
+  -- focus audio) to normal, via the single packaged revert (each side-effect self-guards / no-ops when off).
+  if SBF.ShouldIdleRestore and SBF.ShouldIdleRestore(now) and SBF.RevertToNormal then
+    SBF.RevertToNormal()
+  elseif SBF.ShouldIdleRestoreClient and SBF.ShouldIdleRestoreClient(now) then
+    SBF.RestoreBobberReach(); SBF.RestoreFishingZoom()   -- gear auto-restore off: the client settings still go back
+  end
+  -- ...and the SAME idle clock drops FISHING MODE (see the block above pollFrame): standby the background
+  -- machinery until the next action press. Independent of the gear gates — fires even with no gear package
+  -- applied and idle-restore off. The override clear needs the out-of-combat check (ClearOverrideBindings is
+  -- protected in combat); combat just defers the drop to a later 1s tick, which is fine — combat IS activity.
+  if SBF.ShouldDropFishingMode and SBF.ShouldDropFishingMode(now) and not InCombatLockdown() then
+    SBF.fishingModeActive = false
+    SBF._petStanceSent, SBF._petStanceTries = nil, nil   -- the pet stance (if set) goes out again on the next run
+    SBF._camApplied = nil                -- the saved fishing camera (if used) applies again on the next fishing run
+    JumpController.Clear()               -- pollFrame is asleep now, so nothing else would release an override
+  end
+end)
+
+-- Phase-1 cast-failure back-off: a cast that misses fishable water fires a red UI error and NO
+-- channel starts. Back off briefly so the loop/brain doesn't hammer a dead spot (ns.FishingAction
+-- returns "wait" while backed off). NOTE: the numeric error TYPE (57) is SHARED with other
+-- "can't do that" messages (e.g. "Can't do that while moving"), so we match the SPECIFIC WORDING
+-- of the cast-failure, not the type. Add other real cast-fail phrasings to CAST_FAIL_TEXT.
+-- Locale-correct via the GlobalStrings (the exact pattern the LoS entry below already proved): the two
+-- fishing failures have their own globals, so match the CLIENT'S OWN text for them. Hardcoded enUS
+-- substrings meant this whole detector was dead off enUS — no back-off, no fail sound, and no `castfail`
+-- row ever written, so the Log tab and the permanent Stats rollup silently omitted an entire outcome
+-- class for non-English users. The enUS substrings stay as FALLBACKS only, for a client where a global
+-- is nil/renamed — they can never make detection worse, only catch what the globals miss.
+local NOWATER_MSG = SPELL_FAILED_NOT_FISHABLE and tostring(SPELL_FAILED_NOT_FISHABLE):lower() or nil
+local SHALLOW_MSG = SPELL_FAILED_TOO_SHALLOW and tostring(SPELL_FAILED_TOO_SHALLOW):lower() or nil
+local CAST_FAIL_TEXT = { "fishable water", "too shallow" }   -- enUS fallbacks (see above); globals appended below
+if NOWATER_MSG and NOWATER_MSG ~= "" then CAST_FAIL_TEXT[#CAST_FAIL_TEXT + 1] = NOWATER_MSG end
+if SHALLOW_MSG and SHALLOW_MSG ~= "" then CAST_FAIL_TEXT[#CAST_FAIL_TEXT + 1] = SHALLOW_MSG end
+-- Line-of-sight: casting at a water spot behind an obstacle fires "Target not in line of sight" (locale-correct
+-- via the global). It's a genuine cast-fail — back off + log it, not the loop hammering a blocked spot.
+local LOS_MSG = SPELL_FAILED_LINE_OF_SIGHT and tostring(SPELL_FAILED_LINE_OF_SIGHT):lower() or nil
+if LOS_MSG and LOS_MSG ~= "" then CAST_FAIL_TEXT[#CAST_FAIL_TEXT + 1] = LOS_MSG end
+local function isCastFailMsg(msg)
+  msg = tostring(msg or ""):lower()
+  for _, t in ipairs(CAST_FAIL_TEXT) do if msg:find(t, 1, true) then return true end end
+  return false
+end
+-- WHY a cast failed, tagged onto every castfail event (log display + the server record). Values:
+--   los = target not in line of sight · nowater = not aimed at fishable water · shallow = water too shallow ·
+--   nil = matched a cast-fail but the specific reason isn't classified (rare / new wording).
+local function castFailCause(msg)
+  msg = tostring(msg or ""):lower()
+  if LOS_MSG and LOS_MSG ~= "" and msg:find(LOS_MSG, 1, true) then return "los" end
+  if NOWATER_MSG and NOWATER_MSG ~= "" and msg:find(NOWATER_MSG, 1, true) then return "nowater" end
+  if SHALLOW_MSG and SHALLOW_MSG ~= "" and msg:find(SHALLOW_MSG, 1, true) then return "shallow" end
+  if msg:find("fishable water", 1, true) then return "nowater" end   -- enUS fallbacks
+  if msg:find("too shallow", 1, true) then return "shallow" end
+  return nil
+end
+-- Bags-full during looting: WoW MAILS un-looted items when the loot window closes with items still in it
+-- (the "Postmaster" overflow). Auto-loot surfaces the window when bags fill (GECLoot), but a recast would
+-- then CLOSE it and mail the loot — so SBF PAUSES casting while bags are full and loot is still in the window
+-- (see ns.FishingAction). Locale-correct via the globals.
+local BAGS_FULL_ERR = {}
+if ERR_INV_FULL then BAGS_FULL_ERR[ERR_INV_FULL] = true end
+if ERR_BAG_FULL then BAGS_FULL_ERR[ERR_BAG_FULL] = true end
+-- region (continent) / zone / sub-zone, captured per fishing-log entry.
+function SBF.ZoneTiers()
+  local sub = (GetSubZoneText and GetSubZoneText()) or ""
+  local zone = GetZoneText() or ""
+  if sub == zone then sub = "" end
+  local region, mapID, guard = "", C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player"), 0
+  while mapID and guard < 12 do
+    guard = guard + 1
+    local info = C_Map.GetMapInfo(mapID); if not info then break end
+    if Enum and Enum.UIMapType and info.mapType == Enum.UIMapType.Continent then region = info.name or ""; break end
+    mapID = info.parentMapID; if not mapID or mapID == 0 then break end
+  end
+  return region, zone, sub
+end
+
+-- VARIABLE-DEPTH location cascade, ordered BROAD -> SPECIFIC, for profile location bindings + the fishlog
+-- place. Now delegates to GECReader.Current.location() — the ONE location cascade shared across GEC addons,
+-- which owns the C_Map walk / continent detection / subzone leaf. Each entry: { mapID, name, mapType,
+-- kind = "continent"|"zone"|"area" } (the area leaf has no mapID — it's GetSubZoneText). Returns {} when the
+-- Reader is absent (never errors). SBF no longer walks C_Map itself here.
+function SBF.LocationCascade()
+  local R = reader()
+  local loc = R and R.Current and R.Current.location and R.Current.location()
+  return loc or {}
+end
+
+-- The fishing journal now lives in the shared GECStore stream (SBFData.streams.fishlog): every record
+-- carries the character index (ch), interned place (p), 2-decimal coords, and standard field names.
+-- Oldest-first; readers reverse-iterate for newest-first display (Task 4/5). SBF.RefreshLog live-updates the Log tab.
+local GECStore = LibStub("GECStore-1.0")
+local fishStoreHandle
+local function fishStore()
+  fishStoreHandle = fishStoreHandle or GECStore.RegisterStore({ sv = "SBFData", schemaVersion = 3, src = "SBF",
+    build = function() return SBF and SBF.BUILD end })
+  return fishStoreHandle
+end
+-- The live fishing-event stream (oldest-first; readers reverse-iterate for newest-first display). Increment 2
+-- (2026-07-18) moved it from streams.fishlog onto the CANONICAL streams.events, so Resolve/reconstruct/Combine +
+-- the server ingest apply — the fishing cast-outcome kinds are events like Haul's loot (§10.7). Same accessor.
+function SBF.FishLog() return fishStore():Stream("events") end
+
+-- The CANONICAL session controller (GECStore.Session bound to SBF's store): owns the login→logout
+-- lifecycle — mints the sid, lays start/stop markers, freezes the §3.3 record, and RepairOrphans /
+-- RepairIfDangling protect the data. Same engine Haul uses. Lazy (the Session module attaches after
+-- GECStore-1.0 loads). Increment 2 moves fishlog into streams.events so Resolve/reconstruct/Combine apply.
+local fishSession
+local function fishSessionCtrl()
+  if not fishSession then
+    local S = GECStore.Session
+    if S and S.For then fishSession = S.For(fishStore()) end
+  end
+  return fishSession
+end
+SBF.Session = fishSessionCtrl
+
+-- Manual "New session" (/run SBF.NewSession()). SBF owns NONE of the lifecycle
+-- logic — it just asks the controller to cycle: the library closes the open session (stop marker + frozen
+-- record) and begins a fresh one (new sid + start marker) in one atomic call, so the stop always precedes
+-- the start. Prices are {} (SBF doesn't value catches until increment 3). Refreshes the Log/Stats so the new
+-- start marker shows immediately. Returns the new sid.
+function SBF.NewSession()
+  local S = fishSessionCtrl()
+  if not (S and S.NewSession) then return end
+  local sid = S:NewSession({}, "user")
+  if SBF.RefreshLog then SBF.RefreshLog() end
+  if SBF.RefreshStats then SBF.RefreshStats() end
+  print("|cff45c4a0SBF|r new fishing session (|cffffffff" .. tostring(sid) .. "|r)")
+  return sid
+end
+
+-- The CURRENT open session's start time = the newest "start" marker's timestamp. This is the boundary the
+-- Stats "This session" view counts from, so starting a new session (SBF.NewSession lays a fresh start marker)
+-- RE-BASELINES "This session" instead of it counting from login. Returns nil when no markers exist yet (Stats
+-- then falls back to the login/reset baseline). Cheap reverse scan; markers are few.
+function SBF.SessionStartT()
+  local d = rawget(_G, "SBFData")
+  local mk = d and d.streams and d.streams.markers
+  if not mk then return nil end
+  for i = #mk, 1, -1 do
+    local m = mk[i]
+    if m and m.k == "start" then return m.t end
+  end
+  return nil
+end
+
+-- Embed a registry copy into SBFData on logout/reload so the exported file resolves ch/p standalone.
+local gecLogoutFrame = CreateFrame("Frame")
+gecLogoutFrame:RegisterEvent("PLAYER_LOGOUT")
+gecLogoutFrame:SetScript("OnEvent", function()
+  fishStore():Snapshot()
+  SBFDB._zoomSnap = SBF._zoomSnap   -- carried across a /reload only (the login handler drops it on a fresh login)
+  -- The interact range is a client-wide setting the game saves on the way out: put the player's own value back
+  -- (keeping the applied flag, so a crash before the save still restores at the next login).
+  if SBF.RestoreBobberReach then SBF.RestoreBobberReach(true) end
+end)
+
+local function logFishEvent(kind, extra, dur)
+  local store = fishStore()
+  local e = { k = kind, ch = GECStore.CharIndex(), p = GECStore.PlaceIndex(SBF.LocationCascade()) }
+  do local S = fishSessionCtrl(); if S then e.sid = S:Sid() end end   -- attribute the event to the open session
+  if dur then e.dur = math.floor(dur * 10 + 0.5) / 10 end   -- channel length (s), for the journal + footing stats
+  -- coords + heading from the getter layer (x/y are 0-100 2-decimal, heading whole degrees). Casts happen
+  -- out of combat, so the position is never a secret value here.
+  local R = reader()
+  local pos = R and R.Current and R.Current.position and R.Current.position()
+  if pos then
+    if pos.x then e.x = pos.x end
+    if pos.y then e.y = pos.y end
+    if pos.heading then e.h = pos.heading end
+  end
+  -- uiMapID the x/y are relative to (the SAME GetBestMapForUnit the position getter reads). Stored so a record
+  -- is self-contained for later MAP PINS: (m, x/100, y/100) → an exact world position, no place-cascade lookup
+  -- needed. Casts are stationary, so this matches the coords captured a beat earlier.
+  if C_Map and C_Map.GetBestMapForUnit then
+    local mid = C_Map.GetBestMapForUnit("player")
+    if mid then e.m = mid end
+  end
+  if extra then for k, v in pairs(extra) do e[k] = v end end
+  store:Append("events", e)                        -- stamps t + gen; appends oldest-first (CANONICAL stream, §10.7)
+  if SBF.Stats then SBF.Stats.Record(e) end        -- bump the permanent all-time rollup (same e the stream holds)
+  -- The raw log is NEVER trimmed — it stores always (non-destructive history). SBFDB.fishlogMax is now only a
+  -- DISPLAY cap (how many recent lines the Log tab renders), applied in the viewer, not here.
+  if SBF.RefreshLog then SBF.RefreshLog() end
+  -- "Live" Stats-tab refresh: redraw on each logged event so the tab updates in real time as you fish.
+  -- RefreshStats early-returns when the page isn't shown, so this is cheap when the tab/window is closed.
+  -- The timer / "off" modes opt out here (a C_Timer ticker or manual clicks drive them instead).
+  if SBF.RefreshStats and (SBFDB.statsRefresh or "live") == "live" then SBF.RefreshStats() end
+end
+SBF.LogFishEvent = logFishEvent
+
+-- Increment 2 wipe (fishlog → streams.events): the fishing journal moved onto the canonical events stream so
+-- Resolve/reconstruct/Combine + server ingest apply. Pre-release, the schema-1 fishlog + any increment-1 session
+-- scaffolding are CLEARED (accepted — no in-place migration) so schema 2 starts pristine. One-time,
+-- gated on the old stream / an under-2 version still being present; idempotent thereafter. The permanent all-time
+-- rollup lives in SBFData.db.stats (NOT under streams), so it survives untouched. Must run BEFORE the first
+-- fishStore()/session init, since RegisterStore overwrites SBFData.version to 2.
+local function migrateFishlogWipe()
+  local d = rawget(_G, "SBFData")
+  if not d then return end   -- fresh install: RegisterStore creates version 2 clean
+  local hasOldStream = d.streams and d.streams.fishlog ~= nil
+  if (d.version or 1) >= 2 and not hasOldStream then return end   -- already migrated
+  d.streams = d.streams or {}
+  d.streams.fishlog = nil   -- the dead stream name (decommissioned — not a seq-stream; just drop it)
+  -- events/markers are live seq-streams: clear them through the deletion API so `base` advances (GECStore
+  -- MINOR 25). lib.Truncate is the handle-free variant — this runs BEFORE RegisterStore, so there's no
+  -- store handle yet. Direct nil of a seq-stream is forbidden (seq spec §4); fall back only if the lib
+  -- somehow isn't loaded this early.
+  local GS = LibStub and LibStub:GetLibrary("GECStore-1.0", true)
+  if GS and GS.Truncate then GS.Truncate("SBFData", "events"); GS.Truncate("SBFData", "markers")
+  else d.streams.events, d.streams.markers = nil, nil end
+  d.sessions        = nil
+  d._open           = nil   -- controller's open-session pointer
+  d._sidelined      = nil
+  d.liveSession     = nil
+  d.sidelined       = nil
+  d.version         = 2
+end
+SBF.MigrateFishlogWipe = migrateFishlogWipe
+
+-- Increment 3 wipe (seq-identity rebaseline — spec 2026-07-24 §Migration, coordinated rollout 2026-07-25):
+-- the streams restart EMPTY so every record is born with its per-stream `seq` (no dual-key, no backfill).
+-- Routed through the deletion API so `base` lands cleanly at 1 (never nil a seq-stream — chain-of-deletion
+-- §4). PRESERVED: the frozen session records (d.sessions), the all-time rollup (db.stats), and the learned
+-- item catalog (db.items) — none of them live under streams. Must run BEFORE the first fishStore() call
+-- (RegisterStore overwrites SBFData.version to the new schemaVersion, which would mask the crossing).
+local function migrateSeqRebaseline()
+  local d = rawget(_G, "SBFData")
+  if not d or (d.version or 1) >= 3 then return end   -- fresh install: RegisterStore creates version 3 clean
+  local GS = LibStub and LibStub:GetLibrary("GECStore-1.0", true)
+  if GS and GS.Truncate then GS.Truncate("SBFData", "events"); GS.Truncate("SBFData", "markers") end
+  d._open, d._sidelined = nil, nil          -- controller pointers reference wiped markers
+  d.liveSession, d.sidelined = nil, nil
+  d.version = 3
+end
+
+-- Fishing skill-ups in the Log: ride GECStore's OnSkillIncrease feed (it scrapes CHAT_MSG_SKILL and fires a
+-- self-identifying payload — lineID/skillName/newLevel/delta; same feed Haul's Skills tracker uses). We keep
+-- ONLY fishing lines (filtered by SBF.FISHING_LINE, so it's locale-proof — no name matching) and drop them
+-- into the same fishlog stream, so a "▲226" level-up lands in the Log right next to the casts that earned it
+-- (with the auto-stamped time / character / place / coords every fishlog entry carries). Always-on, like the
+-- casts themselves; a skill-up is at least +1, so a nil delta (cold line) defaults to 1.
+local FISHING_LINE_SET = {}
+for _, id in pairs(SBF.FISHING_LINE) do FISHING_LINE_SET[id] = true end
+local function onFishingSkillUp(p)
+  if not (p and p.lineID and FISHING_LINE_SET[p.lineID]) then return end
+  logFishEvent("skill", { id = p.lineID, name = p.skillName, lvl = p.newLevel, amount = p.delta or 1 })
+end
+if GECStore.OnSkillIncrease then GECStore.OnSkillIncrease(onFishingSkillUp) end
+
+-- SINGLE source of truth for what a fishing cast became — the log AND the footing panel both go
+-- through this, so they can never disagree. FIVE outcomes, in precedence order:
+--   caught    — a fishing loot window produced items
+--   missed    — the "No fish are hooked" (413) error: reeled too early / too late
+--   expired   — the channel ran (near) its FULL expected length with no bite acted on
+--   interrupt — ended SHORT *with a cause* (combat / jump / movement): something positively cut it off
+--   nothing   — the cast resolved before its full window with NO cause, no loot, no 413, AND a reel was
+--               actually performed: you reeled on time and proper, the cast did its job, but the line
+--               delivered nothing — "nothing on the line"
+-- The key split is interrupt vs nothing: an INTERRUPT REQUIRES positive evidence it was cut short. A cast
+-- that resolved with no detectable cause is NOT an interrupt — labeling it "interrupt/unknown" was the
+-- misleading bug. "nothing" and "expired" are BOTH caught-nothing, kept distinct because expired ran the
+-- full channel with no bite, while nothing is a proper reel that just delivered no loot (it resolves before
+-- the full window, like a catch does). The live loop only needs the binary "line out?"; this is for logging.
+-- THE REEL GATE (c.reeled — see resetReelWatch/reelWatchTick above): hitting ESCAPE cancels the channel with
+-- no reel at all and produced the exact same shape as `nothing` (short, no cause, no loot, no 413), so it
+-- mislogged as `nothing`. A cancel IS an interrupt. `reeled` is tri-state: true = a reel press was observed,
+-- false = provably none, nil = couldn't read the keys, in which case we do NOT downgrade the cast (old
+-- behavior stands). Only `false` — proven no reel — turns a short cast into an interrupt.
+local function classifyCast(c)
+  if c.caught then return "caught" end
+  if c.missed then return "missed" end
+  if c.exp and c.dur then
+    if c.dur >= c.exp - 1 then return "expired" end   -- ran (near) its full length, no bite
+    if c.cause or c.combat then return "interrupt" end -- resolved short WITH a cause = cut off
+    if c.reeled == false then return "interrupt" end   -- short + NO reel performed = cancelled (Escape)
+    if c.otherLoot then return "interrupt" end         -- the press opened something ELSE (a chest, not the bobber)
+    return "nothing"                                   -- resolved short, no cause/loot/413, reel done = empty line
+  end
+  -- expected length unknown (rare): we CAN'T claim the cast ended short, so never "nothing" here — fall back to
+  -- the interrupt signals, else "expired" (assume it ran its course), matching the pre-"nothing" behavior.
+  return (c.cause or c.combat) and "interrupt" or "expired"
+end
+SBF._ClassifyCast = classifyCast
+
+-- The COMPLETE interrupt-cause vocabulary, ordered for display. ONE source of truth: the classifier above is the
+-- only emitter, and every renderer (the Stats breakdown, the Log prettifier) iterates THIS table instead of
+-- hardcoding its own subset. That split is what broke before — the emitter grew `canceled` and `looted`, the
+-- Stats breakdown still knew only combat/moving/jump, and everything else fell into a remainder it labelled
+-- "unknown = cause couldn't be determined". So the Log tab printed `(canceled)` while Stats called the SAME row
+-- unknown, and `unattributed` — the canary that is supposed to be impossible — was invisible exactly where it
+-- was designed to be noticed. Adding a cause here is now the whole job.
+-- `legacy` marks a value no live path can emit: rows written before 2026.08.03 literally stored "unknown", and
+-- the permanent all-time rollup already counted them, so it must still RENDER even though nothing adds to it.
+SBF.INTERRUPT_CAUSES = {
+  { key = "combat",       label = "combat" },
+  { key = "moving",       label = "movement" },
+  { key = "jump",         label = "jump" },
+  { key = "looted",       label = "looted" },          -- a chest took the cast (its loot window opened mid-cast)
+  { key = "canceled",     label = "canceled" },        -- no reel was performed at all, usually Escape
+  { key = "unattributed", label = "unattributed" },    -- CANARY: unreachable by construction; a sighting is a bug
+  { key = "unknown",      label = "unknown (older data)", legacy = true },
+}
+-- key -> pretty label, for the single-row renderers.
+SBF.INTERRUPT_CAUSE_LABEL = {}
+for _, c in ipairs(SBF.INTERRUPT_CAUSES) do SBF.INTERRUPT_CAUSE_LABEL[c.key] = c.label end
+
+-- ===== fishing-catch loot capture =====
+-- Reads the loot window that follows a reel-in and captures the CATCH's items + source atomically (before
+-- GECLoot drains them) into SBF._caughtSlots / _caughtSrc for the cast verdict. NOTE: the "log gathered loot"
+-- feature — chests / containers opened OUTSIDE a fishing channel logged as "gathered" — was REMOVED 2026-07-30.
+-- It mis-logged non-fishing gathers (world chests, herb/mining nodes) into the fishlog; SBF now logs ONLY
+-- fishing casts. The window is still inspected because open-water fishing reports a GameObject loot source
+-- too, so a window is claimed for the catch ONLY when it opened during / right after a Fishing channel
+-- (SBF._fishChanActive / _fishLootUntil); any non-fishing window is left alone (nothing is logged for it).
+-- Per-source-GUID dedup for the KNOWN-chest log below. A chest's loot window can open MORE THAN ONCE — bags
+-- full surfaces the window and you re-loot after making room, or you close and re-interact — and the decide-once
+-- ownership flag resets on LOOT_CLOSED, so without this the SAME physical chest logs twice. The full GameObject
+-- GUID (…-540505-00006C4E56) is unique per spawn, so it's the identity. Bounded ring — this restores the dedup
+-- that guarded this path via gMark/gSeen before the gathered feature (and its dedup) was removed 2026-07-30.
+local chestSeen, chestSeenOrder = {}, {}
+local function chestMark(guid)
+  if not guid or chestSeen[guid] then return false end
+  chestSeen[guid] = true; chestSeenOrder[#chestSeenOrder + 1] = guid
+  if #chestSeenOrder > 400 then local o = table.remove(chestSeenOrder, 1); chestSeen[o] = nil end
+  return true
+end
+local function scanGathered()
+  if not (GetLootSourceInfo and GetNumLootItems and ns.Gather) then return end
+  -- read the loot window into the plain shape ns.Gather uses (no decision logic here). count/q come from
+  -- GetLootSlotInfo (authoritative per-slot stack + quality); sources from GetLootSourceInfo (GameObject id).
+  local n = GetNumLootItems() or 0
+  local slots = {}
+  for slot = 1, n do
+    local link = GetLootSlotLink and GetLootSlotLink(slot)   -- nil for a money slot: coins are not "gathered"
+    if link then
+      local quantity, quality
+      if GetLootSlotInfo then local _, _, q3, _, q5 = GetLootSlotInfo(slot); quantity, quality = q3, q5 end
+      local raw, sources = { GetLootSourceInfo(slot) }, {}   -- (guid, qty) pairs — one slot can have >1 source
+      for i = 1, #raw, 2 do sources[#sources + 1] = { guid = raw[i], qty = raw[i + 1] or 1 } end
+      -- SHARED src classification (unified-schema Phase 3): GECLoot reads the same slot + the action context
+      -- and returns {t, guid, npcID, objID, node} — fish / herb / mining / gather / chest / kill / …. Stamped
+      -- onto the caught fishlog entry so the record knows its source (matches Haul's src).
+      local src = GECLoot and GECLoot.ClassifyLootSlot and GECLoot.ClassifyLootSlot(slot)
+      slots[#slots + 1] = { link = link, count = quantity or 1, q = quality, sources = sources, src = src }
+    end
+  end
+  -- Window ownership is decided ONCE, the first LOOT_READY of a window, and stays sticky until LOOT_CLOSED.
+  -- If the window opened during / just-after a Fishing channel it's the caught path's — never gather ANY of
+  -- it, even if LOOT_READY re-fires later (slow manual looting) after the post-stop time guard has elapsed.
+  if SBF._lootFishing == nil then
+    local now = GetTime()
+    -- SOURCE-AWARE ownership: a window whose primary source classifies as NON-fishing (chest / container /
+    -- gather / kill) is never the catch. Most such windows are left alone (not logged); the ONE exception is a
+    -- KNOWN fishing chest (GECLoot.KnownChests), logged as a "chest" entry just below. Only a fishing source (or an
+    -- unclassified window during the tail) stays with the caught path. This stops a chest opened right after
+    -- reeling in from being logged as a caught fish. (GECLoot classifies the known chests t="chest" by objID.)
+    local wsrc = slots[1] and slots[1].src
+    local wt = wsrc and wsrc.t
+    if wt and wt ~= "fish" then
+      SBF._lootFishing = false
+      -- REEL GATE veto: a NON-fishing loot window opened while this cast was live, so whatever ended the
+      -- channel was not the bobber. `nothing` must be predicated on FISHING specifically — it only means "the
+      -- line came up empty" if nothing else consumed the press.
+      -- The verified case is the two GROUND-SPAWN chests (Patiently Rewarded / Grandline). They loot like a
+      -- world chest, interacting cancels the fishing channel, and the cast then stops short with no cause and a
+      -- keypress on record: the exact shape of `nothing`. One press logged a CHEST entry AND a bogus NOTHING.
+      -- Kept DELIBERATELY BROAD (any non-fish window, not just those two objIDs) because the failure is
+      -- asymmetric: a missed veto writes a WRONG outcome into the permanent log, while a spurious one only
+      -- relabels an empty cast as interrupt/looted. A chest opened from your BAGS is the open question — if a
+      -- bag container interrupts the channel at all it lands here too, which is the safe side to be on.
+      -- Scoped to the in-flight cast (_logCast) or its pending verdict (_catchPending) so a window opened well
+      -- after the cast can't poison an unrelated one.
+      -- Record WHICH CAST this belongs to, not a bare flag. A bare boolean cannot be frozen at the stop (the
+      -- window that triggers it opens AFTER the stop, during the 0.8s grace) and cannot be read live either
+      -- (a recast zeroes it before the verdict). Stamping the owning cast's start time solves both: the
+      -- verdict reads it live and accepts it only if it is stamped with ITS OWN castStart, so a chest opened
+      -- during the NEXT cast can never be attributed backwards. Same trick as _caughtSlots being immune to
+      -- the recast reset. During the channel the owner is _logCast; during the grace it is _pendingCastStart.
+      local owner = SBF._logCast or (SBF._catchPending and SBF._pendingCastStart)
+      if owner then SBF._chanOtherLootFor = owner end
+    else
+      SBF._lootFishing = (SBF._fishChanActive or (SBF._fishLootUntil and now <= SBF._fishLootUntil)) or false
+    end
+    -- ATOMIC caught-item capture: snapshot the WHOLE catch (fish + bait + bonus) from the loot window NOW,
+    -- before GECLoot drains it — this is the reliable source for the caught entry's item list, replacing the
+    -- fragile per-line chat accumulator that lost items when a recast reset it mid-grace. Gated tighter than
+    -- _lootFishing (which spans the wide _fishLootUntil tail so containers opened seconds later aren't
+    -- gathered): capture ONLY while the channel is live or a catch grace is still pending, so a container
+    -- opened in that tail is never mistaken for a catch. The STOP+0.8 grace consumes SBF._caughtSlots; a new
+    -- catch's first LOOT_READY overwrites it. NOT reset at CHANNEL_START (that would re-open the recast race).
+    if SBF._lootFishing then SBF._fishLootSeen = true end   -- a REAL fishing loot window opened this cast (source-confirmed)
+    if SBF._lootFishing and (SBF._fishChanActive or SBF._catchPending) then
+      SBF._caughtSlots = ns.Gather.CatchItems(slots)      -- ONLY a fishing window feeds the catch (a chest can't overwrite it)
+      SBF._caughtSrc = slots[1] and slots[1].src or nil   -- window source (fishing → {t="fish",...}); stamped on the caught entry
+    end
+    -- KNOWN fishing chest (the instant-open world chests in GECLoot.KnownChests): log its loot as a "chest"
+    -- entry (kind name matches Haul's "chest" loot source — unified language). This is the ONLY non-fish loot
+    -- SBF records — scoped to EXACTLY those objIDs, so herb / mining /
+    -- other chests are never logged (the old broad gathered feature was removed for that reason). GECLoot
+    -- classified these as t="chest" so they're never a fish. Guarded by chestMark (per-GUID dedup) so a window
+    -- that opens more than once for the same chest (bags-full re-loot, close+reopen) logs it exactly once.
+    if wt == "chest" and wsrc.objID and GECLoot and GECLoot.KnownChests and GECLoot.KnownChests[wsrc.objID] then
+      local cguid = slots[1] and slots[1].sources and slots[1].sources[1] and slots[1].sources[1].guid
+      if chestMark(cguid) then
+        local items = ns.Gather.CatchItems(slots)
+        if items and #items > 0 then
+          local first = items[1]
+          local extra = { id = first.id, name = first.name, link = first.link, count = first.count, q = first.q, src = wsrc }
+          if #items > 1 then extra.items = items end
+          logFishEvent("chest", extra)
+        end
+      end
+    end
+  end
+end
+SBF._ScanGathered = scanGathered
+
+-- Localized "You receive loot:" prefixes (LOOT_ITEM_SELF / _MULTIPLE) — the ONLY self-loot chat lines that
+-- count as a fishing catch. "You receive item:" (pushed) and "You create:" (created) also fire CHAT_MSG_LOOT,
+-- but WITHOUT a loot window — they're inventory/UI events (clicking a collectible toy in the Collections tab,
+-- combining items), and must NOT be logged as a catch. This is the "Burnished Helm clicked in the UI got
+-- logged as a caught fish" fix. Real fishing loot arrives as "You receive loot:" (+ a LOOT_OPENED window).
+local FISH_LOOT_PREFIXES = {}
+do
+  local function addP(fmt)
+    local p = fmt and fmt:match("^(.-)%%s")
+    if p and p ~= "" then FISH_LOOT_PREFIXES[#FISH_LOOT_PREFIXES + 1] = p end
+  end
+  addP(LOOT_ITEM_SELF); addP(LOOT_ITEM_SELF_MULTIPLE)   -- luacheck: globals LOOT_ITEM_SELF LOOT_ITEM_SELF_MULTIPLE
+  if #FISH_LOOT_PREFIXES == 0 then FISH_LOOT_PREFIXES[1] = "You receive loot" end
+end
+local function isFishLootLine(msg)
+  for _, p in ipairs(FISH_LOOT_PREFIXES) do if msg:find(p, 1, true) then return true end end
+  return false
+end
+
+-- Always-on cast tracker: cast-fail + "no fish" audio AND the fishing log (every outcome).
+local castFailFrame = CreateFrame("Frame")
+castFailFrame:RegisterEvent("UI_ERROR_MESSAGE")
+castFailFrame:RegisterEvent("UI_INFO_MESSAGE")               -- "No fish are hooked" = info type 413
+castFailFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+castFailFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+castFailFrame:RegisterEvent("LOOT_OPENED")
+castFailFrame:RegisterEvent("LOOT_READY")   -- gathered scan: fires BEFORE fast-loot (GECLoot) empties the slots
+castFailFrame:RegisterEvent("LOOT_CLOSED")  -- resets the per-window fishing-ownership flag for the gathered scan
+castFailFrame:RegisterEvent("CHAT_MSG_LOOT")
+castFailFrame:RegisterEvent("PLAYER_STARTED_MOVING")   -- mark a MOVEMENT interrupt even if motion ended before the stop
+castFailFrame:RegisterEvent("PLAYER_REGEN_DISABLED")   -- entered COMBAT during the channel = a combat interrupt
+castFailFrame:SetScript("OnEvent", function(_, ev, a, b)
+  if ev == "UI_ERROR_MESSAGE" then
+    if BAGS_FULL_ERR[b] then SBF._lootBlocked = true end   -- bags full while looting -> pause casts (a recast would close the window + mail the loot)
+    -- Line of sight is not fishing-specific: any spell (a combat ability, a heal) raises it. Count it as a FISHING
+    -- cast-fail only right after an action-key press, or every blocked Fireball lands in the fishing stats.
+    local losNotOurs = isCastFailMsg(b) and castFailCause(b) == "los"
+      and not (SBF.lastActionAt and GetTime() - SBF.lastActionAt <= (SBFDB.losPressWindow or 1))
+    if isCastFailMsg(b) and not losNotOurs then   -- b = the message text; match wording, not the shared type
+      SBF._castBackoffUntil = GetTime() + (SBFDB.castBackoff or 1.5)
+      if SBFDB.castFailSound then SBF.PlayCastFailSound() end
+      logFishEvent("castfail", { cause = castFailCause(b) })   -- tag WHY (los / nowater / shallow) — log display + server record
+    end
+  elseif ev == "UI_INFO_MESSAGE" then
+    if a == 413 then                       -- "No fish are hooked": retrieved too early/late (MISSED)
+      SBF._logMissedT = GetTime()
+      if SBFDB.noFishSound then SBF.PlayNoFishSound() end
+    end
+  elseif ev == "UNIT_SPELLCAST_CHANNEL_START" and a == "player" then
+    SBF._castBackoffUntil = nil            -- a real cast started -> clear the back-off
+    -- only track the FISHING channel — a combat channel must not reach the log / cause checks below
+    local cname, _, _, st, en, _, _, cid = UnitChannelInfo("player")
+    if SBF.IsFishingCast(cname, cid) then
+      SBF._logCast = GetTime()
+      SBF._fishChanActive = true              -- gathered-scan guard: this loot window belongs to the caught path
+      SBF._logCastExp = (st and en and en > st) and ((en - st) / 1000) or nil   -- expected full window (s)
+      SBF._logCaughtItems = {}            -- fresh per-cast loot accumulator (so a multi-item catch keeps ALL items)
+      SBF._fishLootSeen = false           -- per-cast: set true only when a source-confirmed FISHING window opens
+      SBF._chanMoved, SBF._chanCombat = false, false   -- per-cast interrupt-cause flags, set by the movement/combat events below
+      SBF._chanUnreachable = false                     -- per-cast: recast mode ended this cast because the bobber was out of reach
+      SBF._chanOOR = false                             -- per-cast: the bobber went out of the key's reach (any mode; Stats metric)
+      resetReelWatch()                    -- per-cast reel gate: `nothing` requires a reel-in was actually performed
+      -- persist the in-flight cast so a /reload mid-channel doesn't lose the reference: GetTime() is
+      -- continuous across /reload, so the stored start stays valid; re-linked at login (PEW below).
+      SBFDB._inflight = { start = SBF._logCast, exp = SBF._logCastExp, t = time() }
+    else
+      SBF._logCast, SBF._logCastExp = nil, nil
+    end
+  elseif ev == "LOOT_OPENED" then
+    SBF._logCaughtT = GetTime()            -- a loot window opened during/after the cast = a real catch signal
+  elseif ev == "LOOT_READY" then
+    scanGathered()                         -- capture GameObject/container loot opened outside a fishing channel
+  elseif ev == "LOOT_CLOSED" then
+    SBF._lootFishing = nil                 -- next loot window re-decides ownership (fishing catch vs container)
+    SBF._lootBlocked = nil                 -- window dealt with (looted or closed) -> resume casting
+  elseif ev == "CHAT_MSG_LOOT" then
+    -- ONLY a "You receive loot:" line counts as a catch. Pushed ("You receive item:") / created ("You create:")
+    -- lines are UI/inventory events (clicking a collectible, combining items) with no loot window — ignoring
+    -- them stops non-fished items (e.g. a toy clicked in Collections) from being logged as a caught fish.
+    if a and isFishLootLine(a) then
+      SBF._logCaughtT = GetTime()          -- timestamp the loot; attributed to a cast by its start time
+      local item = {
+        id = tonumber(a:match("Hitem:(%d+)")),
+        name = a:match("|h%[(.-)%]|h") or a:match("%[(.-)%]"),
+        link = a:match("|c%x+|Hitem:.-|h.-|h|r") or a:match("|Hitem:.-|h.-|h"),   -- full item link (quality-colored, hoverable)
+        count = tonumber(a:match("x(%d+)")) or 1,
+      }
+      item.q = select(3, GetItemInfo(item.link or item.id or 0))   -- item quality (0=Poor/gray … 4=Epic); cached right after loot, for the Stats "Vendor trash" grouping + quality sort
+      SBF._logCaughtItem = item            -- last item (single-item fallback / back-compat)
+      -- accumulate EVERY loot line for this cast: fishing can yield several items at once (the fish plus
+      -- bonus loot, or multiple fish), each arriving as its own CHAT_MSG_LOOT. Keeping only the last would
+      -- undercount. Reset at each fishing CHANNEL_START; read at the STOP grace below.
+      SBF._logCaughtItems = SBF._logCaughtItems or {}
+      SBF._logCaughtItems[#SBF._logCaughtItems + 1] = item
+    end
+  elseif ev == "PLAYER_STARTED_MOVING" then
+    if SBF._logCast then SBF._chanMoved = true end     -- moved during a fishing channel -> movement interrupt
+  elseif ev == "PLAYER_REGEN_DISABLED" then
+    if SBF._logCast then SBF._chanCombat = true end    -- pulled into combat during a fishing channel -> combat interrupt
+  elseif ev == "UNIT_SPELLCAST_CHANNEL_STOP" and a == "player" then
+    if SBF._logCast then
+      local castStart, castExp = SBF._logCast, SBF._logCastExp
+      local dur = GetTime() - castStart                         -- how long the channel actually ran
+      SBF._logCast, SBF._logCastExp = nil, nil
+      -- gathered-scan guard: the catch's loot lands right after the stop — keep gathering suppressed for a
+      -- short window so this cast's own loot is never re-logged as "gathered" (the caught path owns it).
+      SBF._fishChanActive = false
+      SBF._fishLootUntil = GetTime() + (SBFDB.gatherFishGuardSec or 3)
+      SBF._catchPending = true                                  -- a catch is awaiting resolution: the loot window
+                                                                -- that opens now (LOOT_READY) is THIS cast's catch, so
+                                                                -- its slots may be captured into SBF._caughtSlots
+      SBF._pendingCastStart = castStart                         -- WHICH cast the grace belongs to (see the veto below)
+      SBFDB._inflight = nil                                      -- cast resolved -> clear the persisted in-flight
+      -- capture an interrupt CAUSE now (it's transient — gone by the grace timer). Precedence: combat (got
+      -- attacked) > jump > movement. We fold in the per-cast flags set DURING the channel (_chanCombat /
+      -- _chanMoved) so a brief move that ended before the stop, or combat we're no longer "in" by the stop,
+      -- is still attributed instead of falling through to "unknown".
+      local cause
+      if (UnitAffectingCombat and UnitAffectingCombat("player")) or SBF._chanCombat then cause = "combat"
+      elseif IsFalling and IsFalling() then cause = "jump"
+      elseif SBF._chanMoved then cause = "moving"
+      else
+        local sp = GetUnitSpeed and GetUnitSpeed("player")   -- can be a SECRET value in combat -> never compare it
+        if sp and not (issecretvalue and issecretvalue(sp)) and sp > 0.1 then cause = "moving" end
+      end
+      -- FREEZE the reel-gate signals HERE, beside `cause`, NOT inside the timer below. Both are per-cast
+      -- globals that resetReelWatch() zeroes on the NEXT UNIT_SPELLCAST_CHANNEL_START, and the verdict runs
+      -- 0.8s late — so a recast inside the grace (the normal single-button cadence) would hand THIS cast the
+      -- NEXT cast's blank state. Read live, an empty line that you immediately recast logged `interrupt`/
+      -- `canceled` instead of `nothing`, and a chest that stole the press lost its veto and logged `nothing`.
+      -- Exactly the recast-orphan race the _fishLootSeen comment below already describes; `_caughtSlots` was
+      -- made immune to it the same way. Every per-cast input the verdict reads must be frozen at the stop.
+      -- ONLY `reeled` is frozen here. It is genuinely FINAL at the stop: every writer is gated on _logCast,
+      -- which is nil'd above, so nothing can change it after this point. `otherLoot` is the opposite and must
+      -- NOT be frozen alongside it — its producer (a chest's loot window) fires DURING the grace, after this
+      -- line, so a frozen copy is always false and the veto is dead in every case. That is a worse bug than
+      -- the recast race the freeze was meant to fix. It is read live at the verdict instead, attributed by
+      -- cast identity. Two signals, two lifetimes: do not treat them as one class again.
+      local oorCast, unreachCast = SBF._chanOOR, SBF._chanUnreachable   -- frozen at the stop like `reeled` (a recast zeroes them)
+      local reeled = SBF._chanReeled           -- true = reel press seen · false = provably none · nil = keys unreadable
+      -- FREEZE THE REASON TOO. The block above says every per-cast input the verdict reads must be frozen at
+      -- the stop, and this one was not: the verdict runs 0.8s late, resetReelWatch() nils _reelBlindWhy on the
+      -- next CHANNEL_START, and a recast inside the grace is the NORMAL single-button cadence — so the anomaly
+      -- reported "reason: unknown" on a real client. The diagnostic added to end the guessing was guessing.
+      -- Every site that sets _chanReeled = nil sets the reason in the SAME assignment, so a nil reason here
+      -- is a state the current code cannot produce. Name it rather than printing "unknown", which reads like
+      -- a shrug and cost a round trip: if this string ever appears, there is a fourth blinding path to find.
+      local reeledWhy = SBF._reelBlindWhy or "NOT RECORDED - no known code path does this; report the build"
+      -- The empty-watch-list downgrade, moved here from the tick: a per-tick empty list is momentary (the
+      -- override flips per poll), but a list that stayed empty for the WHOLE channel means the gate never
+      -- had eyes, and `false` ("provably no reel") would be a lie. reelSawKeys is per-cast (resetReelWatch).
+      if reeled == false and not reelSawKeys then
+        reeled, reeledWhy = nil, "no keys to watch for the entire channel (interact override never live, or nothing bound to interact)"
+      end
+      C_Timer.After(0.8, function()        -- grace: a catch's loot / the 413 can land just after the stop
+        local combat = (UnitAffectingCombat and UnitAffectingCombat("player")) or false
+        -- caught = a source-confirmed FISHING loot window this cast produced items. The PRIMARY signal is the
+        -- ATOMIC capture taken at the window's LOOT_READY — _caughtSrc (GECLoot's t="fish" classification) +
+        -- _caughtSlots (the items). Both are grabbed together and are NOT reset by a subsequent CHANNEL_START,
+        -- so a fast single-button RECAST can't orphan this cast's pending verdict. That recast reset is exactly
+        -- the bug we saw: _fishLootSeen IS wiped on the next CHANNEL_START, so by the time this 0.8s verdict
+        -- fired it read fishSeen=false while _caughtSlots still held the fish (slotsHit=true) -> a real catch
+        -- logged as "interrupt/unknown". The old _fishLootSeen + chat-line pair stays as a FALLBACK only.
+        -- _caughtSrc guards against a chest (t~="fish") counting; the unconditional clear after logging (below)
+        -- stops a stale capture from leaking into a later no-catch cast.
+        local slotsHit = (SBF._caughtSlots and #SBF._caughtSlots > 0) or false
+        local srcFish  = (SBF._caughtSrc and SBF._caughtSrc.t == "fish") or false
+        local chatHit  = (SBF._logCaughtT and SBF._logCaughtT >= castStart - 0.3) or false
+        local caught = (srcFish and slotsHit) or (SBF._fishLootSeen and chatHit) or false
+        local missed = (SBF._logMissedT and SBF._logMissedT >= castStart - 0.3) or false
+        -- (`reeled` / `otherLoot` are the upvalues frozen at the STOP above — never re-read the globals here.)
+        -- CONTINUOUS SELF-CHECK. reeled == nil means the watcher could not READ the bound keys this cast, so the
+        -- gate stood down and this outcome fell back to pre-gate behavior. That is not an error, but it IS the
+        -- one condition under which `nothing` can still be wrong, and catching it must not depend on having
+        -- lootdebug switched on at the right moment. So: count every blind cast for the session, and say it once
+        -- the first time. Silence here is the assertion that the gate is actually doing its job.
+        if reeled == nil then                      -- the FROZEN value, not SBF._chanReeled (a recast has zeroed that)
+          SBF._reelBlind = (SBF._reelBlind or 0) + 1
+          SBF.Anomaly("reel-blind", "gate stood down, outcome fell back to pre-gate (dur=%.1f) - reason: %s",
+            dur, tostring(reeledWhy))
+        end
+        -- A NON-fishing loot window claimed this cast's press: a chest dropped in front of you and the interact
+        -- opened it instead of reeling the bobber. Proving a KEY was pressed isn't enough — `nothing` has to be
+        -- predicated on the press going into the FISHING line specifically. Read LIVE (the window opens during
+        -- this grace, so there is nothing to freeze at the stop) and matched on cast identity, so the next
+        -- cast's chest can never be charged to this one.
+        local otherLoot = (SBF._chanOtherLootFor ~= nil and SBF._chanOtherLootFor == castStart) or false
+        local kind = classifyCast({ caught = caught, missed = missed, dur = dur, exp = castExp,
+          cause = cause, combat = combat, reeled = reeled, otherLoot = otherLoot })
+        SBF._catchPending = false                    -- this cast's catch is now resolved
+        local extra
+        if kind == "caught" then
+          -- PREFER the atomic slot scan (SBF._caughtSlots, captured whole at LOOT_READY); fall back to the
+          -- chat accumulator, then the singular last-item — a catch must never log nil or drop the fish.
+          local list = (ns.Gather and ns.Gather.PickCaughtList and ns.Gather.PickCaughtList(SBF._caughtSlots, SBF._logCaughtItems))
+                       or (SBF._caughtSlots and #SBF._caughtSlots > 0 and SBF._caughtSlots)
+                       or SBF._logCaughtItems
+          if list and #list > 0 then
+            local first = list[1]
+            extra = { id = first.id, name = first.name, link = first.link, count = first.count, q = first.q,
+                      src = SBF._caughtSrc }            -- the fishing source (fish / bobber), from GECLoot's classifier
+            if #list > 1 then extra.items = list end   -- multi-item catch: carry the FULL loot list ({id,name,link,count} each)
+          else
+            extra = SBF._logCaughtItem                 -- safety fallback (shouldn't happen on a caught, but never log nil)
+          end
+        -- "canceled" = the reel gate caught it: no movement/combat/jump cause, but no reel either (Escape).
+        -- "looted" = the press went into another object (a chest) instead of the bobber, so the channel was cut
+        -- short by that interaction. "unattributed" is a CANARY and must never appear. Every interrupt now
+        -- arrives with a cause: classifyCast only returns "interrupt" when (cause or combat) is truthy, or
+        -- reeled == false, or otherLoot — exactly the four branches above, so the fallback is unreachable
+        -- by construction (locked by
+        -- classifycast_test.lua). It deliberately does NOT say "unknown": pre-2026.08.03 builds wrote the literal
+        -- "unknown" into interrupt rows AND into the permanent all-time rollup, so that word can never again mean
+        -- "something is wrong". This one has never been written before, so a single sighting is a real defect —
+        -- some future branch reached "interrupt" without setting a cause. Search the log for it.
+        -- `looted` OUTRANKS `canceled`. Both describe the same event when a chest takes the cast, but they are
+        -- not equally informative. Confirmed in play: opening the chest with the LOOT KEY read `looted` (that
+        -- key is a watched reel key, so reeled=true), while MOUSE-clicking the same chest read `canceled`
+        -- (no watched key pressed, reeled=false) even though the veto had fired. Same event, two labels,
+        -- decided by input device. We are not inferring from the click -- we observe the LOOT WINDOW opening,
+        -- which scanGathered sees however it was triggered -- so the more specific cause should win. "A chest
+        -- took the cast" beats "you didn't press the reel key", which is true but tells you less.
+        elseif kind == "interrupt" then extra = { cause = cause or (combat and "combat") or (otherLoot and "looted") or (reeled == false and "canceled") or "unattributed", exp = castExp }
+        elseif kind == "expired" or kind == "nothing" then extra = { exp = castExp } end   -- stamp exp so the row shows dur/exp
+        -- OUT OF REACH (Reach.lua). A cast that recast mode ended because the key couldn't reach the bobber gets its
+        -- OWN kind, "unreachable": it never had a fair chance, so it stays out of the cast/catch-rate math (Stats
+        -- only sums caught/expired/nothing/missed/interrupt). Every out-of-reach cast, whatever it ended as (reeled
+        -- by pointing at it, recast...), carries oor=true for the "out of reach" metric.
+        if unreachCast and kind ~= "caught" and kind ~= "missed" then kind, extra = "unreachable", { exp = castExp } end
+        if oorCast then extra = extra or {}; extra.oor = true end
+        -- THE CANARY, now self-reporting. "unattributed" is unreachable by construction (classifycast_test locks
+        -- it), so if it ever lands in a real log the invariant broke — some path reached "interrupt" without a
+        -- cause. Don't make it wait to be spotted by eye in the Stats breakdown weeks later.
+        if kind == "interrupt" and extra and extra.cause == "unattributed" then
+          SBF.Anomaly("unattributed", "interrupt with NO cause (dur=%.1f exp=%s reeled=%s otherLoot=%s) - classifier invariant broke",
+            dur, tostring(castExp), tostring(reeled), tostring(otherLoot))
+        end
+        logFishEvent(kind, extra, dur)
+        -- consume the atomic capture on EVERY resolve (not just caught): so a window's fish can never be
+        -- re-attributed to a later cast that opened no window of its own (stale-leak / double-log guard).
+        SBF._caughtSlots, SBF._caughtSrc = nil, nil
+        -- consume the veto's ownership stamp too, so it can't linger past the cast it belonged to. (The
+        -- identity match already makes a stale value harmless; this keeps the state honest.)
+        if SBF._chanOtherLootFor == castStart then SBF._chanOtherLootFor = nil end
+        if SBF._pendingCastStart == castStart then SBF._pendingCastStart = nil end
+        if kind == "expired" and SBFDB.expiredSound then SBF.PlayExpiredSound() end   -- expired = ran full, no bite
+        if kind == "nothing" and SBFDB.nothingSound then SBF.PlayNothingSound() end   -- nothing = reeled, no loot
+        -- expose the ONE classified result so the footing panel (and any future reader) mirrors the log
+        SBF._lastCast = { kind = kind, dur = dur, exp = castExp, cause = extra and extra.cause, t = GetTime() }
+      end)
+    end
+  end
+end)
+
+-- ===== Native binding bridge (the fishing cast + interact loot are NATIVE Key Bindings) =====
+-- Cast Fishing lives in WoW's own Key Bindings as the command below (declared in Bindings.xml). The native
+-- binding is the SINGLE SOURCE OF TRUTH: SBF's own UI, WoW's Key Bindings menu, and ConsolePort all read /
+-- write the SAME binding, so they can never disagree. (Interact/Loot likewise uses the native INTERACTTARGET.)
+-- All native-binding mechanics (key inspection, conflict prompt, the capture widget) live in the shared
+-- GECBind-1.0 lib so SBF, Haul, and any future addon behave identically. Core uses it for the fishing
+-- key-set + the migration; Options/Welcome use its capture widget. (GECBind is declared once up in the secure
+-- buttons section so the button helpers can use it too.)
+SBF.FISHING_CMD = "CLICK SBFBtn_fishing:LeftButton"
+-- thin back-compat shims (older call sites read these): delegate to the lib.
+function SBF.NativeKeys(command) return GECBind.Keys(command) end
+function SBF.NativeKeyOfKind(command, kind) return GECBind.KeyOfKind(command, kind) end
+
+-- Multi-binding: an action can be triggered by Key 1 (SBFDB.binds), an optional Key 2 (SBFDB.binds2),
+-- AND a controller button (SBFDB.bindsCtrl) all at once. Returns the non-empty combos for an action id,
+-- in that order. (The per-slot popups + master key still read/write binds[id] — back-compat preserved.)
+-- FISHING is the exception: its keys live in the NATIVE binding (SBF.FISHING_CMD), so we read them from
+-- there — that's what the dynamic loot override rebinds while the line is out.
+-- Is this key (combo) the fishing key, SBF's loot/interact key or the game's Interact with Target key? Those always
+-- stay fishing / loot: a gear key may not take one over (Apply skips it, the Keybinds row refuses it).
+function SBF.IsMainKey(combo)
+  if not combo or combo == "" then return false end
+  for _, k in ipairs(SBF.BindsFor("fishing") or {}) do if k == combo then return true end end
+  for _, k in ipairs(SBF.BindsFor("interact") or {}) do if k == combo then return true end end
+  for _, k in ipairs((GECBind and GECBind.Keys and GECBind.Keys("INTERACTTARGET")) or {}) do if k == combo then return true end end
+  return false
+end
+
+function SBF.BindsFor(id)
+  if id == "fishing" then return GECBind.Keys(SBF.FISHING_CMD) end
+  local out = {}
+  local b1 = SBFDB.binds and SBFDB.binds[id]
+  local b2 = SBFDB.binds2 and SBFDB.binds2[id]
+  local bc = SBFDB.bindsCtrl and SBFDB.bindsCtrl[id]
+  if b1 and b1 ~= "" then out[#out + 1] = b1 end
+  if b2 and b2 ~= "" then out[#out + 1] = b2 end
+  if bc and bc ~= "" then out[#out + 1] = bc end
+  return out
+end
+
+-- Release a key `combo` from every SBF-OWNED binding so it can be reassigned without colliding: clears it from
+-- all three internal slot stores (binds/binds2/bindsCtrl, any slot), and — if it's the native fishing key —
+-- clears that native slot too (keyboard AND controller). Used by the per-slot keybind editor's conflict prompt
+-- so accepting "reassign here" actually frees the key from wherever it was. Leaves NON-SBF game bindings alone
+-- (an SBF override merely shadows those while active, so there's nothing to steal).
+function SBF.FreeCombo(combo)
+  if not combo or combo == "" then return end
+  for _, store in ipairs({ "binds", "binds2", "bindsCtrl" }) do
+    local t = SBFDB[store]
+    if t then for id, v in pairs(t) do if v == combo then t[id] = nil end end end
+  end
+  for _, kind in ipairs({ "key", "pad" }) do
+    if GECBind.KeyOfKind(SBF.FISHING_CMD, kind) == combo then GECBind.Clear(SBF.FISHING_CMD, kind) end
+  end
+end
+
+-- One-time-per-load migration: lift any OLD internal fishing keybinds (SBFDB.binds/binds2/bindsCtrl.fishing)
+-- and the old internal interact CONTROLLER bind into the native bindings, so existing users keep their keys
+-- after the move to native-as-source-of-truth. GECBind.Migrate only seeds a command with no native key yet
+-- (idempotent); we then clear the internal copies so SBF.Apply never re-creates an override for them.
+function SBF.MigrateBindsToNative()
+  if InCombatLockdown() then return end
+  -- fishing -> native cast command (first non-empty internal store wins; Migrate only seeds if native empty)
+  local fk
+  for _, store in ipairs({ "binds", "binds2", "bindsCtrl" }) do
+    local v = SBFDB[store] and SBFDB[store].fishing
+    if v and v ~= "" and not fk then fk = v end
+  end
+  if fk then GECBind.Migrate({ [SBF.FISHING_CMD] = fk }) end
+  -- interact CONTROLLER -> the pad slot of native INTERACTTARGET (coexists with a keyboard interact key, so
+  -- seed the pad slot specifically rather than only-when-the-whole-command-is-empty).
+  local ic = SBFDB.bindsCtrl and SBFDB.bindsCtrl.interact
+  local icMoved = false
+  if ic and ic ~= "" then
+    if not GECBind.KeyOfKind("INTERACTTARGET", "pad") then
+      GECBind.Set(ic, "INTERACTTARGET", "pad")
+    end
+    -- CONFIRM THE MOVE BEFORE DROPPING THE ORIGINAL. This used to clear bindsCtrl.interact
+    -- UNCONDITIONALLY — including when the Set was SKIPPED because the pad slot was already occupied, and
+    -- including when the Set silently failed. A controller user in that case lost their interact key from
+    -- BOTH homes: BindsFor("interact") went empty, SBF.Apply had nothing to override-bind, and the loot key
+    -- did nothing with no error and no way to tell why. That is a one-shot migration, so it lands exactly
+    -- once, on update — which is precisely the "loot key stopped working after the patch" report shape.
+    -- Never delete the source until the destination is verified to hold it.
+    icMoved = (GECBind.KeyOfKind("INTERACTTARGET", "pad") == ic)
+  end
+  -- drop the now-migrated internal copies (fishing on every store; interact's controller)
+  for _, store in ipairs({ "binds", "binds2", "bindsCtrl" }) do
+    if SBFDB[store] then SBFDB[store].fishing = nil end
+  end
+  if SBFDB.bindsCtrl and icMoved then SBFDB.bindsCtrl.interact = nil end
+end
+
+-- REPAIR + REPORT for the case above (and for anyone who simply never bound a loot key). A dead loot key is
+-- invisible: nothing errors, the key just does nothing. So SAY SO once at login when the interact slot has an
+-- action to perform but no key can reach it. Cheap, and it converts "it's broken" into "rebind your loot key".
+function SBF.CheckLootKeyReachable()
+  local s = SBF.ActiveSlots and SBF.ActiveSlots()
+  local interact = s and s.interact
+  if not interact then return end
+  local own = (SBF.BindsFor and #SBF.BindsFor("interact") > 0) or false
+  local native = GECBind and GECBind.Keys and (#(GECBind.Keys("INTERACTTARGET") or {}) > 0) or false
+  if own or native then return end
+  -- no key anywhere. In single-button mode the fishing key covers looting, so only two-button mode is broken.
+  if not SBFDB.requireTwoButtons then return end
+  if SBF.Anomaly then
+    SBF.Anomaly("lootkey-unbound", "two-button mode is on but NO key reaches Interact - not in SBF's own binds "
+      .. "and no native INTERACTTARGET binding. Looting cannot work until a key is bound.")
+  end
+  print("|cff45c4a0SBF|r no loot key is bound. Two-button mode is on, so looting needs its own key - "
+    .. "set one in SBF's Keybinds tab, or bind \"Interact With Target\" in the game's Key Bindings.")
+end
+
+-- SBF's looting rides the game's OWN Interact action in BOTH modes — two-button via the dedicated loot key,
+-- single-button via the mid-channel override that turns the fishing key into INTERACTTARGET (DesiredOverride's
+-- "interact" branch) — and Interact only soft-targets the bobber while the client option "Enable interact key"
+-- (Options -> Gameplay -> Controls; CVar softTargetInteract) is on. Players untick it by accident, and the only
+-- symptom is looting silently doing nothing - a dead-key class the reachability check above is BLIND to,
+-- because the binding itself is fine. Using SBF's interact-based looting IMPLIES this option (there is
+-- deliberately no separate toggle): anything below "always" (3) is raised to 3 (3 covers keyboard AND
+-- controller; 1 = gamepad-only and 2 = KBM-only each strand the other input).
+-- HISTORY: this assert used to run ONLY in two-button mode, which produced the exact field report it was built
+-- to prevent - a single-button player whose client had the option off got dead looting, and ticking the
+-- two-button box "fixed" it purely because that was the only path that forced the CVar. Single-button mode has
+-- the same dependency, so the assert now covers it too. The one case that genuinely doesn't need the CVar: a
+-- single-button interact SLOT carrying a custom action or a non-Interact game binding - that press never
+-- touches soft-targeting, so we leave the player's client setting alone.
+-- Re-asserted at login, when two-button mode is switched on, on every action press (PreClick), on
+-- CVAR_UPDATE (the accidental mid-session uncheck) and when combat ends (it never writes during combat). Our own SetCVar re-fires CVAR_UPDATE; the cur == 3
+-- early-return ends that loop.
+function SBF.EnsureInteractKeyCVar()
+  if not SBFDB.requireTwoButtons then
+    -- single-button: needed unless the interact slot loots some OTHER way (custom action / custom binding)
+    local s = SBF.ActiveSlots and SBF.ActiveSlots()
+    local interact = s and s.interact
+    if hasAction(interact) then return end
+    if interact and interact.gameBinding and interact.gameBinding ~= "INTERACTTARGET" then return end
+  end
+  local get, set = C_CVar and C_CVar.GetCVar, C_CVar and C_CVar.SetCVar
+  if not (get and set) then return end
+  -- never in combat: soft-target settings are locked mid-fight and the refused write is blamed on SBF ("Interface
+  -- action failed"). The next out-of-combat press re-asserts it.
+  if InCombatLockdown and InCombatLockdown() then return end
+  local cur = tonumber(get("softTargetInteract"))
+  if cur == 3 then return end
+  local ok = pcall(set, "softTargetInteract", "3")
+  if ok then
+    if SBF.Anomaly then
+      SBF.Anomaly("interact-cvar-restored", "softTargetInteract was %s with interact-based looting in use "
+        .. "(%s-button mode) - raised to 3 (always)", tostring(cur), SBFDB.requireTwoButtons and "two" or "single")
+    end
+    print("|cff45c4a0SBF|r turned the game's |cffffd100interact key|r back on (Options > Controls > "
+      .. "\"Enable interact key\") - looting the bobber works through it.")
+  end
+end
+do
+  local f = CreateFrame("Frame")
+  f:RegisterEvent("CVAR_UPDATE")
+  f:SetScript("OnEvent", function(_, _, name)
+    -- CVAR_UPDATE's first arg is historically the cvar's EVENT ALIAS, not the cvar name, and a live test
+    -- proved an exact-name match missed the options-panel uncheck entirely. Normalize case + underscores so
+    -- "softTargetInteract", "SOFT_TARGET_INTERACT" and friends all match. This watcher is best-effort now;
+    -- the per-press check in the fishing PreClick is the guarantee.
+    if SBF.EnsureInteractKeyCVar and name
+       and tostring(name):lower():gsub("_", "") == "softtargetinteract" then
+      SBF.EnsureInteractKeyCVar()
+    end
+  end)
+end
+
+-- (re)load every button + (re)apply its key combo. Deferred if in combat.
+function SBF.Apply()
+  if InCombatLockdown() then
+    SBF._pending = true
+    -- RELOADED INTO COMBAT: no button exists yet, so the fishing key is DEAD for the rest of this fight.
+    -- The key is a NATIVE binding (CLICK SBFBtn_fishing:LeftButton, Bindings.xml), so it isn't shadowing your
+    -- attack — it IS the binding, pointing at a frame that was never created. There's nothing to fall through
+    -- to, and nothing we can do about it here: SetAttribute, RegisterForClicks, Hide and SetOverrideBinding are
+    -- ALL combat-protected, so even creating the frame would leave it macro-less and just as dead. It self-heals
+    -- at PLAYER_REGEN_ENABLED below. All we can do is SAY so — standing there pressing a dead key with no
+    -- explanation is the actual bug report. Once per lockdown; a later Apply in the same fight stays quiet.
+    -- Gated on a key actually being BOUND: with no fishing key set there is no dead key to warn about, and a
+    -- brand-new install that reloads in combat would otherwise be greeted by a scary red message about a
+    -- feature it has never used.
+    local bound = SBF.BindsFor and #SBF.BindsFor("fishing") > 0
+    if bound and not buttons.fishing and not SBF._deadKeyWarned then
+      SBF._deadKeyWarned = true
+      local msg = "reloaded in combat - your action key is dead until this fight ends"   -- no "SBF:" prefix: the
+      -- chat line adds its own coloured |cff45c4a0SBF|r tag, and having both printed "SBF SBF: reloaded…".
+      if SBF.Anomaly then SBF.Anomaly("dead-key", "reloaded into combat, no secure button could be built") end
+      -- CENTER SCREEN first. Chat is the wrong home for this: a /reload floods chat with every addon's load
+      -- spam at exactly this moment, and you are mid-fight watching your character, not reading chat. The red
+      -- UIErrorsFrame is where you already look when a keypress did nothing, and AddMessage is NOT protected,
+      -- so it works fine inside the lockdown that caused the problem.
+      -- the centre-screen copy DOES need a name on it (it appears with no other context), unlike the chat line.
+      if UIErrorsFrame and UIErrorsFrame.AddMessage then UIErrorsFrame:AddMessage("SBF: " .. msg, 1, 0.3, 0.3, 1, 6) end
+      print("|cff45c4a0SBF|r " .. msg .. ". WoW blocks addons from building combat buttons mid-fight; "
+        .. "it restores itself the moment combat drops.")   -- and a chat copy so there is a record to scroll back to
+    end
+    return
+  end
+  SBF._deadKeyWarned = nil
+  SBF._pending = nil
+  ClearOverrideBindings(bindOwner)
+  SBF.EachDef(function(key, def, src)
+    local binds = SBF.BindsFor(key)
+    local actionable = (def.macro and def.macro ~= "") or (def.item and def.item ~= "")
+      or def.spell or def.toy
+    local gameAction = def.gameBinding or (src and src.gameBinding)
+    if not actionable and gameAction then
+      -- pure game binding (e.g. interact -> Interact With Target). We don't own a secure button for it,
+      -- so there's nothing to pre-create; only wire it when a key/button is actually captured in SBF.
+      for _, binding in ipairs(binds) do SetOverrideBinding(bindOwner, false, binding, gameAction) end
+    else
+      -- our own secure button. ALWAYS ensure + configure it, even with NO captured key, so external
+      -- "CLICK SBFBtn_<slot>:LeftButton" bindings resolve — a controller button assigned in ConsolePort,
+      -- or a key set in WoW's own Key Bindings (both via Bindings.xml). (This is also what attaches the
+      -- fishing "brain" PreClick below — buttons.fishing must exist for the loop to drive a click-target.)
+      local b = EnsureButton(key)
+      Configure(b, def)
+      -- OFF MUST MEAN OFF. `def.skip` gated the ROTATION (ComputeNext, Slots.lua:972) but NOT this: a slot
+      -- with its own captured key kept that key override-bound while switched off, so pressing it fired the
+      -- slot directly, bypassing ComputeNext entirely. That is the "chum1 is OFF and still throwing" bug —
+      -- and it self-heals on any Apply that re-orders the bindings, which is exactly why it looked random.
+      -- Worse when a rotation slot shares the fishing key: ClearOverrideBindings + rebind means whichever
+      -- slot EachDef reaches LAST owns the key, so unrelated edits silently flip who answers the press.
+      -- "fishing" is deliberately exempt — a skipped Cast Fishing slot has DEFINED off-behaviour
+      -- (buildPressMacro drops the cast so the key becomes a pure combat key), so it must stay bound.
+      if def.skip and key ~= "fishing" then
+        if SBF.Anomaly and #binds > 0 then
+          SBF.Anomaly("skip-bound", "slot '%s' is switched OFF but had its own key(s) bound (%s) - not binding them. "
+            .. "A bound-while-off slot fires outside the rotation.", tostring(key), table.concat(binds, ", "))
+        end
+        return   -- EachDef callback: leave this slot's keys unbound
+      end
+      -- Trigger EVERY secure slot (incl. fishing) via an OVERRIDE-CLICK binding. Override-clicks are the
+      -- "blessed" addon path that carries the protected-cast privilege through to our INSECURE smart button
+      -- (the PreClick brain). A plain native "CLICK SBFBtn_fishing" binding does NOT — the press runs the
+      -- PreClick but the secure cast is silently dropped (confirmed on a clean, addon-free client). So for
+      -- fishing the native binding stays only as the SOURCE OF TRUTH / menu+ConsolePort display, and we read
+      -- its keys here (SBF.BindsFor("fishing") -> GetBindingKey) to override-bind the REAL trigger.
+      for _, binding in ipairs(binds) do SetOverrideBindingClick(bindOwner, false, binding, b:GetName()) end
+    end
+  end)
+
+  -- gear pseudo-actions (not in ns.SLOTS, so not covered by EachDef): bind their combos to the plain
+  -- click-buttons created above. Same bind keys (Key1/Key2/Controller), same override owner (cleared above).
+  -- They're bound AFTER the slots on the same owner, so a gear key that is also the fishing or loot key would take
+  -- that key over and the press would equip instead of cast (QC 9 S2). Those keys always stay fishing / loot.
+  for id, btn in pairs(gearActionBtns) do
+    for _, binding in ipairs(SBF.BindsFor(id)) do
+      if SBF.IsMainKey(binding) then
+        if SBF.Anomaly then
+          SBF.Anomaly("gear-key-clash", "gear key %s for '%s' is also the fishing or loot key - left on fishing/loot.",
+            tostring(binding), tostring(id))
+        end
+        -- and say so in chat, once per key per session: a skipped key that just loots is otherwise a mystery
+        SBF._gearClashSaid = SBF._gearClashSaid or {}
+        if not SBF._gearClashSaid[binding] then
+          SBF._gearClashSaid[binding] = true
+          print(("|cff45c4a0SBF|r |cffffd100%s|r is your fishing or loot key, so it stays on fishing/loot and won't "
+            .. "run the gear key bound to it. Pick another key on the Keybinds page."):format(binding))
+        end
+      else
+        SetOverrideBindingClick(bindOwner, false, binding, btn:GetName())
+      end
+    end
+  end
+
+  -- mouse double-click fishing: install the WorldFrame detection hook + clear any stale momentary binding to
+  -- match the current enabled state. Its bindings live on mouseBindOwner (NOT bindOwner above), so the
+  -- ClearOverrideBindings at the top of Apply never touches them.
+  if SBF.MouseApply then SBF.MouseApply() end
+
+  -- the Cast Fishing button checks swimming on each press: if you're swimming and
+  -- a Boat is set, this press casts the boat (so you stand on the raft); otherwise
+  -- it does the fishing action. IsSwimming() is false once you're on the raft, so
+  -- the very next press fishes — self-correcting.
+  local fb = buttons.fishing
+  if fb then
+    fb:SetScript("PreClick", function(self)
+      if InCombatLockdown() then return end
+      -- Phase-5 gear: stamp the last action-press time (the idle timer reads it). The actual gear equip is
+      -- handled as its OWN press below (just before the fish macro), so a gear swap and the fishing channel
+      -- never collide on the same press.
+      SBF.lastActionAt = GetTime()
+      -- FISHING MODE: the first action press arms it (wakes the reel watch / override poll / buff scan);
+      -- the idle observer drops it again after the idle window. See the block above pollFrame.
+      SBF.fishingModeActive = true
+      SBF.gearArmed = nil   -- legacy arm flag no longer gates anything; the gear gate below does
+
+      -- Two-button mode implies the game's "Enable interact key" option; verify it on EVERY press. The
+      -- CVAR_UPDATE watcher missed a live uncheck in testing (the event's name argument is not reliably
+      -- the cvar name), so the press is the guarantee: one GetCVar per press, a no-op when already right,
+      -- and the loot key can never stay dead longer than the next cast.
+      if SBF.EnsureInteractKeyCVar then SBF.EnsureInteractKeyCVar() end
+
+      -- Pet is fighting and the player isn't in combat yet (opt-in, per character): this press is the combat
+      -- action, not a cast or a gear change. Once the player is in combat the macro below freezes on the button
+      -- and keeps swinging; the first press after the fight rebuilds the normal loop.
+      local petMacro = SBF.PetFightMacro and SBF.PetFightMacro()
+      if petMacro then
+        announce("pet is fighting")
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+        applyMacro(self, petMacro, "pet-fight")
+        return
+      end
+
+      -- Self-correct the active profile: if auto-swap is on and a different profile resolves for where we
+      -- are (e.g. the login resolution ran before the map loaded and stuck on Default), switch now so the
+      -- right gear/config is used. Skip while dirty (don't discard unsaved edits on a press; the zone
+      -- prompt owns that path). Runs BEFORE the gear gate so the gate then equips the correct profile's gear.
+      if SBFDB.autoSwap and not SBF.IsDirty() and SBF.ResolveProfile then
+        local target = SBF.ResolveProfile()
+        if target and SBF.working and target ~= SBF.working.id then SBF.DoSwap(target) end
+      end
+
+      -- Focus fishing audio: starting to fish reconfigures WoW's sound (isolate the bobber splash, mute
+      -- music/ambience). Parallel to gear — applied on a press, restored on idle/stop/login. No-op unless
+      -- enabled + not already applied. CVars aren't protected, so this is safe and needs no [combat] dance.
+      if SBF.ApplyFocusAudio then SBF.ApplyFocusAudio() end
+      if SBF.ApplyBobberReach then SBF.ApplyBobberReach() end   -- interact key reaches far bobbers (restored on stop)
+      if SBF.ApplyFishingZoom then SBF.ApplyFishingZoom() end   -- camera out far enough to see the bobber (restored on stop)
+
+      -- Empty pole slot: fill it from the pole you're wearing BEFORE the gear gate reads it. This has to sit
+      -- here and not inside applyProfileGear, because that function is only ever reached THROUGH the gate, and
+      -- GearNeedsEquip returns false for a profile with no equipSet and no pole — precisely the empty case we
+      -- need to fix. A hook inside applyProfileGear is unreachable exactly when it matters. Running it first
+      -- also means the gate below sees the pole we just adopted and can equip it on this same press.
+      -- An empty pole box: first the pole saved IN the profile's gear set (the player's choice), then on retail the pole
+      -- in the fishing tool slot (until the player clears the box). Forever never fills from what you wear (with two
+      -- poles SBF can't know which you meant): the box stays empty and SBF says so once per session.
+      if SBF.working and not SBF.working.pole and not (SBF.AdoptSetPole and SBF.AdoptSetPole())
+          and not (SBF.AutoPopulatePole and SBF.AutoPopulatePole())
+          and SBF.NoteMissingPole then SBF.NoteMissingPole() end
+
+      -- Gear gate — HIGHEST PRIORITY, the very first thing a press does. If the active profile's gear/pole
+      -- isn't currently on, THIS press changes gear and does NOT fish (you can't swap gear and start the
+      -- fishing channel on the same press — "you can't do that right now"). The press equips; the next press
+      -- moves on (dismount/fish/etc). One step per press, gear first. Out of combat only (guaranteed by the
+      -- early return up top), so the equip is unrestricted and can't taint the cast. No-op when gear's
+      -- already correct, so normal fishing is untouched.
+      if SBF.GearNeedsEquip and SBF.GearNeedsEquip() then
+        SBF.EquipProfileGear()
+        announce("equipping gear")
+        local combatDef = SBF.SlotDef("combat")
+        local cl = (not (combatDef and combatDef.skip)) and combatLine(combatDef) or nil
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+        -- the pet stance for this fishing run rides the gear-up press (a stance has no cast, so it can't
+        -- collide with the equip)
+        local stance = SBF.PetStancePrefix and SBF.PetStancePrefix() or ""
+        applyMacro(self, stance .. (cl and ("/stopmacro [nocombat]\n" .. guardCombat(cl)) or ""), "combat-hold")
+        return
+      end
+
+      -- Phase-1 gate: not castable (flying/moving/mounted/swimming/...) -> no-op press.
+      -- Belt-and-suspenders for the ~0.15s override-poll lag (the dynamic override suppresses
+      -- the key the rest of the time). Loot-while-channeling is handled by the INTERACT override.
+      local fa = ns.FishingAction and ns.FishingAction()
+      -- Recast and dismount carry the combat line like every other branch: the macro FREEZES on the button in
+      -- combat (no rebuild mid-fight), so a bare "/stopcasting /cast Fishing" left there turned every press of
+      -- a fight into a cancelled cast and never swung back. [nocombat] on the out-of-combat half, then the
+      -- [combat]-guarded combat action.
+      if fa == "recast" or fa == "dismount" then
+        local combatDef = SBF.SlotDef("combat")
+        local cl = (not (combatDef and combatDef.skip)) and combatLine(combatDef) or nil
+        local body
+        if fa == "recast" then          -- bobber beyond the interact key's reach: stop this line, cast a new one
+          announce("recasting (bobber out of reach)")
+          SBF._chanUnreachable = true   -- THIS press ended the cast (set here, not at detection: an out-of-reach cast
+                                        -- that expires or gets interrupted keeps its real outcome)
+          body = "/stopcasting [nocombat]\n/cast [nocombat] " .. ((ns.fishingSpellName and ns.fishingSpellName()) or "Fishing")
+        else                            -- ground mount + auto-dismount on: dismount; next press fishes
+          announce("dismounting")
+          body = "/dismount [nocombat]"
+        end
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+        applyMacro(self, cl and (body .. "\n/stopmacro [nocombat]\n" .. guardCombat(cl)) or body,
+          fa == "recast" and "reach-recast" or "dismount")
+        return
+      elseif fa == "wait" then          -- disabled (flying/moving/loot-mode/...) -> no-op OUT of
+        -- combat, but KEEP the [combat] attack so combat still fires off the action key.
+        local combatDef = SBF.SlotDef("combat")
+        local cl = (not (combatDef and combatDef.skip)) and combatLine(combatDef) or nil
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+        applyMacro(self, cl and ("/stopmacro [nocombat]\n" .. guardCombat(cl)) or "", "combat-hold")
+        return
+      elseif fa == "lootone" then       -- fast-loot off + loot window open: press loots ONE slot, no cast
+        -- Inert cast (keep the [combat] attack so a mob mid-loot still gets hit), and flag PostClick to
+        -- LootSlot one item. LootSlot is unprotected, so it runs safely in the post-secure-click hook.
+        local combatDef = SBF.SlotDef("combat")
+        local cl = (not (combatDef and combatDef.skip)) and combatLine(combatDef) or nil
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+        applyMacro(self, cl and ("/stopmacro [nocombat]\n" .. guardCombat(cl)) or "", "combat-hold")
+        self._sbfLootOne = true         -- PostClick loots one slot (see the PostClick hook)
+        announce("looting")
+        return
+      end
+      -- consume lock: after firing food/drink, the button does no consumable/fishing
+      -- action for a few seconds so a press can't interrupt the eat/drink. BUT keep the
+      -- combat block — a mob hitting you mid-eat must still get attacked (we can't
+      -- rebuild the button once combat starts). Out of combat the /stopmacro [nocombat]
+      -- makes it a harmless no-op that won't interrupt eating.
+      if SBF._consumeUntil and GetTime() < SBF._consumeUntil then
+        local combatDef = SBF.SlotDef("combat")
+        local cl = (not (combatDef and combatDef.skip)) and combatLine(combatDef) or nil
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+        applyMacro(self, cl and ("/stopmacro [nocombat]\n" .. guardCombat(cl)) or "", "combat-hold")
+        if SBFDB.debug then
+          print(string.format("|cff45c4a0SBF|r consume-lock %.0fs left (combat-only)",
+            SBF._consumeUntil - GetTime()))
+        end
+        return
+      end
+      -- refresh-on-cast: first press of the session while the skill isn't loaded yet flashes the Fishing
+      -- Journal instead of fishing (one press), warming the per-expansion skill. The warmer closes it a tick
+      -- later. Out-of-combat only (guaranteed above), one-shot (SBF._skillFlashed). Opt-out: refreshSkillOnCast.
+      if shouldFlashJournal() then
+        local jname = journalSpellName()
+        SBF._skillFlashed = true
+        -- ARM WITH A DEADLINE, not a bare `true`. The watcher clears this only inside
+        -- TRADE_SKILL_LIST_UPDATE; with no timeout, a warm that never produced that event (the cast was
+        -- swallowed, the window never opened) left the flag armed indefinitely — and the next profession
+        -- window you deliberately opened, possibly twenty minutes later, fired the event, consumed the stale
+        -- flag, and got slammed shut with no explanation. A timestamp makes it expire on its own.
+        SBF._journalAutoClose = GetTime()
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+        -- guardNoCombat, like every other branch. The macro FREEZES in combat (SBF can't rebuild a secure
+        -- macro mid-fight), so a bare "/cast <Journal>" left on the button meant your next press in a fight
+        -- tried to open a profession window instead of doing your combat action. [nocombat] makes the frozen
+        -- copy a no-op in combat. This was the only branch applying an unguarded macro.
+        applyMacro(self, ns.guardNoCombat("/cast " .. jname), "skill-warm")
+        -- belt-and-braces disarm: if the event never lands, don't leave it armed for the next window.
+        if C_Timer and C_Timer.After then
+          C_Timer.After(SBFDB.journalWarmTimeout or 5, function()
+            if SBF._journalAutoClose then SBF._journalAutoClose = nil end
+          end)
+        end
+        announce("loading fishing skill")
+        return
+      end
+      local macro, label, slotKey, timed = buildPressMacro(true)   -- real press: may emit the restock warning
+      -- Forever: this press would cast Fishing with no pole in hand. Stop and tell the player how to fix it,
+      -- instead of letting the game's "requires a fishing pole" error be the only clue. Only the default cast:
+      -- a custom macro in the Cast Fishing slot may equip a pole itself. warnNoPole = false turns it off.
+      if slotKey == "fishing" and SBFDB.warnNoPole ~= false and SBF.NoPoleToFish and SBF.NoPoleToFish() then
+        local fd = SBF.SlotDef("fishing") or {}
+        if not (fd.skip or (fd.macro and fd.macro ~= "") or fd.item or fd.spell or fd.toy) then
+          local combatDef = SBF.SlotDef("combat")
+          local cl = (not (combatDef and combatDef.skip)) and combatLine(combatDef) or nil
+          self:SetAttribute("type", "macro")
+          self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+          applyMacro(self, cl and ("/stopmacro [nocombat]\n" .. guardCombat(cl)) or "", "no-pole")
+          if SBF.WarnNoPole then SBF.WarnNoPole() end
+          return
+        end
+      end
+      announce(describeAction(slotKey))
+      self:SetAttribute("type", "macro")
+      self:SetAttribute("item", nil); self:SetAttribute("spell", nil); self:SetAttribute("toy", nil)
+      applyMacro(self, (SBF.PetStancePrefix and SBF.PetStancePrefix() or "") .. macro, label or "action")
+      if timed and slotKey then
+        SBFDB.lastFired = SBFDB.lastFired or {}
+        SBFDB.lastFired[slotKey] = time()   -- mark this rotation slot as just used
+      end
+      -- fireAll per-item stamp: a fireAll slot (Buffs) keeps N buffs up, so it needs PER-ITEM grace +
+      -- buffDuration anchoring, not the slot-wide lastFired. Stamp the item that just fired (the one
+      -- pickItem armed) so nextDueItem won't re-count it as due before its buff lands / per its duration.
+      do
+        local sd = slotKey and ns.SlotDef(slotKey)
+        if timed and sd and sd.fireAll then
+          local cd = SBF.ActiveSlots()[slotKey]
+          local fid = cd and ns.curItemId(cd)
+          if fid then cd.firedAt = cd.firedAt or {}; cd.firedAt[fid] = time() end
+        end
+      end
+      -- post-fire bookkeeping, dispatched on the descriptor (replaces the slotKey== branches):
+      --   postFire="channel" -> idle-lock (food/drink); "climb" -> boat climb window + re-fire
+      --   suppress; plus the chum burst-debt decrement. (See Slots.postFire.)
+      local slotDef = slotKey and ns.SlotDef(slotKey)
+      local cdef = slotKey and SBF.ActiveSlots()[slotKey]
+      if slotDef and cdef then ns.postFire(slotDef, cdef, timed) end
+      -- B2 action log: record ONLY the SBF action that just fired (food/drink/chum/lure/bobber/boat),
+      -- here at fire-time. `timed` is exactly the rotation/boat fires — so manual casts (herbalism,
+      -- Opening, mining, …) can never leak in (the old blanket UNIT_SPELLCAST_SUCCEEDED handler did).
+      -- ALWAYS logged now — SBFDB.logActions is a VIEW filter on the Log tab (show/hide), not a capture gate.
+      if timed and slotKey and cdef then
+        logFishEvent("action", { spell = ns.defName(cdef) or (slotDef and slotDef.label) or slotKey, slotKey = slotKey })
+      end
+      -- ---- DID IT ACTUALLY FIRE? (the "it says it cast it but nothing happened" detector) ----------------
+      -- Everything above records the action at PRESS time: we log/learn/decrement the burst debt because we
+      -- OVERLAID the macro, not because the client accepted it. So a /cast the client silently rejects still
+      -- reads as a successful throw everywhere downstream — which is exactly the chum symptom. This closes
+      -- the loop with the one unforgeable receipt a consumable leaves behind: the bag stack goes DOWN.
+      -- Snapshot the count here (PreClick == pre-fire), re-read after the cast window, and report the miss on
+      -- the anomaly channel (-> Feed). Bag items only: a toy has no stack, so `before > 0` gates it.
+      -- CONSUMABLES ONLY. The whole test rests on "a consumable leaves a receipt: the stack goes down",
+      -- which is simply untrue for anything reusable — an equippable with a use effect (Sharpened Tuskarr
+      -- Spear, Nat's Drinking Hat) sits in your bags at count 1 and NEVER decrements, so every single fire
+      -- looked like a rejected macro. That was a false positive on a shipped detector, which is worse than
+      -- no detector: it trains you to ignore the channel. `before > 0` already excluded toys (not in bags);
+      -- this adds the two checks that separate a consumable from a reusable — item class Consumable (0)
+      -- and not equippable.
+      local function isConsumable(id)
+        if not (id and GetItemInfoInstant) then return false end
+        local ok, _, _, _, equipLoc, _, classID = pcall(GetItemInfoInstant, id)
+        if not ok then return false end
+        return classID == 0 and (equipLoc == nil or equipLoc == "")
+      end
+      if timed and slotKey and cdef and slotDef and slotDef.effect == "aura" then
+        local iid = ns.curItemId and ns.curItemId(cdef)
+        local getCount = (C_Item and C_Item.GetItemCount) or GetItemCount
+        local okB, before = pcall(getCount, iid or 0)
+        if iid and okB and (before or 0) > 0 and isConsumable(iid) then
+          local iname = ns.defName(cdef) or tostring(iid)
+          C_Timer.After(2, function()
+            local okA, after = pcall(getCount, iid)
+            if not okA then return end
+            if (after or 0) < before then return end          -- stack dropped: it really fired, nothing to say
+            -- stack unchanged. If the slot's buff is up anyway the throw landed some other way — only a
+            -- missing buff AND an untouched stack is a genuine "we lied about casting".
+            -- Which buff proves it landed depends on the slot KIND. A fireAll slot (Buffs) tracks a
+            -- PER-ITEM buff — "fireAll uses PER-ITEM buffs, never a slot-level one" — so asking
+            -- slotBuffName() there reads whatever happens to be sitting in def.buff, quite possibly a
+            -- different item's aura, and concludes "no buff appeared" about the wrong thing entirely.
+            -- Route each slot kind to its own real lookup.
+            local bname = (slotDef.fireAll and ns.entryBuffName and ns.entryBuffName(cdef, iid))
+              or (ns.slotBuffName and ns.slotBuffName(cdef))
+            -- No known buff name = no evidence either way. "We never learned this item's aura" is NOT the
+            -- same claim as "the cast was rejected", and reporting it as the latter is how a detector starts
+            -- lying. Stay silent; learnBuff will fill the name in on a successful application.
+            if not bname then return end
+            local up = SBF.GetBuff and SBF.GetBuff(bname)
+            if up then return end
+            SBF.Anomaly("fire-noop", "%s: '%s' (item %s) reported FIRED but the stack never moved (%d) and no buff appeared - the client rejected the macro",
+              slotKey, iname, tostring(iid), before)
+          end)
+        end
+      end
+      -- observe the item's COOLDOWN into the knowledge record: the item goes on cooldown the instant it
+      -- fires, but the API reads 0 this same frame — read it next frame (C_Timer.After + pcall, guarded
+      -- like itemCooldown). The >2 filter drops the global ~1.5s GCD so it isn't mistaken for the item CD.
+      if timed and slotKey and cdef then
+        local iid = ns.curItemId and ns.curItemId(cdef)
+        if iid then
+          C_Timer.After(0.5, function()
+            local get = (C_Item and C_Item.GetItemCooldown) or GetItemCooldown
+            if not get then return end
+            local ok, start, dur = pcall(get, iid)
+            if ok and start and (dur or 0) > 2 and start > 0 then SBF.ObserveItem(iid, { cooldown = dur }) end
+          end)
+        end
+      end
+      -- buff learning, also descriptor-driven: aura slots learn (`effect == "aura"`), enchant slots
+      -- don't (no aura). The boat is an aura slot too, so its real buff (which may differ from the
+      -- raft item name) gets captured into the account-wide DB the same way. Food/drink buffs land
+      -- slowly (~10s), so watch up to the grace window; fast slots use a short window so back-to-back
+      -- casts (the two chums) don't grab each other's buff.
+      -- Learning is UNIVERSAL: route every aura-slot fire through learnBuff, which owns the whole
+      -- "anything to learn, for which item?" decision (per-item for fireAll, slot-level otherwise). One
+      -- place, no per-slot guards here — enchant slots (no aura) are the only ones excluded.
+      if slotDef and cdef and timed and slotDef.effect == "aura" then
+        local window = (slotDef.postFire == "channel") and (SBFDB.applyGrace or 12) or 4
+        learnBuff(slotKey, cdef, GetTime() + window)
+      end
+      -- ENCHANT slots (Nat's / pole-enchant lures) carry NO aura to learn, but they DO have data worth
+      -- recording — for curation + the server: mark the item's kind = "enchant" (so an empty `buff` reads as
+      -- "correct, it's an enchant" not "missing"), and capture the enchant's DURATION, sampled right after it
+      -- lands (PoleEnchantLeft handles the slot-28 pole case). No buff/spell (not an aura); cooldown stays as
+      -- observed above (enchants have none). The just-applied remaining ~= full length, so it's a good default.
+      if slotDef and cdef and timed and slotDef.effect == "enchant" then
+        local iid = ns.curItemId and ns.curItemId(cdef)
+        if iid then
+          SBF.ObserveItem(iid, { kind = "enchant" })   -- type is known immediately, even if the timer read fails
+          if SBF._buffDbg then SBF._buffDbg("|cff80ff80ENCHANT|r %s item=%s applied - reading duration", slotKey, tostring(iid)) end
+          C_Timer.After(0.5, function()
+            local left = SBF.PoleEnchantLeft and SBF.PoleEnchantLeft()
+            if left and left > 0 then
+              SBF.ObserveItem(iid, { buffDuration = math.ceil(left) })
+              if SBF._buffDbg then SBF._buffDbg("enchant %s item=%s dur=|cffffd100%ss|r", slotKey, tostring(iid), tostring(math.ceil(left))) end
+            elseif SBF._buffDbg then
+              SBF._buffDbg("enchant %s item=%s: |cffff6060no enchant timer readable|r", slotKey, tostring(iid))
+            end
+          end)
+        end
+      end
+      if SBFDB.debug then   -- one PreClick per press now (up-stroke), so print every time
+        local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
+        print(string.format("|cff45c4a0SBF|r press -> state=|cffffd100%s|r next=|cffffd100%s|r (%s)  "
+          .. (inCombat and "|cffff3333COMBAT=true|r" or "|cff33ff33combat=false|r"),
+          tostring(SBF.GetState()), tostring(label), tostring(slotKey)))
+        print("|cff7f7f7f  macro:|r " .. macro:gsub("\n", " |cff7f7f7f¬|r "))
+      end
+    end)
+    -- DIAGNOSTIC (debug only): PostClick fires ONLY if the secure click actually completed. So:
+    --   "press ->" (PreClick) but NO "PostClick fired"  => the secure click isn't completing; the cast never runs.
+    --   BOTH lines but still no cast                     => the secure click ran and the CLIENT rejected /cast.
+    -- Hooked once (additive HookScript — the mouse-loot path also PostClick-hooks this button).
+    if not fb._dbgPostHooked then
+      fb._dbgPostHooked = true
+      fb:HookScript("PostClick", function(self)
+        if self._sbfLootOne then          -- fast-loot-off paced loot: take one slot per press
+          self._sbfLootOne = nil
+          SBF.LootOneSlot()
+        end
+        if SBFDB.debug then print("|cff45c4a0SBF|r |cff33ff33PostClick fired|r - secure click completed") end
+      end)
+    end
+  end
+end
+
+-- Build the WoW binding string for a key with the currently-held modifiers.
+-- WoW's canonical order is ALT-CTRL-SHIFT-<KEY>.
+function SBF.ComboString(keyName)
+  local m = ""
+  if IsAltKeyDown() then m = m .. "ALT-" end
+  if IsControlKeyDown() then m = m .. "CTRL-" end
+  if IsShiftKeyDown() then m = m .. "SHIFT-" end
+  return m .. keyName
+end
+
+-- ===========================================================================
+-- Mouse double-click fishing (GoFish / ZenFishing approach) — fire SBF's SECURE
+-- fishing button by DOUBLE-clicking a chosen mouse button.
+--
+-- The hard constraint: addon code can't press the protected fishing cast — it
+-- must come from a HARDWARE click landing on a secure button. The mechanism,
+-- arm-on-the-2nd-click exactly as GoFish/ZenFishing do it:
+--   * GLOBAL_MOUSE_DOWN is OBSERVE-ONLY (does NOT consume the click). On a
+--     CONFIRMED double-click (MIN < gap < doubleSec) we arm the override binding
+--     RIGHT THEN, in the same input pass, so the click resolves to the secure
+--     button. A 1st/slow click does NOT arm — it passes straight through.
+--   * THE KEY PIECE we were missing: right-click (and left-drag) puts the game
+--     into MOUSELOOK (camera), which CONSUMES the click so the override binding
+--     never fires. So before arming we do `if IsMouselooking() then
+--     MouselookStop() end` — exactly what GoFish/ZenFishing do. THIS is why
+--     right-click "did nothing" for us.
+--   * The binding is cleared in the secure button's POSTCLICK (after the cast
+--     actually fires) — the real ZenFishing/GoFish teardown — plus a short
+--     seq-guarded fallback timer in case the click never reached the button, so
+--     a stale binding can never linger.
+--   * A SEPARATE owner frame (mouseBindOwner) keeps these bindings off bindOwner
+--     (the key bindings), so the two never clash; out of combat only; also
+--     cleared on PLAYER_REGEN_ENABLED and in MouseApply/disable.
+-- ===========================================================================
+local mouseBindOwner = CreateFrame("Frame")   -- owns ONLY the double-click bindings (never bindOwner's keys)
+local mouseArmedToken = nil     -- which token currently has an armed binding (nil = nothing armed)
+local mouseArmedIsGame = false  -- the armed binding is a raw game binding (loot/INTERACTTARGET) — no PostClick
+local mouseClearSeq = 0         -- monotonic: bumped on every arm/clear; only the matching fallback timer fires
+local MOUSE_MIN = 0.02          -- ignore a 2nd press faster than this (a bounce, not a deliberate double)
+local MOUSE_FALLBACK = 0.1      -- if the click never reached the secure button (no PostClick), clear after this
+SBF._mouseGaps = SBF._mouseGaps or {}   -- last few REAL double-click gaps (for /sbf mouse tuning)
+
+local function mdbg(...) if SBFDB and SBFDB.mouse and SBFDB.mouse.debug then print("|cff66ccffSBF mouse|r", ...) end end
+
+-- map a GLOBAL_MOUSE_DOWN button name to the WoW binding token form (BUTTON1..BUTTON5)
+local MOUSE_TOKEN = {
+  LeftButton = "BUTTON1", RightButton = "BUTTON2", MiddleButton = "BUTTON3",
+  Button4 = "BUTTON4", Button5 = "BUTTON5",
+}
+local function mouseToken(name)
+  return MOUSE_TOKEN[name] or (type(name) == "string" and name:match("^BUTTON%d$")) or nil
+end
+
+-- Clear any armed double-click binding. Guarded — we must NEVER leave a stale override binding (it would
+-- make every press of that mouse button fire the action). Bumps the seq so any pending fallback timer no-ops.
+local function mouseClear()
+  mouseClearSeq = mouseClearSeq + 1
+  mouseArmedToken = nil
+  mouseArmedIsGame = false
+  pcall(ClearOverrideBindings, mouseBindOwner)
+end
+SBF.MouseClear = mouseClear
+
+-- Arm the binding for `token` to fire `target` (a secure button name) or, for a game binding like
+-- INTERACTTARGET, the binding command itself — called on the CONFIRMED 2nd click of a double, in the same
+-- input pass, so this click resolves to the secure button. Stops mouselook FIRST (else the camera eats the
+-- click). Schedules a seq-guarded FALLBACK clear in case the click never reaches the button's PostClick.
+-- `isGameBinding` doubles as the "loot via raw INTERACTTARGET" marker (no secure button to PostClick-hook),
+-- so the fallback prints "fired (loot)" for that path — otherwise it would be misleadingly silent.
+local function mouseArm(token, target, isGameBinding)
+  if InCombatLockdown() then return end   -- never fiddle override bindings in combat
+  -- if a DIFFERENT token was armed, clear it first so two configured buttons can't both stay armed
+  if mouseArmedToken and mouseArmedToken ~= token then pcall(ClearOverrideBindings, mouseBindOwner) end
+  -- THE FIX: leave mouselook so the click isn't consumed by the camera and actually reaches the binding.
+  if IsMouselooking and IsMouselooking() then pcall(MouselookStop) end
+  local ok
+  if isGameBinding then
+    ok = pcall(SetOverrideBinding, mouseBindOwner, true, token, target)
+  else
+    ok = pcall(SetOverrideBindingClick, mouseBindOwner, true, token, target)
+  end
+  if not ok then mouseClear(); return end
+  mouseArmedToken = token
+  mouseArmedIsGame = isGameBinding and true or false   -- the game-binding (loot) path has no PostClick
+  mouseClearSeq = mouseClearSeq + 1
+  local mySeq = mouseClearSeq
+  C_Timer.After(MOUSE_FALLBACK, function()
+    if mouseClearSeq == mySeq then
+      -- a game-binding (loot) arm has no secure PostClick, so the click fired via this fallback window:
+      -- print "fired (loot)" here so debug isn't silent for that path. Secure-button arms print in PostClick.
+      if mouseArmedToken and mouseArmedIsGame then mdbg("fired (loot)") end
+      mouseClear()
+    end
+  end)
+end
+
+-- Resolve what the loot/interact double-click should fire. Mirrors how the interact slot is wired in
+-- SBF.Apply: an interact slot with an actual item/macro is a SECURE CLICK button; otherwise it falls back
+-- to the game binding (INTERACTTARGET). Returns (target, isGameBinding) or nil if interact isn't usable.
+local function interactTarget()
+  local s = SBF.ActiveSlots()
+  local def = s.interact
+  local actionable = def and ((def.macro and def.macro ~= "") or (def.item and def.item ~= "")
+    or def.spell or def.toy)
+  if actionable and buttons.interact then
+    return buttons.interact:GetName(), false
+  end
+  -- no secure action loaded: use the game binding (the same INTERACTTARGET the key path uses)
+  local gb = (def and def.gameBinding) or "INTERACTTARGET"
+  return gb, true
+end
+
+-- Clear the mouse override binding once the secure action has FIRED — the real GoFish/ZenFishing teardown.
+-- Hooked (once) onto a secure button's PostClick. No-op unless a mouse arm is actually active, so a normal
+-- KEY press of the same button doesn't print/clear spuriously.
+local mousePostHooked = {}
+local function mouseHookPostClick(btn)
+  if not btn or mousePostHooked[btn] then return end
+  mousePostHooked[btn] = true
+  btn:HookScript("PostClick", function()
+    if mouseArmedToken then
+      mdbg("fired")
+      mouseClear()
+    end
+  end)
+end
+SBF.MouseHookPostClick = mouseHookPostClick
+
+local mouseLastDown = {}         -- token -> GetTime() of its last press (for double-click timing)
+local function mouseEnabled() return SBFDB and SBFDB.mouse and SBFDB.mouse.enabled end
+
+-- The detection handler. Wired to WorldFrame:OnMouseDown (see below) — GoFish's exact approach. WorldFrame's
+-- OnMouseDown fires EARLIER in the input pass than GLOBAL_MOUSE_DOWN (which fires after the click is already
+-- resolved against the binding table — the residual race that made arm-on-2nd land only ~50%), so arming
+-- here reliably affects THIS click. (It also only fires for clicks on the 3D world, exactly where fishing
+-- happens; UI clicks don't trigger it, which is desirable.)
+local function mouseOnDown(button)
+  if not mouseEnabled() then return end          -- disabled: do nothing, single clicks fully untouched
+  if InCombatLockdown() then return end          -- never touch override bindings in combat (can't arm bindings)
+  local token = mouseToken(button)
+  if not token then return end
+  local m = SBFDB.mouse
+  local twoBtn = SBFDB.requireTwoButtons and true or false
+  -- SINGLE-BUTTON mode: only the Action button is live (it casts AND loots via the fishing button's dynamic
+  -- INTERACTTARGET override). Ignore the loot token entirely — no separate loot button exists in this mode.
+  if token == m.fishButton then
+    -- ok, the Action button
+  elseif twoBtn and m.lootButton and token == m.lootButton then
+    -- ok, the Loot button (two-button mode only)
+  else
+    return                                       -- not a live configured button for the current mode
+  end
+  local now = GetTime()
+  local prev = mouseLastDown[token]
+  local gap = prev and (now - prev) or nil
+  local maxWin = m.doubleSec or 0.4
+  if gap and gap > MOUSE_MIN and gap < maxWin then
+    -- CONFIRMED 2nd click of a double: arm NOW (after MouselookStop) so THIS click fires the secure button;
+    -- the binding clears in the button's PostClick. Record the REAL gap, reset so the 3rd click starts fresh.
+    local g = SBF._mouseGaps; g[#g + 1] = gap; while #g > 8 do table.remove(g, 1) end
+    mdbg(string.format("double-click %dms on %s -> arm", math.floor(gap * 1000 + 0.5), token))
+    if token == m.fishButton then
+      -- the Action button. CRUCIAL: keyboard single-button LOOTING works via the dynamic override that
+      -- rebinds the fishing KEY to INTERACTTARGET while the line is out (DesiredOverride) — it does NOT run
+      -- through the fishing button's click. A mouse click of buttons.fishing would therefore only cast, never
+      -- loot. So we mirror the key: ask DesiredOverride() what the key would become right now — if it's a game
+      -- action (INTERACTTARGET while looting, JUMP while surfacing), arm the mouse button to THAT; otherwise
+      -- arm it to click the fishing button (cast). This makes the mouse Action button cast AND loot, exactly
+      -- like the keyboard single button.
+      local dyn = DesiredOverride()
+      if dyn then
+        -- reel gate: this click IS the reel (the dynamic override is the interact binding while the line is
+        -- out), and the keyboard watcher can't see a mouse button — so record it here. JUMP isn't a reel.
+        if SBF._logCast and dyn ~= "JUMP" then SBF._chanReeled = true end
+        mouseArm(token, dyn, true)        -- game binding (loot/jump) — same as the key's dynamic override
+      else
+        local fb = buttons.fishing
+        if fb then mouseHookPostClick(fb); mouseArm(token, fb:GetName(), false) end
+      end
+    else   -- the loot button (two-button mode)
+      local target, isGame = interactTarget()
+      if target then
+        if SBF._logCast then SBF._chanReeled = true end   -- reel gate: the loot button IS the reel
+        if not isGame and buttons.interact then mouseHookPostClick(buttons.interact) end
+        mouseArm(token, target, isGame)
+      end
+    end
+    mouseLastDown[token] = nil   -- consume: the 3rd click is a fresh sequence, not a new "double" off this one
+  else
+    -- 1st click (or too-slow gap): just record the time. Do NOT arm — the click passes through normally.
+    mouseLastDown[token] = now
+  end
+end
+
+-- DETECTION SOURCE: WorldFrame:OnMouseDown (GoFish's approach), hooked ONCE. Falls back to GLOBAL_MOUSE_DOWN
+-- on the (unlikely) chance WorldFrame is unavailable. The handler self-gates on mouseEnabled(), so the hook
+-- can stay installed; MouseApply just flips the enabled flag + clears state.
+local mouseFrame = CreateFrame("Frame")          -- only used for the GLOBAL_MOUSE_DOWN fallback path
+local mouseHookInstalled, mouseUsingFallback = false, false
+local function mouseInstallDetection()
+  if mouseHookInstalled then return end
+  if WorldFrame and WorldFrame.HookScript then
+    WorldFrame:HookScript("OnMouseDown", function(_, button) mouseOnDown(button) end)
+    mouseHookInstalled = true
+  else
+    mouseUsingFallback = true
+    mouseFrame:SetScript("OnEvent", function(_, _, button) mouseOnDown(button) end)
+    mouseHookInstalled = true
+  end
+end
+
+-- (Re)apply mouse double-click state: install the WorldFrame detection hook once, and ALWAYS clear any armed
+-- binding. Called from SBF.Apply and the enable toggle. The hook self-gates on mouseEnabled(); the fallback
+-- event is registered/unregistered to match. The clear is a no-op when nothing is armed.
+function SBF.MouseApply()
+  mouseClear()
+  mouseLastDown = {}
+  mouseInstallDetection()
+  if mouseUsingFallback then
+    if mouseEnabled() then mouseFrame:RegisterEvent("GLOBAL_MOUSE_DOWN")
+    else mouseFrame:UnregisterEvent("GLOBAL_MOUSE_DOWN") end
+  end
+end
+
+
+
+
+-- Play the configured cast sound — a built-in SoundKit id ("kit") or a file bundled
+-- in the addon's sounds/ folder ("file"). Always on the Master channel so it's heard
+-- even with game SFX muted. Returns whether it actually played (for /sbf testsound).
+function SBF.PlayCastSound()
+  if SBFDB.castSoundMode == "file" and SBFDB.castSoundFile and SBFDB.castSoundFile ~= "" then
+    local ok = PlaySoundFile(SBFDB.castSoundFile, "Master")
+    if ok == false then
+      print("|cff45c4a0SBF|r couldn't play sound file: |cffff5555" .. SBFDB.castSoundFile
+        .. "|r (must be .ogg/.mp3 in the addon, needs a full restart after adding)")
+    end
+    return ok
+  end
+  return PlaySound(SBFDB.castSoundId or 8960, "Master")
+end
+
+-- the cast-fail alert sound (its own picker in Settings). Mirrors PlayCastSound.
+function SBF.PlayCastFailSound()
+  if SBFDB.castFailSoundMode == "file" and SBFDB.castFailSoundFile and SBFDB.castFailSoundFile ~= "" then
+    return PlaySoundFile(SBFDB.castFailSoundFile, "Master")
+  end
+  return PlaySound(SBFDB.castFailSoundId or (SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED) or 847, "Master")
+end
+
+-- the no-fish-hooked warning sound (its own picker in Settings). Mirrors PlayCastSound.
+function SBF.PlayNoFishSound()
+  if SBFDB.noFishSoundMode == "file" and SBFDB.noFishSoundFile and SBFDB.noFishSoundFile ~= "" then
+    return PlaySoundFile(SBFDB.noFishSoundFile, "Master")
+  end
+  return PlaySound(SBFDB.noFishSoundId or 8959, "Master")
+end
+
+-- the cast-expired warning sound (channel ran its full length with no bite). Mirrors PlayCastSound.
+function SBF.PlayExpiredSound()
+  if SBFDB.expiredSoundMode == "file" and SBFDB.expiredSoundFile and SBFDB.expiredSoundFile ~= "" then
+    return PlaySoundFile(SBFDB.expiredSoundFile, "Master")
+  end
+  return PlaySound(SBFDB.expiredSoundId or 8959, "Master")
+end
+
+-- the caught-nothing warning sound (reeled on time but the line delivered no loot). Mirrors PlayCastSound.
+function SBF.PlayNothingSound()
+  if SBFDB.nothingSoundMode == "file" and SBFDB.nothingSoundFile and SBFDB.nothingSoundFile ~= "" then
+    return PlaySoundFile(SBFDB.nothingSoundFile, "Master")
+  end
+  return PlaySound(SBFDB.nothingSoundId or 8959, "Master")
+end
+
+-- the "Patiently Rewarded" buff-appear sound (its own picker in Settings). Mirrors PlayCastSound.
+function SBF.PlayPRSound()
+  if SBFDB.prSoundMode == "file" and SBFDB.prSoundFile and SBFDB.prSoundFile ~= "" then
+    return PlaySoundFile(SBFDB.prSoundFile, "Master")
+  end
+  return PlaySound(SBFDB.prSoundId or 888, "Master")
+end
+
+-- Register (or retune) the "Patiently Rewarded" watcher: it fires PlayPRSound once on the rising
+-- edge of the configured buff (only when the toggle is on). The handle is kept so the options
+-- name field can retune it live. Pure consumer of the Buffs.lua WatchBuff API — no special-casing.
+function SBF.SetupPRWatch()
+  local name = (SBFDB.prBuffName and SBFDB.prBuffName ~= "" and SBFDB.prBuffName) or "Patiently Rewarded"
+  if SBF._prWatch then
+    SBF.SetWatchName(SBF._prWatch, name)
+  else
+    SBF._prWatch = SBF.WatchBuff({
+      name = name,
+      onAppear = function()
+        -- the alert itself (and its log line) is the World tab's Patiently Rewarded row (Indicator.lua, below); this
+        -- old sound only plays for a config that still has it switched on.
+        if SBFDB.prSound then SBF.PlayPRSound() end
+      end,
+    })
+  end
+end
+
+-- The Patiently Rewarded chest drop is logged from the World tab row's rising edge (Indicator.lua announce). That
+-- edge already holds through combat (an aura read in combat can come back empty) and baselines on login / reload,
+-- so a proc is logged once, not again after every fight or /reload (QC 2026-09-30).
+function SBF.OnZoneWatchUp(row)
+  if row and row.id == "pr" then logFishEvent("buff", { name = row.buffName or row.label or "Patiently Rewarded" }) end
+end
+
+-- Feedback when an auto-swap loads a new profile: flash the profile's name as a raid warning
+-- (gated on SBFDB.swapFlash). The on-screen indicator (Buttons page) is refreshed separately by
+-- SBF.RefreshOptions; this is the transient "you swapped" cue. Safe no-op for a missing id.
+function SBF.AnnounceProfile(id)
+  local DB = SBF.Store()
+  local p = id and DB.profiles[id]; if not p then return end
+  if SBFDB.swapFlash and RaidNotice_AddMessage then
+    -- gold (not the default red), and "::" instead of the U+2192 arrow (which renders as a black box)
+    RaidNotice_AddMessage(RaidWarningFrame, "SBF :: " .. (p.name or "?"), { r = 1, g = 0.82, b = 0 })
+  end
+end
+
+----------------------------------------------------------------- minimap button --
+-- Standard LibDBIcon button fed by an LDB launcher, so minimap-button collectors and skins pick it up
+-- with its icon, and broker bars list it too. Angle + hide live in SBFDB.minimap (minimapPos / hide,
+-- the LibDBIcon field names). The launcher is not named "SBF": that LDB name is the Feed data source.
+local LAUNCHER = "SingleButtonFishing"
+
+function SBF.CreateMinimapButton()
+  local DBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
+  local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
+  if not (DBIcon and LDB) or DBIcon:IsRegistered(LAUNCHER) then return end
+  SBFDB.minimap = SBFDB.minimap or {}
+  local db = SBFDB.minimap
+  if db.pos then db.minimapPos = db.pos % 360; db.pos = nil end   -- carry the old hand-built button's angle over
+
+  local obj = LDB:GetDataObjectByName(LAUNCHER) or LDB:NewDataObject(LAUNCHER, {
+    type = "launcher",
+    label = "Single-Button Fishing",
+    icon = "Interface\\AddOns\\SBF\\art\\icon",   -- the SBF badge
+    OnClick = function() if SBF.ToggleOptions then SBF.ToggleOptions() end end,
+    OnTooltipShow = function(tt)
+      tt:AddLine("Single-Button Fishing")
+      tt:AddLine("Click to open · drag to move", 0.9, 0.9, 0.9)
+    end,
+  })
+  DBIcon:Register(LAUNCHER, obj, db)
+  SBF.ApplyMinimapVisibility()
+end
+
+-- Show/hide the minimap button to match the setting. Safe to call before the button exists (it is created
+-- once at login) and safe to call repeatedly, so the options checkbox can just call it on every change.
+-- Hiding is only ever a display choice: `/sbf` opens the window and the AddOns compartment entry below is
+-- always present, so there is no way to strand yourself with no route back into the addon.
+function SBF.ApplyMinimapVisibility()
+  local DBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
+  if not (DBIcon and DBIcon:IsRegistered(LAUNCHER)) then return end
+  if SBFDB.minimap and SBFDB.minimap.hide then DBIcon:Hide(LAUNCHER) else DBIcon:Show(LAUNCHER) end
+end
+
+-- ============================ AddOns compartment (the minimap's addon list) ============================
+-- Blizzard's built-in addon menu on the minimap. An addon only appears there if its .toc names a global
+-- handler in AddonCompartmentFunc, which is why SBF was missing from it entirely. These MUST be real
+-- globals — the compartment calls them by name from Blizzard's own code, so a file-local will not resolve.
+-- This is also what makes hiding the minimap button safe: there is always another way in.
+function SBF_OnAddonCompartmentClick(_, button)
+  if button == "RightButton" and SBF.ToggleMinimapButton then SBF.ToggleMinimapButton(); return end
+  if SBF.ToggleOptions then SBF.ToggleOptions() end
+end
+function SBF_OnAddonCompartmentEnter(_, menuButton)
+  GameTooltip:SetOwner(menuButton or UIParent, "ANCHOR_LEFT")
+  GameTooltip:SetText("Single-Button Fishing")
+  GameTooltip:AddLine("点击打开设置窗口。", 0.9, 0.9, 0.9)
+  GameTooltip:AddLine(((SBFDB.minimap and SBFDB.minimap.hide) and "Right-click to SHOW the minimap button."
+    or "Right-click to hide the minimap button."), 0.7, 0.7, 0.7)
+  GameTooltip:Show()
+end
+function SBF_OnAddonCompartmentLeave() GameTooltip:Hide() end
+
+-- one toggle used by both surfaces (the compartment's right-click and the Settings checkbox)
+function SBF.ToggleMinimapButton()
+  SBFDB.minimap = SBFDB.minimap or {}
+  SBFDB.minimap.hide = (not SBFDB.minimap.hide) or nil
+  SBF.ApplyMinimapVisibility()
+  if SBF.RefreshOptions then SBF.RefreshOptions() end
+  return not SBFDB.minimap.hide
+end
+
+---------------------------------------------------------------------- events --
+-- Arm the post-damage heal: the next press heals (until health stops rising, or the
+-- backstop window elapses). Used both after combat AND after out-of-combat damage
+-- (damaging water/fatigue/fall) — the latter never fires PLAYER_REGEN_ENABLED.
+local function armHeal(reason)
+  if not hasAction(SBF.SlotDef("heal")) then return end
+  SBF._healing = true
+  SBF._healUntil = GetTime() + (SBFDB.healSeconds or 12)
+  SBF._lastHealthChange = GetTime()   -- fresh start so it doesn't read "stable" instantly
+  if SBFDB.debug then print("|cff45c4a0SBF|r heal armed (" .. (reason or "?") .. ")") end
+end
+
+local f = CreateFrame("Frame")
+f:RegisterEvent("ADDON_LOADED")
+f:RegisterEvent("PLAYER_LOGIN")
+f:RegisterEvent("PLAYER_ENTERING_WORLD")
+f:RegisterEvent("PLAYER_REGEN_ENABLED")
+f:RegisterEvent("ZONE_CHANGED_NEW_AREA")   -- crossed into a new zone
+f:RegisterEvent("ZONE_CHANGED")            -- crossed a sub-zone boundary
+f:RegisterEvent("ZONE_CHANGED_INDOORS")    -- stepped indoors (sub-zone change)
+f:RegisterEvent("SKILL_LINES_CHANGED")     -- fishing skill data lands a moment after login -> re-read the readout
+f:RegisterEvent("TRADE_SKILL_LIST_UPDATE") -- a fishing line's per-expansion data became available
+f:RegisterEvent("UPDATE_BINDINGS")          -- binding set (re)loaded/changed -> re-install the override-click trigger
+f:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")   -- fishing line goes out
+f:RegisterUnitEvent("UNIT_HEALTH", "player")                    -- health CHANGED (can't read it, but can see it move)
+f:SetScript("OnEvent", function(_, event, arg1, arg2)
+  if event == "UNIT_HEALTH" then
+    SBF._lastHealthChange = GetTime()   -- stamp it so "heal until it stops rising" works
+    -- Arm the heal on an out-of-combat health change ONLY when we can READ that we're actually hurt
+    -- (hp < max). UNIT_HEALTH fires on health going UP too (regen / food buffs), and when the value is
+    -- hidden (a SECRET value in Midnight content) we can't tell a drop from regen — arming there caused
+    -- phantom heals while eating/recovering near full (you'd see it cast Heal uninjured). When the value
+    -- is hidden we simply don't arm from a health change; post-combat healing still arms via REGEN_ENABLED.
+    if not SBF._healing and not InCombatLockdown() and hasAction(SBF.SlotDef("heal")) then
+      local hp, mx = UnitHealth("player"), UnitHealthMax("player")
+      local readable = hp and mx and mx > 0 and not (issecretvalue and (issecretvalue(hp) or issecretvalue(mx)))
+      if readable and hp < mx then armHeal("damage") end
+    end
+    return
+  end
+  if event == "UNIT_SPELLCAST_CHANNEL_START" then
+    if SBFDB and SBFDB.castSound then SBF.PlayCastSound() end
+    return
+  end
+  if event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" then
+    if SBF.OnZoneMaybeChanged then SBF.OnZoneMaybeChanged() end
+    return
+  end
+  if event == "UPDATE_BINDINGS" then
+    -- The fishing cast fires via an OVERRIDE-click that SBF.Apply installs over the fishing key (the bare
+    -- native "CLICK SBFBtn_fishing" binding silently DROPS the protected cast). That override is keyed off
+    -- GetBindingKey(...), so if the binding set wasn't readable when Apply last ran (e.g. a freshly-built
+    -- install at login), the override never got installed and the press fell through to the bare native
+    -- binding = no cast. Re-applying whenever the binding set (re)loads or changes self-heals that gap.
+    if SBF.Apply then SBF.Apply() end
+    return
+  end
+  if event == "SKILL_LINES_CHANGED" or event == "TRADE_SKILL_LIST_UPDATE" then
+    -- the zone's fishing-line data just became readable (or changed) — re-render the skill readout. The SBF
+    -- window header re-reads via RefreshOptions; Haul's {sbf.fishing} bar re-reads on its own update tick.
+    -- Call FishingSkill() directly too: it caches the live value whenever data is available, so the moment
+    -- you fish (gain a point) or open the journal, the per-character cache seeds even with the window closed —
+    -- and the NEXT fresh login shows it immediately instead of blank.
+    if SBF.FishingSkill then SBF.FishingSkill() end
+    if SBF.RefreshOptions then SBF.RefreshOptions() end
+    return
+  end
+  if event == "ADDON_LOADED" and arg1 == ADDON then
+    SBFDB = SBFDB or {}
+    -- GECStore adoption (clean start): the old loose fishlog is abandoned; its data moves to the
+    -- GECStore stream (SBFData.streams.fishlog). Drop the dead key once.
+    SBFDB.fishlog = nil
+    -- increment 2: wipe the old streams.fishlog (+ increment-1 session scaffolding) so schema 2 starts clean.
+    -- MUST run before the first fishStore()/session init below (RegisterStore overwrites SBFData.version to 2).
+    migrateFishlogWipe()
+    -- increment 3: seq-identity rebaseline (coordinated rollout) — streams restart born-with-seq.
+    migrateSeqRebaseline()
+    ApplyDefaults(SBFDB, DB_DEFAULTS)
+    -- one-time: 2026.09.30.1 turned the pole auto-fill off for everyone; it is back ON for retail (Forever never
+    -- fills, by rule in AutoPopulatePole), so undo that once. There is no UI for it, so nobody chose "off".
+    if not SBFDB._poleFillRetail then SBFDB.autoAddPole = true; SBFDB._poleFillRetail = true end
+    SBFDB.themePreset = SBFDB.themePreset or "everforest"  -- GECTheme per-addon palette (default = everforest)
+    -- Un-strand the options window if we reloaded / disconnected DURING combat while the watcher had auto-hidden
+    -- or auto-collapsed it: the auto-collapse persists SBFDB.collapsed through the window lib, but the transient
+    -- restore flag doesn't survive the reload — without this the window comes back permanently collapsed/hidden.
+    -- The snapshot (taken at combat entry) holds the true pre-combat state; restore it and drop the marker. Runs
+    -- BEFORE the panel is ever built, so it reads the corrected values. (QC: combat auto-hide persistence.)
+    if type(SBFDB._combatSnap) == "table" then
+      SBFDB.shown, SBFDB.collapsed = SBFDB._combatSnap.shown, SBFDB._combatSnap.collapsed
+      SBFDB._combatSnap = nil
+    end
+    -- one-time profile migration: fold the existing SBFDB.slots tree into a single "Default" profile
+    -- and lift per-slot keybinds into SBFDB.binds. Runs BEFORE the seeding loop so the seeding writes
+    -- into the active profile's slots (via SBF.ActiveSlots()), not a phantom SBFDB.slots the engine
+    -- never reads. On later logins this no-ops (profiles already exist) and the seeding still targets
+    -- the live profile, so new descriptor slots get seeded there.
+    if SBF.MigrateProfiles then SBF.MigrateProfiles() end
+    -- one-time per character: adopt the active profile's combat/heal into this char's charSlots so users
+    -- who configured them before the per-character move don't lose their setup (no-op once _migrated).
+    if SBF.MigrateCharSlots then SBF.MigrateCharSlots() end
+    -- normalize legacy { tier, value } location bindings to the variable-depth { value, kind } shape
+    -- (idempotent; runs every load since MigrateProfiles no-ops once profiles exist).
+    if SBF.NormalizeBindings then SBF.NormalizeBindings() end
+    -- one-time slot migration to the descriptor model (no back-compat — single dev/user build):
+    --   * the old def.pick (ordered/random) is gone -> def.mode, defaulting to the slot's
+    --     defaultMode (bobbers become cycle, chum deplete) when unset.
+    --   * wipe the stale runtime fields (def.pick, def._lastPick) so nothing references them.
+    -- The per-descriptor seeding now lives in SBF.SeedSlots (Profiles.lua), so the working copy can
+    -- run the SAME seeding when a profile is activated.
+    SBF.SeedSlots(SBF.ActiveSlots())
+    -- load the working copy: edits go here, the engine fishes with it, Save commits it back to the
+    -- stored profile. The working copy PERSISTS at SBF.Store().working (SavedVariable), so unsaved edits + the
+    -- dirty flag survive /reload and logout. Adopt the persisted copy when it's still valid (its profile
+    -- exists); otherwise rebuild fresh. SeedSlots runs either way so a newly-added descriptor slot is
+    -- present in the restored copy too.
+    -- Adopt the persisted working copy from THIS character's active store (SBF.Store(): SBFDB in Warband,
+    -- the per-char store in Individual) so an Individual character restores ITS working copy, not the account's.
+    local pdb = SBF.Store()
+    if pdb.working and pdb.working.id and pdb.profiles[pdb.working.id]
+      and type(pdb.working.slots) == "table" then
+      SBF.working = pdb.working
+      pdb.activeProfile = pdb.working.id
+      if SBF.SeedSlots then SBF.SeedSlots(SBF.working.slots) end
+    elseif SBF.LoadWorking then
+      pdb.working = nil                   -- stale/invalid (deleted profile / corrupt save): drop it, rebuild
+      SBF.LoadWorking()
+    end
+    SBFDB.customs, SBFDB.cseq, SBFDB.announce = nil, nil, nil   -- removed features; drop their stale saved data
+    -- fold the legacy per-item stores (itemBuffs + learned) into the one SBFData.db.items record. Items.lua
+    -- loads first, so the accessors exist here. Reads the old tables then nils them in one pass (Task 8).
+    if SBF.MigrateItemKnowledge then SBF.MigrateItemKnowledge() end
+    -- recover ORPHANED events (a sid with events but no start marker — lifecycle lost, e.g. a wiped markers
+    -- stream) by encapsulating them at their own timestamps, BEFORE the fresh-login session opens below.
+    do local S = fishSessionCtrl(); if S and S.RepairOrphans then
+      local n = S:RepairOrphans()
+      if n and n > 0 then print("|cff45c4a0SBF|r |cffffaa44recovered " .. n .. " orphaned session(s)|r from the log.") end
+    end end
+  elseif event == "PLAYER_LOGIN" then
+    -- Opt into the GECStore professions field (it's tier="optional" / opt-in) so the per-character cache
+    -- actually COLLECTS fishing skill — SBF.FishingSkill reads .lines[lineID] from it. Without this the field
+    -- is never snapshotted (empty .lines) while ProfessionsWarmed() can still be true, so the header wrongly
+    -- shows "No fishing skill here". Persists once set + snapshots immediately; safe to call every login.
+    do
+      local S = gecStore()
+      if S and S.SetFieldEnabled then S.SetFieldEnabled("professions", true) end
+    end
+    -- Re-resolve the working copy now that the char key is reliable. UnitName("player") is nil at
+    -- ADDON_LOADED, so SBF.Store() there resolves to Warband even for an Individual character — re-adopt
+    -- from the CORRECT store here (idempotent for Warband: same store, same copy).
+    do
+      local pdb = SBF.Store()
+      if pdb.working and pdb.working.id and pdb.profiles[pdb.working.id] and type(pdb.working.slots) == "table" then
+        SBF.working = pdb.working
+        pdb.activeProfile = pdb.working.id
+        -- Gear is PER-CHARACTER, but the persisted working copy is account-wide (SBFDB.working), so it carries
+        -- the equipSet/pole of whichever character last edited it. Re-seed gear from THIS character's ProfileGear
+        -- so an alt never SHOWS or SAVES another character's pole/set. (Char key is reliable here at PLAYER_LOGIN;
+        -- the LoadWorking branch below already routes gear through ProfileGear, so only the adopt path needs this.)
+        -- EXCEPT this character's own unsaved edit: re-seeding that threw away a pole or set you'd picked but not
+        -- saved yet, on every /reload, with nothing to say so (2026-10-07). gearChar is stamped by SBF.MarkDirty.
+        local mine = SBF.working.dirty and SBF.working.gearChar and SBF.CharKey and SBF.working.gearChar == SBF.CharKey()
+        if SBF.ProfileGear and not mine then
+          local pg = SBF.ProfileGear(pdb.working.id)
+          SBF.working.equipSet, SBF.working.pole, SBF.working.poleCleared = pg.equipSet, pg.pole, pg.poleCleared
+          -- the gear now shown is THIS character's saved gear, so the unsaved-gear owner stamp no longer applies.
+          -- Left in place, the editing character's next login took this one's pole and set as its own unsaved
+          -- edit, and Save wrote them into its gear (QC 9 B2).
+          SBF.working.gearChar = nil
+        end
+      elseif SBF.LoadWorking then
+        SBF.working = nil
+        SBF.LoadWorking(pdb.activeProfile or pdb.defaultProfile)
+      end
+      if SBF.SeedSlots then SBF.SeedSlots(SBF.ActiveSlots()) end
+    end
+    SBF.ResetJumpSwitches()      -- public: clear any jump switch a user set before the command was removed
+    SBF.MigrateBindsToNative()   -- lift old internal fishing/interact-controller binds into the native bindings
+    SBF.EnsureInteractKeyCVar()  -- two-button: the game's "Enable interact key" option must be on to loot
+    -- ...then verify the loot key survived it. Runs after the migration on purpose: the migration is the most
+    -- likely thing to have taken the key away.
+    if C_Timer and C_Timer.After then
+      C_Timer.After(2, function() if SBF.CheckLootKeyReachable then SBF.CheckLootKeyReachable() end end)
+    end
+    SBF.Apply()
+    if SBF.InitOptions then SBF.InitOptions() end
+    if SBF.CreateMinimapButton then SBF.CreateMinimapButton() end
+    if SBF.SetupPRWatch then SBF.SetupPRWatch() end     -- arm the Patiently-Rewarded buff alert
+    SBF.ApplyFastLoot()                                 -- register/unregister SBF with the shared fast-loot lib + mirror debug
+    if SBF.Stats then SBF.Stats.EnsureBackfill(); SBF.Stats.EnsureCharBackfill(); SBF.Stats.EnsureInterruptBackfill(); SBF.Stats.EnsureZoneTimeBackfill() end    -- one-time seed of the all-time + per-character rollups (+ interrupt-cause breakdown + per-zone lastT) from the log buffer
+    if SBFDB and SBFDB.showFooting and SBF.SetFooting then SBF.SetFooting(true) end  -- restore debug panel
+    -- one-time gear migration (done HERE, not ADDON_LOADED, so UnitName/realm are reliable for the char key):
+    -- fold the OLD account-wide gear snapshot/flag into THIS character's per-char store, then drop the old
+    -- keys. Only the current char inherits them (they were that char's gear anyway).
+    if (SBFDB.gearSnapshot or SBFDB.profileGearOn) and SBF.CharGear then
+      local cg = SBF.CharGear()
+      if cg.snapshot == nil and SBFDB.gearSnapshot then cg.snapshot = SBFDB.gearSnapshot end
+      if cg.on == nil and SBFDB.profileGearOn ~= nil then cg.on = SBFDB.profileGearOn end
+      SBFDB.gearSnapshot, SBFDB.profileGearOn = nil, nil
+    end
+    -- (Fishing-state handling on load moved to PLAYER_ENTERING_WORLD, which gets isInitialLogin / isReloadingUi
+    -- args: a /reload must CARRY OVER the fishing state, a fresh login must REVERT it. PLAYER_LOGIN can't tell
+    -- the two apart, so it no longer touches gear/audio here.)
+    print("|cff45c4a0SBF|r loaded |cff808080(build " .. tostring(SBF.BUILD) .. ")|r - /sbf to configure.")
+  elseif event == "PLAYER_ENTERING_WORLD" then
+    -- Mark the "This session" boundary for the Stats tab. arg1 = isInitialLogin: stamp a FRESH start ONLY
+    -- on a true login, and PERSIST it (SBFDB) so a /reload — which fires PEW with arg2 = isReloadingUi and
+    -- wipes Lua state — KEEPS the same session boundary instead of resetting it. A later zone-load PEW (neither
+    -- flag) just re-reads the stored value. So "this session" = since you actually logged in, surviving reloads.
+    if SBF.Stats then
+      if arg1 then SBFDB.sessionStartT = time() end      -- real login -> new session
+      SBFDB.sessionStartT = SBFDB.sessionStartT or time()  -- first-ever run / no initial-login flag: seed once
+      SBF.Stats.sessionStartT = SBFDB.sessionStartT
+    end
+    -- CANONICAL GECStore session (the one that syncs to the server): a fresh login (arg1) closes the prior
+    -- open run at its LAST ACTIVITY (reason "logout" — not "now", so an overnight logout doesn't inflate the
+    -- duration) then begins a new one; a /reload (arg2, not arg1) RESUMES — the controller's _open persists
+    -- on SBFData so the run continues under the same sid with no new start. Sids are STRINGS (never coerced).
+    do
+      local S = fishSessionCtrl()
+      if S then
+        if arg1 then
+          S:RepairIfDangling({}, "logout")   -- fresh login: close the prior run at last activity (no-op if...
+          S:Begin("user")                    -- ...already stopped), then begin a new one
+        elseif not S:IsOpen() then
+          S:Begin("user")                    -- reload/zone-in with NO open run (first-ever or post-wipe): open one
+        end
+        -- else (a /reload with an open run already persisted on SBFData._open): RESUME — do nothing, same sid
+      end
+    end
+    -- Auto-populate the active profile's pole from the equipped one on a real login or a /reload (not on
+    -- later zone-load PEWs). Delayed so inventory and item-info data are readable — both are unreliable for
+    -- the first moment after login/reload.
+    if (arg1 or arg2) and C_Timer and C_Timer.After then
+      C_Timer.After(2, function() if SBF.AutoPopulatePole then SBF.AutoPopulatePole() end end)
+    end
+    -- arg1 = isInitialLogin, arg2 = isReloadingUi. Reopen across a /reload if the
+    -- window was up; a fresh login leaves it closed (until /sbf).
+    if arg2 and SBFDB and SBFDB.shown then
+      if SBF.ShowOptions then SBF.ShowOptions() end
+    elseif arg1 and SBFDB then
+      SBFDB.shown = false
+    end
+    -- Load-time fishing-state handling (ONLY on the initial entering — arg1/arg2 — not later zone changes).
+    -- The fishing state (CharGear().on / .audioOn) is SavedVariable-backed and the gear/audio actually persist
+    -- across a /reload on their own; the addon is the only thing that would undo them. So:
+    --   * /reload (isReloadingUi): DO NOT re-equip gear. Your worn gear (and the audio CVars) already survive a
+    --     reload, so re-asserting them is unnecessary — and re-equipping would swap you back INTO fishing gear
+    --     even after you'd manually changed to your normal gear before reloading (the "a bare /reload changes
+    --     my gear" bug: SBF doesn't watch for manual gear changes, so CharGear().on can be stale-true). Only
+    --     re-apply focus audio (a no-op if it's already applied) and baseline the idle clock (else
+    --     max(lastActionAt, lastFishingAt)==0 and the idle observer's `lastActive == 0` guard would never
+    --     auto-revert if you then walked away without casting). If .on is stale, the idle observer clears it.
+    --   * fresh login (isInitialLogin): REVERT — don't come back (hours later) stuck in fishing gear with no
+    --     weapon / music muted. (RevertToNormal self-guards + defers gear for combat.)
+    if (arg1 or arg2) and SBF.CharGear and (SBF.CharGear().on or SBF.CharGear().audioOn) then
+      if arg2 then
+        if SBF.ApplyFocusAudio then SBF.ApplyFocusAudio() end   -- audio persists across reload; no-op if already applied
+        SBF.lastFishingAt = GetTime()   -- start the idle clock so genuine inactivity still reverts later
+      elseif arg1 then
+        if SBF.RevertToNormal then SBF.RevertToNormal() end
+      end
+    end
+    -- The raised interact range (client-wide, account-scoped flag) is handled on its own, NOT through
+    -- RevertToNormal, so a login never replays an old gear snapshot just because the range was left raised.
+    -- Login: put the player's value back. Reload: keep fishing, but start the idle clock so it still goes back.
+    -- The camera zoom snapshot survives a /reload (the camera keeps its distance) but not a fresh login.
+    if arg2 and SBFDB._zoomSnap and SBF._zoomSnap == nil then
+      SBF._zoomSnap = SBFDB._zoomSnap
+      SBF.lastFishingAt = SBF.lastFishingAt or GetTime()   -- so the idle window still puts the camera back
+    end
+    if arg1 or arg2 then SBFDB._zoomSnap = nil end
+    if (arg1 or arg2) and SBF.ReachState and SBF.ReachState().on then
+      if arg1 then SBF.RestoreBobberReach()
+      elseif arg2 then SBF.lastFishingAt = SBF.lastFishingAt or GetTime() end
+    end
+    -- re-link an in-flight fishing cast across a /reload (SBF._logCast was wiped, but the channel keeps
+    -- running and GetTime() is continuous across /reload). If we're STILL channeling Fishing, restore the
+    -- tracking so the stop classifies correctly instead of being dropped/mislabeled; otherwise drop it
+    -- (the outcome is unknowable — we missed the stop/loot during the reload gap).
+    if SBFDB and SBFDB._inflight then
+      local inf = SBFDB._inflight
+      local cname, _, _, _, _, _, _, cid = UnitChannelInfo("player")
+      if SBF.IsFishingCast(cname, cid) and inf.t and (time() - inf.t) < 60 then
+        SBF._logCast, SBF._logCastExp = inf.start, inf.exp
+        -- THE FOURTH BLINDING PATH. resetReelWatch() only runs from UNIT_SPELLCAST_CHANNEL_START, which for
+        -- this cast happened BEFORE the reload — so on the fresh session _chanReeled and _reelBlindWhy are
+        -- both untouched nil, and the 0.8s verdict reported a blind gate with no reason at all. `nil` is the
+        -- CORRECT verdict here (we genuinely were not watching this channel), so the bug was only ever the
+        -- missing explanation. Name it, so a reload mid-cast reads as a reload mid-cast and not as a defect.
+        SBF._chanReeled = nil
+        SBF._reelBlindWhy = "cast was re-linked after a /reload - the watcher never saw this channel"
+      else
+        SBFDB._inflight = nil
+      end
+    end
+    -- entering the world (login / loading screen / zone-in) is also a location change point
+    if SBF.OnZoneMaybeChanged then SBF.OnZoneMaybeChanged() end
+    -- deferred login re-resolve: the very first resolution can run before the map is ready (cascade empty),
+    -- so the indicator/profile stick on Default. On initial login OR a /reload, retry once after the map
+    -- settles. OnZoneMaybeChanged debounces on the cascade key, so it's a cheap no-op if already correct.
+    if (arg1 or arg2) and SBF.OnZoneMaybeChanged then
+      C_Timer.After(1.5, function() if SBF.OnZoneMaybeChanged then SBF.OnZoneMaybeChanged() end end)
+    end
+  elseif event == "PLAYER_REGEN_ENABLED" then
+    if SBF._pending then SBF.Apply() end
+    if SBF.EnsureInteractKeyCVar then SBF.EnsureInteractKeyCVar() end   -- skipped in combat; put it right now
+    if SBF.MouseClear then SBF.MouseClear() end   -- never carry a stale mouse override binding out of combat
+    armHeal("combat")   -- left combat: heal to full
+  end
+end)
+
+-- Catalog (ns.Catalog, set by Data.lua): curated item IDs per slot, from the bundled
+-- sbfcatalog data. Returns a slot's candidates annotated with whether YOU own each —
+-- toys via the toy box, items via bag count. This is what the config pickers will read.
+local CAT_SLOTS = { "food", "drink", "bobber", "lure", "poleenchant",
+                    "chum_skill", "chum_perception", "ward", "boat" }
+
+-- C_ToyBox.PlayerHasToy lies (returns false) until the Collections module is loaded
+-- into memory — which doesn't happen on a fresh /reload until you open Collections.
+-- Force-load it once so toy ownership reads correctly without opening anything.
+local _collectionsReady = false
+local function ensureCollections()
+  if _collectionsReady then return end
+  _collectionsReady = true
+  -- Load the Collections module so PlayerHasToy / C_ToyBox queries read correctly. DO NOT touch the
+  -- toy-box FILTERS (ForceToyRefilter / SetFilters / etc.) from here — those TAINT the Toy Box, which
+  -- then blocks the protected "use/learn toy" action when you click a toy item in your bags.
+  local load = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
+  if load then pcall(load, "Blizzard_Collections") end
+end
+
+local function itemOwned(id)
+  -- a "spell:N" entry (boat/buffs) isn't an item — "owned" means the spell is KNOWN, not a toy/bag count.
+  local sid = ns.spellEntry and ns.spellEntry(id)
+  if sid then
+    return (IsPlayerSpell and IsPlayerSpell(sid)) or (IsSpellKnown and IsSpellKnown(sid)) or false
+  end
+  id = tonumber(id) or id
+  if type(id) ~= "number" then return false end   -- never hand a non-numeric to the item/toy APIs
+  return (GetItemCount(id) or 0) > 0 or (type(PlayerHasToy) == "function" and PlayerHasToy(id)) or false
+end
+
+-- "_all" is the fireAll Buffs slot's catalog key: it has no shipped category, so its flyout shows
+-- ALL learned items (every item you've ever dropped into ANY slot), not a per-slot subset.
+local ALL_LEARNED = "_all"
+
+-- ---- HIDDEN items: one suppression mechanism for BOTH sources ----------------------------------------
+-- A shipped catalog entry used to be un-removable: right-click only drops it from the run-it-out list, and
+-- the flyout rebuilds it from Data.lua every time. That's wrong — when Blizzard guts an item (the Midnight
+-- chums) or you simply never want it offered, you must be able to make it go away. Hiding is recorded
+-- PER SLOT in the account-wide item DB, so it's the same store the learned-item tags live in, and it's
+-- reversible: "Show hidden items" in Settings → Item pickers brings them all back, greyed, ready to restore.
+-- Catalog and learned items go through this one function, so there is a single mechanism, not two.
+function ns.HideItem(id, catSlot, on)
+  id = tonumber(id) or id
+  if not (id and catSlot) or catSlot == ALL_LEARNED then return end
+  SBF.ObserveItem(id, {})                                  -- ensure a record exists to hang the flag on
+  local items = (SBF.OutputDB and SBF.OutputDB("items")) or {}
+  local rec = items[id]; if not rec then return end
+  rec.hidden = rec.hidden or {}
+  rec.hidden[catSlot] = on and true or nil
+  if not next(rec.hidden) then rec.hidden = nil end
+end
+function ns.ItemHidden(id, catSlot)
+  id = tonumber(id) or id
+  if not (id and catSlot) then return false end
+  local items = (SBF.OutputDB and SBF.OutputDB("items")) or {}
+  local rec = items[id]
+  return (rec and rec.hidden and rec.hidden[catSlot]) and true or false
+end
+-- everything hidden for a slot, so "Show hidden items" can surface them for restoring
+function ns.UnhideAll(catSlot)
+  local items = (SBF.OutputDB and SBF.OutputDB("items")) or {}
+  local n = 0
+  for _, rec in pairs(items) do
+    if rec.hidden and rec.hidden[catSlot] then rec.hidden[catSlot] = nil; n = n + 1
+      if not next(rec.hidden) then rec.hidden = nil end end
+  end
+  return n
+end
+SBF.UnhideAll = ns.UnhideAll
+
+function ns.OwnedCatalog(catSlot)
+  ensureCollections()
+  local cat = ns.Catalog
+  local allLearned = (catSlot == ALL_LEARNED)
+  local showHidden = (SBFDB and SBFDB.showHiddenItems) and true or false
+  local out, seen = {}, {}
+  if (not allLearned) and cat and cat.slots and cat.slots[catSlot] then
+    for _, id in ipairs(cat.slots[catSlot]) do
+      local hidden = ns.ItemHidden(id, catSlot)
+      if showHidden or not hidden then
+        local m = (cat.meta and cat.meta[id]) or {}
+        out[#out + 1] = { id = id, name = m.name or tostring(id), source = m.source,
+                          expansion = m.expansion, owned = itemOwned(id), hidden = hidden }
+      end
+      seen[id] = true          -- seen either way: a hidden catalog item must not reappear via the learned merge
+    end
+  end
+  -- the map ancestry you're in NOW (every mapID best->root), to flag whether a learned item is confirmed
+  -- for this zone. Sourced from the getter layer, same set LearnItem records into an item's `maps`.
+  local curZones = {}
+  local R = reader()
+  local chain = (R and R.Current and R.Current.mapChain and R.Current.mapChain()) or {}
+  for _, lv in ipairs(chain) do if lv.mapID then curZones[lv.mapID] = true end end
+  -- merge items LEARNED in-game (dropped into this slot) that aren't in the shipped catalog. For the
+  -- "_all" key (the Buffs slot) EVERY learned item qualifies, ignoring which slot it was dropped into.
+  local items = (SBF.OutputDB and SBF.OutputDB("items")) or {}
+  for id, e in pairs(items) do
+    if (allLearned or (e.slots and e.slots[catSlot])) and not seen[id] then
+      local hidden = ns.ItemHidden(id, catSlot)
+      if showHidden or not hidden then
+        local zoneOk = e.allZones or false                  -- "works everywhere" flag, OR used here before
+        if not zoneOk then for m in pairs(e.maps or {}) do if curZones[m] then zoneOk = true; break end end end
+        out[#out + 1] = { id = id, name = e.name or tostring(id), source = e.source, owned = itemOwned(id),
+                          learned = true, zoneOk = zoneOk, allZones = e.allZones, maps = e.maps, hidden = hidden }
+      end
+    end
+  end
+  return out
+end
+
+-- learn an item dropped into a slot: record it into the account-wide item-knowledge record (via
+-- ObserveItem) with the current map cascade (the zones where it's usable). Grows the catalog from real use.
+function ns.LearnItem(id, catSlot)
+  id = tonumber(id) or id
+  if not id then return end
+  -- "_all" is the Buffs slot's catalog SENTINEL, not a real slot type — don't record it as one (it would
+  -- pollute the per-slot map). The item + its zone cascade are still recorded so it counts as learned.
+  if catSlot == "_all" then catSlot = nil end
+  local R = reader()
+  local info = R and R.Resolve and R.Resolve.item and R.Resolve.item(id)   -- id -> name via the getter layer
+  local fields = { name = (info and info.name) or nil, slots = catSlot and { [catSlot] = true } or nil, maps = {} }
+  local chain = (R and R.Current and R.Current.mapChain and R.Current.mapChain()) or {}
+  for _, lv in ipairs(chain) do if lv.mapID then fields.maps[lv.mapID] = lv.name end end   -- full zone->root ancestry
+  SBF.ObserveItem(id, fields)
+end
+
+-- ---- footing / posture debug -------------------------------------------------
+-- Read-only diagnostic spike: surfaces the RAW movement signals and the FOOTING we
+-- derive from them, live, so the resolver's footing state can be validated against
+-- reality before anything is built on it. /sbf footing toggles a small live readout.
+-- This fires NOTHING — it only reads and prints.
+-- mirror timers (breath/fatigue) are looked up by NUMERIC INDEX; the name is the first
+-- return. Iterate the few slots and match the name we want. Returns true if active.
+local function mirrorActive(which)
+  if not GetMirrorTimerInfo then return false end
+  for i = 1, 3 do
+    local ok, name = pcall(GetMirrorTimerInfo, i)
+    if ok and name == which then return true end
+  end
+  return false
+end
+
+-- ns.ReadState(): the single read-only source of truth for the resolver. NO side effects (no RNG,
+-- no SetAttribute), so it is safe to call from the poll or anywhere else.
+function ns.ReadState()
+  -- GetUnitSpeed is a SECRET number in combat (Midnight) — comparing it taints/errors,
+  -- so guard with issecretvalue and report movement as unknown while in combat.
+  local rawSpeed = GetUnitSpeed and GetUnitSpeed("player")
+  local speedSecret = (issecretvalue and rawSpeed ~= nil and issecretvalue(rawSpeed)) or false
+  local speed = (not speedSecret) and (rawSpeed or 0) or nil
+  local control = true                                       -- false = feared/stunned/controlled
+  if HasFullControl then control = (HasFullControl() and true) or false end
+  local chanName, chanEnd
+  if UnitChannelInfo then local n, _, _, _, e = UnitChannelInfo("player"); chanName, chanEnd = n, e end
+  local chanLeft = chanEnd and ((chanEnd / 1000) - GetTime()) or nil
+  local castName = (UnitCastingInfo and UnitCastingInfo("player")) or nil   -- non-channel cast name
+  local gliding = false                                      -- skyriding/dragonriding glide
+  if C_PlayerInfo and C_PlayerInfo.GetGlidingInfo then
+    local ok, g = pcall(C_PlayerInfo.GetGlidingInfo); gliding = (ok and g) or false
+  end
+  local facing = GetPlayerFacing and GetPlayerFacing()       -- heading in radians; nil when map open
+  if facing and issecretvalue and issecretvalue(facing) then facing = nil end
+  local px, py                                               -- normalized map position (0-1)
+  local mapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+  if mapID and C_Map.GetPlayerMapPosition then
+    local ok, p = pcall(C_Map.GetPlayerMapPosition, mapID, "player")
+    if ok and p then
+      local x, y = p:GetXY()
+      if not (issecretvalue and (issecretvalue(x) or issecretvalue(y))) then px, py = x, y end
+    end
+  end
+  local r = {
+    mounted    = (IsMounted and IsMounted()) or false,
+    swimming   = (IsSwimming and IsSwimming()) or false,
+    submerged  = (IsSubmerged and IsSubmerged()) or false,   -- head underwater (may be nil API)
+    breath     = mirrorActive("BREATH"),
+    flying     = (IsFlying and IsFlying()) or false,
+    gliding    = gliding,
+    facing     = facing,
+    px         = px,
+    py         = py,
+    falling    = (IsFalling and IsFalling()) or false,
+    taxi       = (UnitOnTaxi and UnitOnTaxi("player")) or false,
+    vehicle    = (UnitInVehicle and UnitInVehicle("player")) or false,
+    speed      = speed,
+    speedSecret = speedSecret,
+    moving     = (speed ~= nil) and (speed > 0.1) or false,
+    boatBuff   = BoatBuffUp(),
+    flyable    = (IsFlyableArea and IsFlyableArea()) or false,
+    indoors    = (IsIndoors and IsIndoors()) or false,
+    outdoors   = (IsOutdoors and IsOutdoors()) or false,
+    stealthed  = (IsStealthed and IsStealthed()) or false,
+    fatigue    = mirrorActive("EXHAUSTION"),
+    channeling = chanName ~= nil,
+    chanName   = chanName,
+    chanLeft   = chanLeft,
+    casting    = castName,
+    combat     = (UnitAffectingCombat and UnitAffectingCombat("player")) or false,
+    lockdown   = (InCombatLockdown and InCombatLockdown()) or false,
+    dead       = (UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")) or false,
+    control    = control,
+    resting    = (IsResting and IsResting()) or false,
+    lootOpen   = (LootFrame and LootFrame.IsShown and LootFrame:IsShown()) or false,
+  }
+  -- derive footing, most-specific first. (sitting is NOT API-readable in retail — we'd
+  -- only know we sat because WE issued /sit; shown as grounded here.)
+  local foot
+  if r.taxi or r.vehicle then foot = "taxi/vehicle"
+  elseif r.gliding then foot = "gliding"
+  elseif r.mounted then foot = r.flying and "mounted(flying)" or "mounted"
+  elseif r.swimming then foot = r.submerged and "swimming(submerged)" or "swimming"
+  elseif r.falling then foot = "airborne"                    -- jumped / fell off: NOT fishable
+  elseif r.boatBuff then foot = "on-boat"                    -- have boat & not swim/mount/fly: on the raft (moving or not)
+  else foot = "grounded" end                                 -- on land. moving is a SEPARATE flag, not a footing
+  r.footing = foot
+  -- CAN-CAST: positioned to start a fishing cast — none of the movement/posture blockers
+  -- (on-boat is fine; resting/combat/dead/control/channeling are SEPARATE resolver gates).
+  -- speedSecret (combat) forces NO since we can't confirm "not moving" — and you can't fish
+  -- in combat anyway.
+  -- Zen Flight (a falling-boat) is a FLYING/falling state but you CAN fish from the hover — so when it's
+  -- ACTIVE, flying/falling must NOT block the cast (moving/mounted/etc still do). Its buff can be permanent.
+  local zenActive = fallingBoatActive(SBF.ActiveSlots().boat)
+  r.canCast = not (r.mounted or (r.flying and not zenActive) or r.gliding or r.moving or r.swimming
+    or r.submerged or r.breath or (r.falling and not zenActive) or r.taxi or r.vehicle or r.speedSecret)
+  -- grid-driving signals for the fishing loop, MUTUALLY EXCLUSIVE:
+  --   LOOT white = line is out (channeling) -> the ONLY allowed action is loot
+  --   CAST white = able to start a fresh cast (can-cast, not already fishing, not combat)
+  r.lootReady = r.channeling
+  r.castReady = r.canCast and not r.channeling and not r.combat
+  -- single-button: the action key is ALSO the attack key, so when a combat action is configured
+  -- the loop should keep firing in combat (it attacks) rather than hold. Exposed for readers of the state.
+  local combatDef = SBF.SlotDef("combat")
+  r.combatReady = (not (combatDef and combatDef.skip)) and hasAction(combatDef) and true or false
+  return r
+end
+
+-- Phase-1 resolver gate: pure reads of ns.ReadState() (no secure calls here). What the One
+-- Button resolves to right now, by the fishing invariant:
+--   "loot" = line is out (channeling) -> the ONLY action
+--   "cast" = can-cast and not channeling
+--   "wait" = neither (flying/moving/mounted/swimming/combat/...) -> do nothing
+-- Loot ONE slot from the open loot window — the paced manual-loot step used when fast-loot (GECLoot) is off.
+-- LootSlot is unprotected, so PostClick (after the inert secure click) can call it. Loots the lowest slot that
+-- still holds an item/coin; when the last slot clears the window closes on its own. Bags-full is handled
+-- upstream (UI_ERROR -> SBF._lootBlocked -> "wait"), so we never fight an un-lootable window here.
+function SBF.LootOneSlot()
+  if not (GetNumLootItems and LootSlot and GetLootSlotInfo) then return end
+  local n = GetNumLootItems() or 0
+  for slot = 1, n do
+    local tex = GetLootSlotInfo(slot)   -- nil on an already-looted (empty) slot
+    if tex then LootSlot(slot); return end
+  end
+end
+
+function ns.FishingAction()
+  local s = ns.ReadState()
+  if s.channeling then
+    -- Out-of-reach bobber in recast mode (Reach.lua): the press drops this line and casts a new one, in one- AND
+    -- two-button setups. Before this the two-button "inert while the line is out" rule below swallowed the press, so
+    -- recast mode just sat there (seen live 2026-09-23).
+    if SBF.ReachMode and SBF.ReachMode() == "recast" and SBF.BobberOutOfReach and SBF.BobberOutOfReach() then
+      return "recast", s
+    end
+    if SBFDB.requireTwoButtons then return "wait", s end   -- two-button mode: action key inert while looting
+    return "loot", s
+  end
+  -- Bags full with loot STILL in the window: don't cast. A recast would close the surfaced loot window and
+  -- WoW would mail the un-looted items (Postmaster). Wait until the window is dealt with (LOOT_CLOSED clears it).
+  if SBF._lootBlocked and (GetNumLootItems and GetNumLootItems() or 0) > 0 then return "wait", s end
+  -- Fast-loot OFF with a loot window still holding items: DON'T cast — a recast closes the window and WoW
+  -- mails/loses the un-looted items. Instead loot ONE slot per press (paced manual loot). When it empties the
+  -- window closes (LOOT_CLOSED) and casting resumes. Bags-full is caught above (_lootBlocked -> full stop).
+  if not SBFDB.fastLoot and (GetNumLootItems and GetNumLootItems() or 0) > 0 then return "lootone", s end
+  if SBF._castBackoffUntil and GetTime() < SBF._castBackoffUntil then return "wait", s end  -- dead-spot back-off
+  -- auto-dismount: on a GROUND mount only (NEVER flying/gliding/falling — that would drop you),
+  -- if enabled, the press fires "/dismount"; the next press then casts. Self-correcting.
+  if s.mounted and not (s.flying or s.gliding or s.falling) and SBFDB.autoDismount then
+    return "dismount", s
+  end
+  -- swimming with a boat available: let the press THROUGH (the smart button casts the dinghy /
+  -- the JUMP override surfaces you onto it). can-cast is false while swimming, so without this
+  -- the gate would suppress the key and the boat would never cast.
+  local boat = SBF.ActiveSlots().boat
+  -- cast the dinghy only when you DON'T already have its buff. (Old check was
+  -- not-IsOnBoat, but IsOnBoat = buff AND not-swimming, so while swimming it was always
+  -- false and it re-cast forever even with the buff up.) With the buff, the JUMP
+  -- override surfaces you onto it instead of re-casting.
+  -- Falling-cast boat (Zen Flight) needed: FISHING IS IMPOSSIBLE here — you have no boat buff over deep water.
+  -- This must come BEFORE the canCast/fishing return, because bouncing at the surface flickers falling<->grounded
+  -- every frame, and at a grounded frame canCast briefly goes TRUE and would slip into fishing. So while a
+  -- falling-boat is needed: airborne -> CAST it (arm THAT spell, not a rotation pick, so it's Zen Flight);
+  -- not airborne yet -> WAIT (the JUMP override gets you up). Never "cast"/fish.
+  -- Falling-boat (Zen Flight): keep PreClick's fa in sync with roleBoat. Over water + falling-boat due -> "wait"
+  -- (inert press; the JUMP override lifts you). Airborne within the arm window (not yet hovering) -> "boat" so the
+  -- press flows to buildPressMacro/roleBoat and casts it. On land nothing's due -> falls through to normal fishing.
+  if ns.zenBoatDue and ns.zenBoatDue(boat) then return "wait", s end
+  if SBF._zenArm and GetTime() < SBF._zenArm and s.falling
+      and not (SBF.FallingBoatActive and SBF.FallingBoatActive(boat)) then
+    return "boat", s
+  end
+  if s.swimming and boat and hasAction(boat) and not boat.skip and not BoatBuffUp() then
+    return "boat", s
+  end
+  if s.canCast then return "cast", s end
+  return "wait", s
+end
+
+
+
+
+-- ONE-TIME REPAIR. These switches used to be settable via /sbf jump, so a user may be carrying a non-default
+-- value in SavedVariables with no way to see or change it. Reset them to the defaults once, record what
+-- changed, and move on.
+-- The defaults are inline so this stands alone in a build where the switch machinery does not exist.
+local JUMP_DEFAULTS = { jumpKeyState = true, ascentBreaker = true, bounceJump = true,
+                        bounceBreakWithBuff = false, surfaceClimbJump = false,
+                        jumpKeyupHold = 0.25, pollInterval = 0.15, jumpHeldMaxDefer = 3 }
+function SBF.ResetJumpSwitches()
+  if SBF.IsDev and SBF.IsDev() then return end        -- dev keeps its tuning; it still has the command
+  if SBFDB.jumpSwitchReset then return end            -- one-shot
+  local changed = {}
+  for k, v in pairs(JUMP_DEFAULTS) do
+    if SBFDB[k] ~= nil and SBFDB[k] ~= v then
+      changed[#changed + 1] = ("%s=%s->%s"):format(k, tostring(SBFDB[k]), tostring(v))
+      SBFDB[k] = nil                                   -- nil = the inline default every reader already uses
+    end
+  end
+  SBFDB.jumpSwitchReset = true
+  if #changed > 0 and SBF.Anomaly then
+    SBF.Anomaly("jump-switch-reset", "reset %d non-default jump/loot switch(es) to shipped defaults: %s",
+      #changed, table.concat(changed, " "))
+  end
+end
+
+SLASH_SBF1 = "/sbf"
+SlashCmdList.SBF = function(msg)
+  -- split into command + remainder WITHOUT lowercasing the remainder (buff names
+  -- are case-sensitive and have spaces, e.g. /sbf setbuff lure Lucky Loa Lure)
+  local cmd, rest = (msg or ""):match("^%s*(%S*)%s*(.-)%s*$")
+  cmd = (cmd or ""):lower()
+  if cmd == "welcome" then
+    if SBF.ShowWelcome then SBF.ShowWelcome() end
+  elseif cmd == "bug" or cmd == "bugreport" then              -- PUBLIC: copyable, PII-free diagnostic blob.
+    -- `rest` is already everything after the command word: the reporter's description, included verbatim.
+    if SBF.ShowBugReport then SBF.ShowBugReport(rest ~= "" and rest or nil) end
+  elseif cmd == "venom" then                                  -- PUBLIC: the worn pole's counter (The Coiled Huntress)
+    local n, word; if SBF.PoleCounter then n, word = SBF.PoleCounter() end
+    local fil = SBF.CoiledFilament and SBF.CoiledFilament()
+    if n then
+      print(("|cff45c4a0SBF|r %s: |cffffd100%d|r  (+%d this session)   Coiled Filament: %s"):format(word or "Venom", n,
+        SBF.PoleCounterSession() or 0, tostring(fil or 0)))
+    else
+      if SBF.CLASSIC_GEAR then
+        print("|cff45c4a0SBF|r No pole counter on this client.")
+      else
+        print("|cff45c4a0SBF|r The pole you're wearing doesn't carry a counter (The Coiled Huntress does).   Coiled Filament: "
+          .. tostring(fil or 0))
+      end
+    end
+  elseif cmd == "reach" and SBF.FOREVER and (rest:lower() == "classic" or rest:lower() == "forever") then
+    SBFDB.foreverReach = rest:lower() == "classic" and "classic" or nil   -- the way back if a patch shortens the key
+    print(SBFDB.foreverReach and "|cff45c4a0SBF|r Classic bobber reach is on: far casts are handled the Classic way. "
+      .. "/reload to see Settings, Bobber reach. |cff808080(/sbf reach forever to go back)|r"
+      or "|cff45c4a0SBF|r Back to the Forever bobber reach. /reload to tidy up Settings.")
+  elseif cmd == "reach" and SBF.ForeverReach() then           -- Forever: always raised, nothing to set
+    print(("|cff45c4a0SBF bobber reach|r: %d yards while fishing (always on in WoW: Forever)  "
+      .. "|cff808080(far casts stopped reeling? /sbf reach classic)|r"):format(SBF.ReachYards()))
+  elseif cmd == "reach" then                                  -- PUBLIC: interact-key range while fishing
+    local v = rest:lower()
+    if v == "off" then SBFDB.bobberReach = 0; if SBF.RestoreBobberReach then SBF.RestoreBobberReach() end
+    elseif v == "default" then SBFDB.bobberReach = nil        -- bare /sbf reach just prints the current value
+    elseif tonumber(v) then SBFDB.bobberReach = math.max(0, math.floor(tonumber(v))) end
+    print(("|cff45c4a0SBF bobber reach|r: %s  |cff808080(/sbf reach <yards> | off | default)|r"):format(
+      (SBFDB.bobberReach == nil and "default (60 on Classic, off on retail)")
+      or (SBFDB.bobberReach == 0 and "off - your interact range is left alone") or (SBFDB.bobberReach .. " yards while fishing")))
+  elseif (cmd == "reachview" or cmd == "reachmode") and SBF.ForeverReach() then
+    print("|cff45c4a0SBF|r Not needed on WoW: Forever: the interact key reaches every cast.")
+  elseif cmd == "reachview" and not SBF.CLASSIC_GEAR then
+    print("|cff45c4a0SBF|r The fishing camera is a Classic option.")   -- retail: never touch the player's views
+  elseif cmd == "reachview" then                              -- PUBLIC: the saved fishing camera (on/off, save, which slot)
+    local v = rest:lower()
+    if v == "on" then SBFDB.reachCamera = "saved"
+    elseif v == "off" then SBFDB.reachCamera = nil
+    elseif v == "save" then if SBF.SaveFishingCamera then SBF.SaveFishingCamera() end
+    elseif tonumber(v) and tonumber(v) >= 2 and tonumber(v) <= 5 then SBFDB.reachViewSlot = tonumber(v) end
+    print(("|cff45c4a0SBF fishing camera|r: %s (view %d)  |cff808080(/sbf reachview on | off | save | <2-5>)|r"):format(
+      (SBF.UseSavedCamera and SBF.UseSavedCamera()) and "|cff33ff33your saved camera when fishing starts|r" or "|cff808080off|r",
+      SBF.CameraViewSlot and SBF.CameraViewSlot() or 5))
+  elseif cmd == "reachmode" then                              -- PUBLIC: what the key does for an out-of-reach bobber
+    if SBF.REACH_MODES and SBF.REACH_MODES[rest] then SBFDB.reachMode = rest
+    elseif rest == "default" then SBFDB.reachMode = nil end
+    print(("|cff45c4a0SBF out-of-reach bobber|r: |cffffd100%s|r%s  |cff808080(/sbf reachmode recast | mouseover | off | default)|r"):format(
+      SBF.ReachMode(), SBFDB.reachMode == nil and " (default)" or ""))
+  elseif cmd == "addtarget" or cmd == "tgt" then              -- PUBLIC: opt-in /targetenemy in OUR default combat macro
+    if rest == "on" then SBFDB.combatTarget = true            -- opt-in: add /targetenemy to the default macro
+    elseif rest == "off" then SBFDB.combatTarget = nil        -- default: no target line (auto-target)
+    else SBFDB.combatTarget = (not SBFDB.combatTarget) or nil end
+    if SBF.Apply then SBF.Apply() end                         -- rebuild the button so the change takes effect now
+    print("|cff45c4a0SBF default combat target-acquire|r (default macro only, never a custom one): "
+      .. (SBFDB.combatTarget
+        and "|cff33ff33ON|r - |cffffd100/targetenemy [noharm][dead]|r added to the default combat macro"
+        or "|cff808080OFF|r - rely on auto-target when attacked (default; keeps focus on the attacker)"))
+  -- (welcome moved to the leading `if` above; controller + mouse removed entirely — not useful)
+  else
+    if SBF.ToggleOptions then SBF.ToggleOptions() end
+  end
+end
+
+-- [zhCN Localization Inject]
+_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
+_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"
+
+-- [zhCN Localization Inject]
+_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
+_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"
+
+-- [zhCN Localization Inject]
+_G["BINDING_HEADER_SBF"] = "SBF - 单键钓鱼助手"
+_G["BINDING_NAME_CLICK SBFBtn_fishing:LeftButton"] = "钓鱼动作 / 抛竿与拾取"

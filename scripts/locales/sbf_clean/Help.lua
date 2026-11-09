@@ -1,0 +1,193 @@
+-- Help.lua — the SINGLE reloadable source of all SBF help content, addressed by STRING KEY.
+-- Both the mouseover tooltips and the (future) help window call SBF.GetHelp("key"):
+--   * tooltips render `title` + `body` as plain text (GameTooltip = text + |cff|r colour, no HTML)
+--   * the help window renders longer markdown `body` text via the MD->SimpleHTML converter
+--     (see docs/wow-addons/markdown-in-simplehtml.md for what markdown survives).
+-- Pure .lua: edit + /reload updates everything. (Adding this file to SBF.toc needs ONE client
+-- restart the first time; after that it is reload-only.)
+local _ = ...
+SBF = SBF or {}
+
+SBF.Help = {
+  -- ===== Settings: Fishing behavior =====
+  ["set.warnNoPole"] = { title = "Warn when there's no fishing pole",
+    body = "If you press your fishing key with no pole in your hands and nothing set up to put one on, SBF "
+      .. "doesn't cast. It tells you to drag your pole into the Fishing pole box on the Profile page, or to give "
+      .. "the profile a gear set with a pole in it. Uncheck to let the cast go through anyway." },
+  ["set.petStance"] = { title = "Pet stance while fishing",
+    body = "Keeps your pet on this stance while you fish. If your pet is on a different stance when you press "
+      .. "your fishing key out of combat, SBF switches it (if the stance isn't on your pet bar, SBF sends it once per "
+      .. "fishing run instead). SBF doesn't restore the old stance when you stop. "
+      .. "Leave alone means SBF never touches your pet. Saved for this character only." },
+  ["set.petFight"] = { title = "Fight when my pet is fighting",
+    body = "If your pet is fighting something and you aren't in combat yet, your fishing key sends your Combat "
+      .. "action instead of casting, changing gear or looting. Needs an action in the Combat slot. "
+      .. "Saved for this character only." },
+  ["set.petFightTarget"] = { title = "Target what my pet is attacking first",
+    body = "When your fishing key fights for your pet, target the pet's enemy before your Combat action runs. "
+      .. "Uncheck if your own combat macro already picks its target." },
+  ["set.combatReleasesLoot"] = { title = "Fight instead of looting when combat starts",
+    body = "If something attacks you while your line is out, your fishing key drops the line and does your Combat "
+      .. "action for the rest of the fight, the way retail works. Uncheck to keep the key on looting until the fight "
+      .. "ends (a fish that bites mid-fight can still be reeled in). Needs an action in the Combat slot." },
+  ["set.guardFishingOff"] = { title = "Shift+click to turn off Cast Fishing",
+    body = "Turning off the Cast Fishing button takes a Shift+click on its name, so a stray click can't stop "
+      .. "your action key from fishing. With Cast Fishing off, the key only does your combat action. "
+      .. "Turning it back on is always a plain click. Uncheck this to make it a plain click both ways." },
+  ["set.sitBeforeCast"] = { title = "Sit before each cast",
+    body = "Sits your character before every cast. A few fishing setups want this; most don't need it." },
+  ["set.autoDismount"] = { title = "Auto-dismount to fish",
+    body = "When you're on a GROUND mount, the loop dismounts so it can fish. It never dismounts while flying or gliding." },
+  ["set.refreshSkillOnCast"] = { title = "Refresh skill on cast",
+    body = "When your fishing skill isn't loaded this session, your first fishing press briefly opens and closes the "
+      .. "Fishing Journal on screen (a quick flash) to load it, then fishes as normal. WoW only reports your per-expansion "
+      .. "skill after the journal is opened, and it needs doing once each session (login or /reload), not once per "
+      .. "character. On by default. Turn it off to open the journal yourself instead." },
+  ["set.combatWindows"] = { title = "Hide interface in combat",
+    body = "When you enter combat the Welcome window hides and the Settings window collapses to its title bar, so they can't "
+      .. "block your screen mid-fight. They come back when combat ends. Turn this off to leave the windows where they are." },
+  ["set.castBackoff"] = { title = "Cast-fail back-off",
+    body = "After a cast that misses the water (\"too shallow\" / \"requires fishable water\"), the loop waits this many seconds before retrying, so it doesn't hammer a dead spot." },
+  ["set.zoneIndicator"] = { title = "Zone buff glow",
+    body = "Screen edges glow green while the Cursed Land and Waters blessing is on you on the Coiled Isle: "
+      .. "fish here for Captain Tokka reputation. SBF also announces it on screen the moment it lands." },
+  ["set.idleTimeout"] = { title = "Idle timeout",
+    body = "How long after your last cast (no action-key press, no line in the water) SBF considers you done "
+      .. "fishing. This is a performance feature: when it fires, SBF stands down completely and stops all of its "
+      .. "background key and buff monitoring, dropping its CPU use to roughly 0% until you fish again. If "
+      .. "\"Auto-restore gear when idle\" is on, your normal gear and audio come back at the same moment. Your "
+      .. "next action-key press wakes everything back up." },
+  ["set.mouseDouble"] = { title = "Double-click window (sec)",
+    body = "How fast the two presses must be to count as a double-click for mouse double-click fishing "
+      .. "(turned on with \"Use mouse (double-click)\" in Settings -> Interface options). Lower = you must double-click "
+      .. "faster; higher = more forgiving but slower single clicks may register as doubles. Default 0.40s." },
+
+  ["set.useMouse"] = { title = "Mouse double-click fishing",
+    body = "Double-click the chosen mouse button to fish (and, in two-button mode, a button to loot). "
+      .. "A lone single click is never affected. Works OUT OF COMBAT ONLY (override bindings can't be armed "
+      .. "in combat). Pick the mouse buttons on the Keybinds tab; tune the speed beside this row." },
+  ["set.twoButton"] = { title = "Two-button mode",
+    body = "Off: one Action does both: it casts, then the same key/button loots while the line is out.\n"
+      .. "On: the Action only casts; a SEPARATE Loot / Interact key (and mouse button) loots. This is the single "
+      .. "switch for whether a separate loot button exists, for keyboard and mouse alike." },
+
+  ["set.gamepadEnable"] = { title = "Enable controller (gamepad) support",
+    body = "Lets you fish with a game controller. Ticking this turns on WoW's gamepad support so controller "
+      .. "buttons act like keys: click any \"Set key\" button in SBF, then press a controller button to bind "
+      .. "it (e.g. bind A to your one fishing button). A /reload may be needed the first time for WoW to "
+      .. "pick it up. Unticking leaves WoW's gamepad setting alone (in case you use the controller elsewhere)." },
+
+  ["set.fastLoot"] = { title = "Ultra fast loot  (grab everything instantly, no loot window)",
+    body = "Replaces the game's built-in auto-loot with a fast, silent looter: it grabs everything off a "
+      .. "corpse/node/catch with no loot window popping up, and keeps up even at low framerate (the built-in "
+      .. "auto-loot can drop items when your FPS dips). The normal loot window still appears on its own when "
+      .. "it needs you: a locked slot, an item above your group's loot-quality threshold, a "
+      .. "bind-on-pickup confirm, or full bags, so nothing is ever silently lost." },
+
+
+  -- ===== Settings: Profiles (location auto-swap) =====
+  ["set.advancedMode"] = { title = "Profile advanced mode",
+    body = "Off = a single simple setup (hides profiles, zone binding, and save/revert; your edits save "
+      .. "automatically). On = multiple profiles that auto-swap by location, with per-zone binding and "
+      .. "Save/Revert." },
+  ["set.autoSwap"] = { title = "Auto-swap profiles by location",
+    body = "When you change zones, SBF automatically activates the profile bound to where you are "
+      .. "(most specific match wins: sub-zone, then zone, then region; otherwise the default profile). "
+      .. "Turn off to only ever switch profiles by hand." },
+  ["set.warnUnsavedOnClose"] = { title = "Ask to save when closing SBF",
+    body = "If you close the SBF window with profile changes you haven't saved, SBF lists them and asks: "
+      .. "Save, Discard, or Keep editing. Unsaved changes can be lost later on a Revert, a profile swap, "
+      .. "or when another character logs in, so this catches them while you remember making them." },
+  ["set.swapFlash"] = { title = "Flash on profile swap",
+    body = "When a location auto-swap activates a different profile, briefly flash its name on screen "
+      .. "(as a raid-warning) so you know which setup is now active. Has no effect on manual switches." },
+
+  -- ===== Settings: Gear =====
+  ["set.idleRestore"] = { title = "Auto-restore gear when idle",
+    body = "When the idle timeout fires (see \"Idle timeout\" under Fishing behavior), automatically re-equip "
+      .. "the gear you had on before the profile gear went on, and restore your normal audio. Your next action "
+      .. "press re-equips the profile gear. On by default. SBF's standby happens at that same timeout whether "
+      .. "or not this is checked - this checkbox only controls the gear/audio restore." },
+
+  -- ===== Settings: Audio (focus) =====
+  ["set.focusAudio"] = { title = "Focus fishing",
+    body = "While fishing, mute music/ambience and isolate the bobber splash; restores your normal audio "
+      .. "when you stop. Use \"Audio settings\226\128\166\" to set the exact levels SBF switches to." },
+
+  -- ===== Settings: Item pickers =====
+  ["set.showUnownedToys"] = { title = "Show toys I don't own",
+    body = "Show toys you haven't collected yet in the picker strip (greyed out). Turn off to only see what you own." },
+  ["set.showUnownedItems"] = { title = "Show items not in my bags",
+    body = "Show items you aren't currently carrying in the picker strip (greyed out). Turn off to only see what's in your bags." },
+  ["set.showWarbandItems"] = { title = "Show Warband items",
+    body = "Show account-wide collectibles you OWN (toys, account boats) as available options in the slot pickers - on by default. Turn this off (and the \"show I don't own\" toggles) to hide everything you haven't explicitly set, so only items you drag into a slot are used. Useful when you want a character to start from scratch." },
+
+  ["set.showHiddenItems"] = { title = "Show hidden items",
+    body = "Shift+left-click any item in a picker to hide it from that slot - useful when Blizzard strips an item's effect, or you just never want it offered. Turn this on to bring hidden items back into view (dimmed); shift+left-click one again to restore it. Hiding is per slot and account-wide, and items from SBF's shipped list ask for confirmation first." },
+
+  ["set.hideMinimap"] = { title = "Hide the minimap button",
+    body = "Take SBF's button off the minimap ring. Type /sbf to open the window and untick this to bring it back. If your minimap has an AddOns button, right-clicking SBF there puts it back too. Your button's position is remembered either way." },
+
+  -- ===== Settings: Audio =====
+  ["set.castSound"] = { title = "Fishing-start sound",
+    body = "Play a sound when a cast goes out. Pick the sound from the dropdown; Test previews it." },
+  ["set.castFailSound"] = { title = "Cast-fail sound",
+    body = "Play a sound when a cast fails (too shallow / not fishable water)." },
+  ["set.bobberReach"] = { title = "Bobber reach",
+    body = "While you fish, stretch the interact key's reach so it can reel bobbers that land farther out. Your own "
+      .. "setting comes back when you stop (or right after the fight, if you are in one). The very farthest casts can still land beyond it, and the options below "
+      .. "decide what happens then. Fine-tune with /sbf reach <yards>. The bobber also has to land where your camera "
+      .. "can see it: zoomed all the way in, or looking down at your feet, far casts always read as out of reach." },
+  ["set.reachCamera"] = { title = "Use my saved camera",
+    body = "The interact key can only grab a bobber your camera can see. Set your camera up the way you like to "
+      .. "fish and click Save current camera; with this on, SBF switches to that camera once when you start "
+      .. "fishing. It doesn't touch the camera again while you fish, and leaves it where it is when you stop." },
+  ["set.reachViewSlot"] = { title = "Camera view slot",
+    body = "Your saved camera lives in one of WoW's saved camera views (2 to 5). Save current camera overwrites the "
+      .. "one picked here, so choose a slot nothing else uses: another addon, or a keybind of your own." },
+  ["set.reachSaveCamera"] = { title = "Save current camera",
+    body = "Set your camera up the way you like to fish, then click this. SBF saves it into the view slot picked "
+      .. "here and switches to it when you start fishing. The angle is kept relative to your character, so it follows "
+      .. "you whichever way you face." },
+  ["set.reachRecast"] = { title = "Recast when out of reach",
+    body = "When the bobber lands beyond the interact key's reach, your next press recasts instead of doing "
+      .. "nothing. Those casts are counted separately (Stats: Out of reach) and left out of your catch rate. "
+      .. "Unticked: point the mouse at the bobber and press your interact key to reel it. On by default in Classic." },
+  ["set.reachSound"] = { title = "Out-of-reach alert",
+    body = "When the bobber lands beyond the interact key's reach, show a message on screen and play a sound "
+      .. "once, so you know to press again (recast) or point at it. Pick \"No sound (message only)\" to keep "
+      .. "just the message. Uncheck to turn the whole alert off, message and sound." },
+  ["set.noFishSound"] = { title = "No-fish-hooked sound",
+    body = "Play a sound on \"No fish are hooked\" - you pulled the line too early or too late and got "
+      .. "nothing (a MISSED bite). Different from cast-fail (can't cast there at all) and from a cast that "
+      .. "just runs its full length with no bite (expired)." },
+  ["set.expiredSound"] = { title = "Expired-cast sound",
+    body = "Play a sound when a cast EXPIRES: the line ran its full length and nothing ever bit. "
+      .. "This is the normal \"nothing biting here\" outcome, distinct from a cast-fail (couldn't cast there at "
+      .. "all) and from \"no fish hooked\" (a real bite you pulled too early or too late)." },
+  ["set.nothingSound"] = { title = "Empty-line sound",
+    body = "Play a sound when a cast comes up EMPTY: you reeled on time and proper, the cast did its job, but "
+      .. "the line delivered no loot and no \"no fish are hooked\" warning fired. It's the \"nothing was on the "
+      .. "line\" outcome, kept separate from expired (ran its full length with no bite) and from a real interrupt "
+      .. "(moving, combat, or a jump cut the cast short). It requires that you actually reeled in: cancelling the "
+      .. "cast with Escape logs as an interrupt, not an empty line." },
+  ["set.prSound"] = { title = "Patiently Rewarded sound",
+    body = "Play a sound the moment the named buff appears on you (once per appearance). The buff name "
+      .. "is editable in case it's localised or renamed - defaults to \"Patiently Rewarded\"." },
+
+  -- ===== Settings: Visuals =====
+  ["set.bgAlpha"] = { title = "Window opacity",
+    body = "How see-through this window's background is. 100% = fully solid." },
+
+  -- ===== Settings: Debugging =====
+  ["set.debug"] = { title = "Debug log",
+    body = "Prints verbose state, the macro built on each button press, and a short note naming each "
+      .. "action as it fires, to chat. For troubleshooting." },
+  ["set.footing"] = { title = "Footing debug panel",
+    body = "Opens the live state panel showing every signal the loop reads (also /sbf footing)." },
+
+}
+
+
+-- Look up a help entry by key. Returns { title, body } or nil.
+function SBF.GetHelp(key) return (key and SBF.Help and SBF.Help[key]) or nil end
