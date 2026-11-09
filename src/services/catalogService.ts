@@ -11,8 +11,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'Compass',
     defaultFolderName: 'Questie',
-    latestVersion: 'v10.4.2 (Forever/Classic)',
-    downloadUrl: 'https://github.com/Questie/Questie/releases/latest/download/Questie.zip',
+    latestVersion: 'v12.6.4 (Forever/Classic)',
+    downloadUrl: '/addons/questie.zip',
     githubRepo: 'Questie/Questie',
     homeUrl: 'https://questie.dev',
     gameFlavors: ['forever', 'classic', 'vanilla'],
@@ -26,8 +26,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Combat',
     icon: 'ShieldAlert',
     defaultFolderName: 'ThreatClassic2',
-    latestVersion: 'v2.50',
-    downloadUrl: 'https://github.com/dfherr/ThreatClassic2/releases/latest/download/ThreatClassic2.zip',
+    latestVersion: '2.77',
+    downloadUrl: '/addons/threatclassic2.zip',
     githubRepo: 'dfherr/ThreatClassic2',
     gameFlavors: ['forever', 'classic', 'vanilla'],
     isForeverRecommended: true,
@@ -40,8 +40,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'Clock',
     defaultFolderName: 'ClassicCastbars',
-    latestVersion: 'v1.6.8',
-    downloadUrl: 'https://github.com/wardz/ClassicCastbars/releases/latest/download/ClassicCastbars.zip',
+    latestVersion: 'v1.9.1',
+    downloadUrl: '/addons/classiccastbars.zip',
     githubRepo: 'wardz/ClassicCastbars',
     gameFlavors: ['forever', 'classic', 'vanilla'],
     isForeverRecommended: true,
@@ -55,8 +55,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     icon: 'Sword',
     defaultFolderName: 'WeaponSwingTimer',
     latestVersion: 'v6.3.2',
-    downloadUrl: 'https://github.com/LeftHandedGlove/WeaponSwingTimer/releases/latest/download/WeaponSwingTimer.zip',
-    githubRepo: 'LeftHandedGlove/WeaponSwingTimer',
+    downloadUrl: '/addons/weaponswingtimer.zip',
+    githubRepo: 'LeftHandedGlove/WeaponSwingTimerAddon',
     gameFlavors: ['forever', 'classic', 'vanilla'],
     isForeverRecommended: true,
   },
@@ -64,13 +64,13 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     id: 'whatstraining',
     name: "What's Training? (技能学习速查)",
     description: '在法术书旁边增加全新一页，清晰列出当前及后续等级可以从职业训练师处学到的所有技能与金币开销。',
-    author: 'CosminS',
+    author: 'fusionpit',
     category: 'QoL',
     icon: 'Wrench',
     defaultFolderName: 'WhatsTraining',
-    latestVersion: 'v9.0.3',
-    downloadUrl: 'https://github.com/CosminS/WhatsTraining/releases/latest/download/WhatsTraining.zip',
-    githubRepo: 'CosminS/WhatsTraining',
+    latestVersion: '11.3.1',
+    downloadUrl: '/addons/whatstraining.zip',
+    githubRepo: 'fusionpit/WhatsTraining',
     gameFlavors: ['forever', 'classic', 'vanilla'],
     isForeverRecommended: true,
   },
@@ -78,13 +78,13 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     id: 'atlasloot',
     name: 'AtlasLoot Classic (装备掉落大全)',
     description: '无限服地下城、世界Boss、专业制造与阵营声望掉落装备数据库，随时按部位、等级和副本查阅。',
-    author: 'AtlasLoot Team',
+    author: 'Hoizame',
     category: 'QoL',
     icon: 'Package',
     defaultFolderName: 'AtlasLootClassic',
-    latestVersion: 'v3.1.5',
-    downloadUrl: 'https://github.com/AtlasLoot/AtlasLootClassic/releases/latest/download/AtlasLootClassic.zip',
-    githubRepo: 'AtlasLoot/AtlasLootClassic',
+    latestVersion: 'v3.2.0',
+    downloadUrl: '/addons/atlasloot.zip',
+    githubRepo: 'Hoizame/AtlasLootClassic',
     gameFlavors: ['forever', 'classic', 'vanilla'],
     isForeverRecommended: true,
   },
@@ -96,8 +96,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Raid',
     icon: 'Sparkles',
     defaultFolderName: 'WeakAuras',
-    latestVersion: '5.19.4',
-    downloadUrl: 'https://github.com/WeakAuras/WeakAuras2/releases/latest/download/WeakAuras.zip',
+    latestVersion: '5.22.1',
+    downloadUrl: '/addons/weakauras.zip',
     githubRepo: 'WeakAuras/WeakAuras2',
     homeUrl: 'https://wago.io',
     gameFlavors: ['forever', 'classic', 'retail', 'vanilla'],
@@ -107,27 +107,27 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     id: 'details',
     name: 'Details! Damage Meter',
     description: '魔兽世界中最精准、功能最强大的伤害/治疗统计插件，支持详细战斗回顾、死亡记录与图形报表。',
-    author: 'Terciob',
+    author: 'Tercioo',
     category: 'Combat',
     icon: 'Sword',
     defaultFolderName: 'Details',
-    latestVersion: 'v11.0.2 / Classic',
-    downloadUrl: 'https://github.com/Terciob/Details-Damage-Meter/releases/latest/download/Details.zip',
-    githubRepo: 'Terciob/Details-Damage-Meter',
+    latestVersion: 'Classic / Retail',
+    downloadUrl: '/addons/details.zip',
+    githubRepo: 'Tercioo/Details-Damage-Meter',
     homeUrl: 'https://www.curseforge.com/wow/addons/details',
     gameFlavors: ['forever', 'classic', 'retail'],
     isForeverRecommended: true,
   },
   {
     id: 'dbm',
-    name: 'Deadly Boss Mods (DBM-Classic)',
+    name: 'Deadly Boss Mods (DBM-Core)',
     description: '经典副本首领警报插件，支持5人地下城、世界Boss、熔火之心/黑翼等团本的技能倒数与中文语音报牌。',
     author: 'MysticalOS',
     category: 'Raid',
     icon: 'Skull',
     defaultFolderName: 'DBM-Core',
-    latestVersion: '11.0.21',
-    downloadUrl: 'https://github.com/DeadlyBossMods/DeadlyBossMods/releases/latest/download/DBM.zip',
+    latestVersion: '12.1.20',
+    downloadUrl: '/addons/dbm.zip',
     githubRepo: 'DeadlyBossMods/DeadlyBossMods',
     homeUrl: 'https://deadlybossmods.com',
     gameFlavors: ['forever', 'classic', 'retail'],
@@ -141,8 +141,10 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'Wrench',
     defaultFolderName: 'Leatrix_Plus',
-    latestVersion: '11.0.15',
-    downloadUrl: 'https://github.com/leatrix/leatrix-plus/releases/latest/download/Leatrix_Plus.zip',
+    latestVersion: 'Classic / Retail',
+    downloadUrl: '/addons/leatrix-plus.zip',
+    githubRepo: 'Sattva-108/Leatrix_Plus',
+    homeUrl: 'https://leatrix.com/plus',
     gameFlavors: ['forever', 'classic', 'retail'],
     isForeverRecommended: true,
   },
@@ -154,8 +156,9 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'LayoutGrid',
     defaultFolderName: 'Bartender4',
-    latestVersion: '4.15.0',
-    downloadUrl: 'https://github.com/Nevcairiel/Bartender4/releases/latest/download/Bartender4.zip',
+    latestVersion: '4.18.4',
+    downloadUrl: '/addons/bartender4.zip',
+    githubRepo: 'Nevcairiel/Bartender4',
     gameFlavors: ['forever', 'classic', 'retail'],
     isForeverRecommended: true,
   },
@@ -167,8 +170,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'Clock',
     defaultFolderName: 'OmniCC',
-    latestVersion: '11.0.3',
-    downloadUrl: 'https://github.com/tullamods/OmniCC/releases/latest/download/OmniCC.zip',
+    latestVersion: '11.2.8',
+    downloadUrl: '/addons/omnicc.zip',
     githubRepo: 'tullamods/OmniCC',
     gameFlavors: ['forever', 'classic', 'retail'],
     isForeverRecommended: true,
@@ -181,8 +184,9 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'Package',
     defaultFolderName: 'Bagnon',
-    latestVersion: '11.0.8',
-    downloadUrl: 'https://github.com/Jaliborc/Bagnon/releases/latest/download/Bagnon.zip',
+    latestVersion: 'Classic / Retail',
+    downloadUrl: '/addons/bagnon.zip',
+    githubRepo: 'Jaliborc/Bagnon',
     gameFlavors: ['forever', 'classic', 'retail'],
     isForeverRecommended: true,
   },
@@ -194,22 +198,9 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Trade',
     icon: 'Coins',
     defaultFolderName: 'Auctionator',
-    latestVersion: 'v11.0.18',
-    downloadUrl: 'https://github.com/Auctionator/Auctionator/releases/latest/download/Auctionator.zip',
-    githubRepo: 'Auctionator/Auctionator',
-    gameFlavors: ['forever', 'classic', 'retail'],
-    isForeverRecommended: true,
-  },
-  {
-    id: 'tomtom',
-    name: 'TomTom (坐标导航箭头)',
-    description: '大地图与小地图坐标导航箭头指示器，支持宏命令设定路点 `/way 45.2 62.1`。',
-    author: 'Cladhaire',
-    category: 'QoL',
-    icon: 'MapPin',
-    defaultFolderName: 'TomTom',
-    latestVersion: 'v11.0.2-1.0.0',
-    downloadUrl: 'https://github.com/astur/TomTom/releases/latest/download/TomTom.zip',
+    latestVersion: 'Classic / Retail',
+    downloadUrl: '/addons/auctionator.zip',
+    githubRepo: 'Wetxius/Auctionator',
     gameFlavors: ['forever', 'classic', 'retail'],
     isForeverRecommended: true,
   },
@@ -222,9 +213,9 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'BadgePercent',
     defaultFolderName: 'Plater',
-    latestVersion: 'Plater-v11.0.2',
-    downloadUrl: 'https://github.com/Terciob/Plater-Nameplates/releases/latest/download/Plater.zip',
-    githubRepo: 'Terciob/Plater-Nameplates',
+    latestVersion: 'Classic / Retail',
+    downloadUrl: '/addons/plater.zip',
+    githubRepo: 'Tercioo/Plater-Nameplates',
     gameFlavors: ['retail'],
     isForeverRecommended: false,
   },
@@ -236,22 +227,9 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Combat',
     icon: 'Compass',
     defaultFolderName: 'MythicDungeonTools',
-    latestVersion: 'v5.1.8',
-    downloadUrl: 'https://github.com/Nnoggie/MythicDungeonTools/releases/latest/download/MythicDungeonTools.zip',
+    latestVersion: '6.3.31',
+    downloadUrl: '/addons/mdt.zip',
     githubRepo: 'Nnoggie/MythicDungeonTools',
-    gameFlavors: ['retail'],
-    isForeverRecommended: false,
-  },
-  {
-    id: 'rarescanner',
-    name: 'RareScanner (稀有怪雷达)',
-    description: '野外稀有精英与宝箱雷达探测插件，附带大地图标记、掉落物品列表及战利品模型预览。',
-    author: 'mbarberog',
-    category: 'QoL',
-    icon: 'Eye',
-    defaultFolderName: 'RareScanner',
-    latestVersion: '11.0.2.7',
-    downloadUrl: 'https://github.com/mbarberog/RareScanner/releases/latest/download/RareScanner.zip',
     gameFlavors: ['retail'],
     isForeverRecommended: false,
   },
@@ -263,8 +241,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Combat',
     icon: 'Cpu',
     defaultFolderName: 'Simulationcraft',
-    latestVersion: 'v11.0.2-01',
-    downloadUrl: 'https://github.com/simulationcraft/simc-addon/releases/latest/download/Simulationcraft.zip',
+    latestVersion: '12.1.5-04',
+    downloadUrl: '/addons/simc.zip',
     githubRepo: 'simulationcraft/simc-addon',
     gameFlavors: ['retail'],
     isForeverRecommended: false,
@@ -273,47 +251,23 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
 
 /**
  * Fetch and install addon by download URL with progress tracking
- * Uses CORS proxy if needed for external sources
  */
 export async function downloadAndInstallAddon(
   addon: CuratedAddon,
   targetDirHandle: FileSystemDirectoryHandle,
-  onProgress: (p: InstallProgress) => void
-): Promise<{ installedFolders: string[] }> {
+  onProgress: (progress: InstallProgress) => void
+): Promise<number> {
   onProgress({
     status: 'downloading',
     addonName: addon.name,
-    percent: 5,
-    message: `正在从服务器下载 ${addon.name}...`,
+    percent: 15,
+    message: `正在从 wow.lich.tech 下载 ${addon.name}...`,
   });
 
-  let response: Response;
-  try {
-    // Try direct fetch first
-    response = await fetch(addon.downloadUrl, { mode: 'cors' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  } catch {
-    // If blocked by CORS in browser, route via Cloudflare Function or public CORS proxy
-    onProgress({
-      status: 'downloading',
-      addonName: addon.name,
-      percent: 8,
-      message: '尝试通过 Cloudflare 边缘代理通道下载...',
-    });
-
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(addon.downloadUrl)}`;
-    response = await fetch(proxyUrl);
-    if (!response.ok) {
-      throw new Error(`下载失败 (HTTP ${response.status})，请检查网络或稍后重试`);
-    }
+  const response = await fetch(addon.downloadUrl);
+  if (!response.ok) {
+    throw new Error(`下载失败 (HTTP ${response.status})`);
   }
-
-  onProgress({
-    status: 'downloading',
-    addonName: addon.name,
-    percent: 45,
-    message: '下载完成，正在解析 ZIP 压缩包...',
-  });
 
   const arrayBuffer = await response.arrayBuffer();
 
@@ -323,24 +277,4 @@ export async function downloadAndInstallAddon(
       addonName: addon.name,
     });
   });
-}
-
-/**
- * Generate a JSON export of installed addons for sharing or syncing
- */
-export function generateShareManifest(
-  installedAddons: { name: string; folderName: string; version: string; interfaceVersion: string }[]
-): string {
-  const data = {
-    app: 'WoW Web Addon Manager',
-    createdAt: new Date().toISOString(),
-    total: installedAddons.length,
-    addons: installedAddons.map((a) => ({
-      name: a.name,
-      folder: a.folderName,
-      version: a.version,
-      interface: a.interfaceVersion,
-    })),
-  };
-  return JSON.stringify(data, null, 2);
 }

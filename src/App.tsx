@@ -291,7 +291,7 @@ export function App() {
           status: 'downloading',
           addonName: addon.name,
           percent: 25,
-          message: `正在从云端下载 ${addon.name}...`,
+          message: `正在从 wow.lich.tech 下载 ${addon.name}...`,
         });
 
         const res = await fetch(addon.downloadUrl);
