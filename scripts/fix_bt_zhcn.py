@@ -1183,6 +1183,204 @@ CURATED = {
     "this will delete %d recorded sale(s) and return(s) for %s": "这将删除 %d 条已记录的销售与退信数据（所属：%s）",
     "You can learn this · %s at %d": "当前可学习 · %s（需技能 %d）",
     "%d%% of %s": "已完成 %d%%（目标 %s）",
+
+    # --- Enchanting Materials (Logic/Disenchant.lua) ---
+    "Strange Dust": "奇异之尘",
+    "Lesser Magic Essence": "次级魔法精华",
+    "Greater Magic Essence": "强效魔法精华",
+    "Small Glimmering Shard": "小块微光碎片",
+    "Lesser Astral Essence": "次级星界精华",
+    "Greater Astral Essence": "强效星界精华",
+    "Soul Dust": "灵魂之尘",
+    "Large Glimmering Shard": "大块微光碎片",
+    "Lesser Mystic Essence": "次级秘法精华",
+    "Small Glowing Shard": "小块闪光碎片",
+    "Vision Dust": "幻象之尘",
+    "Greater Mystic Essence": "强效秘法精华",
+    "Large Glowing Shard": "大块闪光碎片",
+    "Lesser Nether Essence": "次级虚空精华",
+    "Small Radiant Shard": "小块强光碎片",
+    "Dream Dust": "梦境之尘",
+    "Greater Nether Essence": "强效虚空精华",
+    "Large Radiant Shard": "大块强光碎片",
+    "Lesser Eternal Essence": "次级不灭精华",
+    "Small Brilliant Shard": "小块魔光碎片",
+    "Illusion Dust": "幻影之尘",
+    "Greater Eternal Essence": "强效不灭精华",
+    "Large Brilliant Shard": "大块魔光碎片",
+    "Nexus Crystal": "连结水晶",
+    "Lesser Magic Wand": "次级魔法杖",
+    "Greater Magic Wand": "强效魔法杖",
+    "Lesser Mystic Wand": "次级秘法魔杖",
+    "Greater Mystic Wand": "强效秘法魔杖",
+
+    # --- DisenchantLog & Disenchanting (lines 890-1065) ---
+    "Pick an item from your bags.": "请从背包中选择一件物品。",
+    "Not during combat.": "战斗中无法操作。",
+    "This character does not know Disenchant.": "当前角色未学习“分解”技能。",
+    "That item cannot be disenchanted.": "该物品无法分解。",
+    "That item is no longer in your bags.": "该物品已不在你的背包中。",
+    "can't disenchant in combat": "战斗中无法分解",
+    "pick an item in your bags on the Disenchanting tab, or a craft you carry on the Profit tab, first": "请先在“附魔分解”页选择背包中的物品，或在“制造利润”页选择已制造的成品",
+    "that item is no longer in your bags, so nothing was disenchanted": "该物品已不在背包中，未执行分解",
+    "check the Disenchant button": "检查分解按钮状态",
+    "that item cannot be disenchanted": "该物品无法分解",
+    "learning %s: %d of %d": "样本统计（%s）：%d / %d",
+    "%s: %d recorded": "样本统计（%s）：已记录 %d 次",
+    "%s %s: %s%s. %s.": "%s %s：%s%s。%s。",
+    "Disenchanted": "已分解",
+    ", worth %s": "，价值 %s",
+    "%s %s now uses your own results: %s. From now on, its value follows what you actually get.": "%s 「%s」现已采用你的实测产出数据：%s。此后其分解估值将按你的实际产出计算。",
+    "Learned:": "已掌握规律：",
+    "Learned: %s": "已掌握规律：%s",
+    "%s %s does not break the way the table says for %s, so it now uses your own results: %s.": "%s %s 的分解结果与常规「%s」不符，现已改用你的实测产出数据：%s。",
+    "%s %s can come from %s.": "%s %s 可由「%s」分解产出。",
+    "New find:": "新产出发现：",
+    "New find: %s": "新产出发现：%s",
+    "%s That one was worth %s; about %s is usual.": "%s 本次产出价值 %s（常规期望约为 %s）。",
+    "Lucky:": "手红暴击：",
+    "Lucky disenchant: %s": "手红分解：%s",
+    "could not record that disenchant: %s. /bts delog has more.": "未能记录本次分解：%s。输入 /bts delog 查看详情。",
+    "the loot was not enchanting materials": "拾取物并非附魔材料",
+    "the game did not say which item was disenchanted": "客户端未返回被分解的具体物品",
+    "loot window": "拾取窗口",
+    "bag click": "背包点击",
+    "cast name": "施法目标名称",
+    "your recorded disenchants are cleared, so values come from the built-in table again": "已清空你的分解实测记录，分解估值已恢复使用内置掉率表",
+    "%s recorded across %s; %s your results (after %d each)": "共记录 %s（涵盖 %s）；其中 %s 已采用实测数据（每类满 %d 次后启用）",
+    "%d disenchant": "%d 次分解",
+    "%d disenchants": "%d 次分解",
+    "%d kind of item": "%d 类装备",
+    "%d kinds of item": "%d 类装备",
+    "%d kind uses": "%d 类已启用",
+    "%d kinds use": "%d 类已启用",
+    "breaking differently from the table, so using their own results: %s": "实际产出与内置表不同，已单独采用实测数据的物品：%s",
+    "%d could not be recorded; the last because %s": "%d 次未能记录（最近一次原因：%s）",
+    "  %s gave %s (item found by %s)": "  %s -> %s（通过%s识别）",
+    "disenchant something, then run /bts delog again to see it recorded": "请先分解一件装备，然后再次运行 /bts delog 查看记录",
+    "your recorded disenchants; /bts delog reset clears them": "查看你的分解实测记录；输入 /bts delog reset 可清空重置",
+    "uncommon": "优秀(绿)",
+    "rare": "精良(蓝)",
+    "epic": "史诗(紫)",
+    "your own %d disenchants of this item": "你对该物品的 %d 次实测分解",
+    "your own %d disenchants of items like this": "你对同类装备的 %d 次实测分解",
+    "green weapon": "绿装武器",
+    "green armor": "绿装护甲",
+    "green items": "绿色装备",
+    "blue weapon": "蓝装武器",
+    "blue armor": "蓝装护甲",
+    "blue items": "蓝色装备",
+    "purple weapon": "紫装武器",
+    "purple armor": "紫装护甲",
+    "purple items": "紫色装备",
+    "item level %d and up": "装等 %d 及以上",
+    "item level %d and below": "装等 %d 及以下",
+    "item level %d to %d": "装等 %d-%d",
+    "%s, %s": "%s，%s",
+    "item %s": "物品 %s",
+    "Disenchant deals: %d on the auction house, worth %s together. The best is %s for %s, which makes %s. See the Disenchanting tab.": "分解淘金：拍卖行发现 %d 件可获利分解装，合计价值 %s。最佳目标为 %s（买入价 %s，预计净赚 %s）。详见“附魔分解”页。",
+    "usage: /bts de <item link or item ID>": "用法：/bts de <物品链接或物品ID>",
+    "the game hasn't loaded %s yet, try again in a moment": "客户端尚未加载 %s 的信息，请稍后重试",
+    "%s cannot be disenchanted": "%s 无法分解",
+    "%s: item level %d, %s weapon, needs Enchanting about %d": "%s：装等 %d，%s武器，约需附魔技能 %d",
+    "%s: item level %d, %s armor, needs Enchanting about %d": "%s：装等 %d，%s护甲，约需附魔技能 %d",
+    "  from %s": "  数据来源：%s",
+    "  from the built-in table (you've done %d, and your own results take over at %d)": "  数据来源：内置掉率表（当前已分解 %d 次，满 %d 次后切换为你的实测数据）",
+    "  (bonus)": "  （额外惊喜）",
+    "disenchant value %s (some materials have no price yet)": "分解估值 %s（部分产出材料暂无报价）",
+    "disenchant value %s": "分解估值 %s",
+    "disenchant value unknown, since the most likely material hasn't been scanned yet": "分解估值未知（主要产出材料尚未扫描报价）",
+    "<item link or ID>: what an item disenchants into and its value": "<物品链接或ID>：查询物品的分解产物及估值",
+    "say why each disenchant deal on the Disenchanting tab is there": "打印“附魔分解”页中每笔淘金推荐的计算依据",
+    "Pick an item, then click Disenchant. Right-click to mark it bought to disenchant": "选中一件物品后点击“分解”。右键点击可将其标记为“购入待分解”",
+    "%s is no longer marked bought to disenchant.": "%s 已取消“购入待分解”标记。",
+    "marked %d %s bought to disenchant.": "已将 %d 件 %s 标记为“购入待分解”。",
+    "marked %d %s bought to disenchant. Right-click it on the Disenchanting tab to unmark it.": "已将 %d 件 %s 标记为“购入待分解”。在“附魔分解”页右键点击可取消标记。",
+    "Searching the auction house for %s. Buy it in the auction house window at %s or less and it's marked to disenchant. If the list there doesn't change, type the name into its search box.": "正在拍卖行搜索 %s。在拍卖行界面以不高于 %s 的价格拍下后，将自动标记为待分解。若列表未刷新，请在搜索框手动输入名称。",
+    "Disenchanting it is worth %s more than selling it.": "将其分解比直接出售多赚 %s。",
+    "Selling it is worth %s more than disenchanting it.": "直接出售比将其分解多赚 %s。",
+    "Its sale price is what a vendor pays.": "其出售价格按商人收购价计算。",
+    "%d bought on the auction house to disenchant.": "从拍卖行购入 %d 件待分解。",
+    "Click to pick it, then click Disenchant.": "左键选中后点击下方“分解”按钮即可分解。",
+    "Right-click to unmark it.": "右键点击取消标记。",
+    "Right-click to mark it bought to disenchant.": "右键点击标记为“购入待分解”。",
+    "Buy at %s, disenchant, and sell the materials: about %s profit.": "以 %s 买入并分解出售材料：预计净利约 %s。",
+    "Buying it to disenchant loses about %s.": "买入并分解预计亏损约 %s。",
+    "Needs Enchanting %d. Your best is %d (%s).": "需附魔技能 %d。你最高的角色为 %d（%s）。",
+    "None of your characters has Enchanting.": "你麾下没有学习附魔专业的角色。",
+    "Scanned a while ago, so it may have sold.": "扫描时间较早，该挂单可能已被买走。",
+    "Right-click to search the auction house for it. What you buy then is marked to disenchant.": "右键点击在拍卖行中搜索该物品，随后购入的装备会自动标记为待分解。",
+    "Finds this item on the auction house. You click Buy yourself.": "在拍卖行中定位此物品，随后由你手动点击购买。",
+    "Disenchant one %s from your bags.": "分解背包中的一件 %s。",
+    "Item level %d %s weapon. Needs Enchanting about %d.": "装等 %d %s武器。约需附魔技能 %d。",
+    "Item level %d %s armor. Needs Enchanting about %d.": "装等 %d %s护甲。约需附魔技能 %d。",
+    "Item level %d %s weapon. Needs Enchanting about %d. %s": "装等 %d %s武器。约需附魔技能 %d。%s",
+    "Item level %d %s armor. Needs Enchanting about %d. %s": "装等 %d %s护甲。约需附魔技能 %d。%s",
+    "%d, %d bought to disenchant": "共 %d 件（含 %d 件购入待分解）",
+    "You bought it to disenchant. Right-click its row to unmark it.": "该物品被标记为购入待分解。右键点击该行可取消标记。",
+    "Nothing to compare it with, since it has no sale price.": "该物品无出售价格，无法对比收益。",
+    "Scan the auction house to price its materials.": "请先扫描拍卖行以获取其分解材料的价格。",
+    "Chances come from %s.": "掉率数据来自：%s。",
+    "Rough chances for now. They get better as you disenchant.": "当前为预估掉率，随着你分解次数增加会自动校准。",
+    " If it is already bound to you, only a vendor will buy it.": " 若该物品已灵魂绑定，则只能卖给商人。",
+    "Your best is %d (%s).": "你最高的角色为 %d（%s）。",
+    "Buying one to disenchant makes about %s.": "买下一件分解预计可赚约 %s。",
+    "Buying one to disenchant loses about %s.": "买下一件分解预计亏损约 %s。",
+    "These chances come from Classic's numbers. It's an average, so one disenchant can give more or less.": "概率基于经典旧世掉率表，为长期均值，单次分解产出可能高于或低于此值。",
+    " The buy price is the cheapest listing when last scanned (%s).": " 买入价取自上次扫描时的最低一口价（%s）。",
+    " That was a while ago, so it may have sold.": " 距离上次扫描已有一段时间，可能已被买走。",
+    "Done. You disenchanted %d item this session, worth about %s.": "已完成。本次会话共分解 %d 件物品，产出价值约 %s。",
+    "Done. You disenchanted %d items this session, worth about %s.": "已完成。本次会话共分解 %d 件物品，产出价值约 %s。",
+    " Untick \"Only where disenchanting pays more\" to see the rest.": " 取消勾选“仅显示分解收益高于直接出售的物品”可查看其余装备。",
+    "Nothing in your bags is worth more disenchanted than sold. Untick \"Only where disenchanting pays more\" to see them all.": "背包中没有分解收益高于直接出售的装备。取消勾选“仅显示分解收益高于直接出售的物品”可查看全部。",
+    "Nothing in your bags can be disenchanted.": "背包中没有可分解的装备。",
+    " %d more would make a profit, but less than your minimums in Settings (%s profit, %d%% margin).": " 另有 %d 件虽有微利，但低于你在设置中设定的门槛（最低利润 %s，利润率 %d%%）。",
+    "Nothing listed that your enchanters can disenchant yet.": "当前在售装备中暂无你的附魔号技能可分解的目标。",
+    "No weapons or armor from other sellers in your last scan.": "上次扫描中未发现其他玩家挂售的武器或护甲。",
+    "Nothing here is worth more disenchanted than sold. Click one to disenchant it anyway.": "当前列表中没有分解收益高于直接出售的物品。仍可左键选中后强行分解。",
+    "%d item, %d worth more disenchanted": "共 %d 件，其中 %d 件分解更划算",
+    "%d items, %d worth more disenchanted": "共 %d 件，其中 %d 件分解更划算",
+    "  ·  %d disenchanted this session, worth %s": "  ·  本次会话已分解 %d 件，产出估值 %s",
+    "%d deal, about %s if you buy them all": "%d 笔可淘金，全部拍下约需 %s",
+    "%d deals, about %s if you buy them all": "%d 笔可淘金，全部拍下约需 %s",
+    "they're checked once the auction house is closed": "将在关闭拍卖行窗口后自动后台读取",
+    "reading them now": "正在后台读取中",
+    "%s  ·  %d more listed items not checked yet, %s": "%s  ·  另有 %d 件在售装备待读取属性（%s）",
+
+    # --- Sales, Deals, Queue & Gather refinements (lines 1100-1650) ---
+    "In %s  ·  out %s  ·  net |c%s%s|r  ·  %s": "收入 %s  ·  支出 %s  ·  净收益 |c%s%s|r  ·  %s",
+    "%d sold  ·  taken in %s%s%s%s": "已售 %d 件  ·  入账 %s%s%s%s",
+    "  ·  %d%% sell-through": "  ·  售罄率 %d%%",
+    "  ·  %d waiting in the mail": "  ·  %d 笔待去邮箱收取",
+    "%d visit  ·  collected %s  ·  best haul %s": "收取 %d 次  ·  共入账 %s  ·  最高单次 %s",
+    "%d visits  ·  collected %s  ·  best haul %s": "收取 %d 次  ·  共入账 %s  ·  最高单次 %s",
+    "%d still listed  ·  %d ended since  ·  as of your last auction house visit": "%d 件在售  ·  %d 件已结束  ·  截至上次访问拍卖行",
+    "%d still listed  ·  as of your last auction house visit": "%d 件在售  ·  截至上次访问拍卖行",
+    "Flipping is risky: prices can drop before you sell. Only spend what you can afford to lose.": "倒卖有风险：出手前物价可能下跌，请量力而行。",
+    "Usually sells for %s (middle of %d scans).": "平时常卖价 %s（取自 %d 次扫描中位数）。",
+    "Buy at %s, list it again at %s: %s profit each after the cut.": "以 %s 买入，按 %s 重新上架：扣除抽成后单件净利 %s。",
+    "Buy at %s, sell to any vendor for %s: %s profit each.": "以 %s 买入，按 %s 卖给任意商人：单件净利 %s。",
+    "%d deal, about %s if you buy one of each": "%d 笔特惠，各买一件约需 %s",
+    "%d deals, about %s if you buy one of each": "%d 笔特惠，各买一件约需 %s",
+    "%d deal, about %s for one of each": "%d 笔特惠，各买一件约 %s",
+    "%d deals, about %s for one of each": "%d 笔特惠，各买一件约 %s",
+    "%d deal": "%d 笔特惠",
+    "%d deals": "%d 笔特惠",
+    "Still to go": "距离目标还差",
+    "bought": "购买",
+    "have it": "已备齐",
+    "On other characters": "其他小号持有",
+    "Buy: %s each. Make: %s each.": "直接购买：%s /个。自制成本：%s /个。",
+    "%d of %d ready": "%d / %d 项材料已备齐",
+    "%d of %d ready. Open your profession": "%d / %d 项可制造。请打开专业技能窗口",
+    "%d of %d ready. Click to open %s": "%d / %d 项可制造。点击打开 %s",
+    "used": "已消耗",
+    "Disenchant next: %s (%d)": "分解下一件：%s (%d)",
+    "Disenchant next (%d)": "分解下一件 (%d)",
+    "Disenchant next": "分解下一件",
+    "Stop crafting": "停止制造",
+    "crafting...": "正在制造...",
+
 }
 
 # ---------------------------------------------------------------------------
@@ -1342,6 +1540,21 @@ if os.path.exists(os.path.dirname(GAME_ZH_PATH)):
         f.write(final_text)
     print(f"Updated game directory: {GAME_ZH_PATH}")
 
+GAME_DE_PATH = "C:/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns/Blackthornes_TS/Logic/Disenchant.lua"
+if os.path.exists(GAME_DE_PATH):
+    with open(GAME_DE_PATH, 'r', encoding='utf-8') as f:
+        de_txt = f.read()
+    new_de_txt = re.sub(
+        r'for _, material in ipairs\(Disenchant\.MATERIALS\) do\r?\n\s*MATERIAL_NAME\[material\.itemID\] = material\.name\r?\nend',
+        'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend',
+        de_txt
+    )
+    if new_de_txt != de_txt:
+        with open(GAME_DE_PATH, 'w', encoding='utf-8') as f:
+            f.write(new_de_txt)
+        print(f"Patched game directory: {GAME_DE_PATH}")
+
+
 # Also update zip archives in public/addons and dist/addons
 import zipfile, shutil, tempfile
 
@@ -1352,9 +1565,17 @@ for zip_path in ["public/addons/blackthornes-tradeskills.zip", "dist/addons/blac
         replaced = False
         with zipfile.ZipFile(zip_path, 'r') as zin, zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
-                if item.filename.replace('\\', '/') == 'Blackthornes_TS/Locale/zhCN.lua':
+                norm_name = item.filename.replace('\\', '/')
+                if norm_name == 'Blackthornes_TS/Locale/zhCN.lua':
                     zout.writestr(item, final_text.encode('utf-8'))
                     replaced = True
+                elif norm_name == 'Blackthornes_TS/Logic/Disenchant.lua':
+                    de_raw = zin.read(item.filename).decode('utf-8')
+                    de_raw = de_raw.replace(
+                        'for _, material in ipairs(Disenchant.MATERIALS) do\n    MATERIAL_NAME[material.itemID] = material.name\nend',
+                        'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
+                    )
+                    zout.writestr(item, de_raw.encode('utf-8'))
                 else:
                     zout.writestr(item, zin.read(item.filename))
             if not replaced:

@@ -75,6 +75,17 @@ async function processBlackthornes() {
     zip.file('Blackthornes_TS/Locale/zhCN.lua', fs.readFileSync(btZhCNPath, 'utf-8'));
   }
 
+  // Localize enchanting material names in Logic/Disenchant.lua
+  const deFile = zip.file('Blackthornes_TS/Logic/Disenchant.lua');
+  if (deFile) {
+    let deText = await deFile.async('string');
+    deText = deText.replace(
+      'for _, material in ipairs(Disenchant.MATERIALS) do\n    MATERIAL_NAME[material.itemID] = material.name\nend',
+      'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
+    );
+    zip.file('Blackthornes_TS/Logic/Disenchant.lua', deText);
+  }
+
   // Patch money unit symbols to 金/银/铜
   const utilFile = zip.file('Blackthornes_TS/Core/Util.lua');
   if (utilFile) {
