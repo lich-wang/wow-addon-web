@@ -7,7 +7,7 @@ import { generateBTZhCN } from './locales/blackthornes.js';
 import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
 import { patchBtWQuests, patchQuestie, patchQuestieDB } from './locales/quests.js';
-import { patchTinyTooltipForever } from './locales/tooltip.js';
+import { patchForeverMouseTooltip } from './locales/tooltip.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -266,18 +266,18 @@ async function processBtWQuests() {
   console.log(`[✓] btwquests.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
-async function processTinyTooltipForever() {
-  const url = 'https://github.com/notBrian2/TinyTooltip-Forever/releases/download/1.1.1/TinyTooltip-Forever-1.1.1.zip';
-  const outPath = path.join(OUTPUT_DIR, 'tinytooltip-forever.zip');
+async function processForeverMouseTooltip() {
+  const url = 'https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip';
+  const outPath = path.join(OUTPUT_DIR, 'forever-mouse-tooltip.zip');
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
-  console.log('Completing zhCN localization for TinyTooltip Forever...');
-  await patchTinyTooltipForever(zip);
+  console.log('Injecting full zhCN localization for Forever Mouse Tooltip...');
+  await patchForeverMouseTooltip(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
-  console.log(`[✓] tinytooltip-forever.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  console.log(`[✓] forever-mouse-tooltip.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function main() {
@@ -290,7 +290,7 @@ async function main() {
   await processLueur();
   await processQuestieForever();
   await processBtWQuests();
-  await processTinyTooltipForever();
+  await processForeverMouseTooltip();
   console.log('=== All 9 Addons successfully bundled & localized into public/addons/ ===');
 }
 
