@@ -7,7 +7,41 @@ on:
       - 'v*'
 
 jobs:
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Pre-create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: '魔兽世界插件管理器桌面版 ${{ github.ref_name }}'
+          body: |
+            魔兽世界网页插件管理器 - 原生桌面客户端 (基于 Tauri 2.0)。
+
+            ### ✨ 特性
+            - 🚀 **完美突破浏览器权限限制**：原生读写 `C:\Program Files (x86)\World of Warcraft`，无需每次浏览器弹窗授权。
+            - 🔄 **云端自动同步更新**：与网页端（https://wow.lich.tech）实时同步，随时获取最新插件源与功能，无需频繁重装客户端。
+            - ⚡ **无限服 (WoW Forever) 优先适配**：优先展示与识别无限服目录及专属插件。
+            - 🟢 **进程运行感知**：智能感知正在运行的魔兽版本，无缝切换。
+
+            ### 📦 下载说明
+            - **Windows**: 下载 `.exe` (一键安装包) 或 `.msi`
+            - **macOS**: 下载 `.dmg` (支持 Apple Silicon 与 Intel Mac)
+          draft: false
+          prerelease: false
+
   build-tauri:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -44,20 +78,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: '魔兽世界插件管理器桌面版 v__VERSION__'
-          releaseBody: |
-            魔兽世界网页插件管理器 - 原生桌面客户端 (基于 Tauri 2.0)。
-            
-            ### ✨ 特性
-            - 🚀 **完美突破浏览器权限限制**：原生读写 `C:\Program Files (x86)\World of Warcraft`，无需每次浏览器弹窗授权。
-            - 🔄 **云端自动同步更新**：与网页端（https://wow.lich.tech）实时同步，随时获取最新插件源与功能，无需频繁重装客户端。
-            - ⚡ **无限服 (WoW Forever) 优先适配**：优先展示与识别无限服目录及专属插件。
-            - 🟢 **进程运行感知**：智能感知正在运行的魔兽版本，无缝切换。
-            
-            ### 📦 下载说明
-            - **Windows**: 下载 `.exe` (一键安装包) 或 `.msi`
-            - **macOS**: 下载 `.dmg` (支持 Apple Silicon 与 Intel Mac)
+          tagName: ${{ github.ref_name }}
+          releaseName: '魔兽世界插件管理器桌面版 ${{ github.ref_name }}'
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
