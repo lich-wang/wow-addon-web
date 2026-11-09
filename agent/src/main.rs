@@ -377,7 +377,28 @@ async fn main() {
         tokio::spawn(async {
             tokio::time::sleep(Duration::from_millis(600)).await;
             println!("\n[→] 正在打开网页端: {}", WEB_URL);
-            let _ = open::that(WEB_URL);
+
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, prefer Chrome or Edge so it works even if Safari is system default browser
+                let opened = std::process::Command::new("open")
+                    .args(["-a", "Google Chrome", WEB_URL])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+                    || std::process::Command::new("open")
+                        .args(["-a", "Microsoft Edge", WEB_URL])
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                if !opened {
+                    let _ = open::that(WEB_URL);
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = open::that(WEB_URL);
+            }
         });
     }
 

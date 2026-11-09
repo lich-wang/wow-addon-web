@@ -1,6 +1,6 @@
 {
   "name": "wow-addon-web",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": false,
   "description": "魔兽世界本地插件在线网页管理器 - 基于 File System Access API",
   "author": "lich-wang",
@@ -22,6 +22,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
     "clsx": "^2.1.1",
     "idb-keyval": "^6.3.0",
     "jszip": "^3.10.2",

@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { isFileSystemAccessSupported } from '../services/fsService';
 import type { AgentStatus, WowInstallation } from '../services/agentService';
-import { WIN_DOWNLOAD_URL, MAC_DOWNLOAD_URL, GITHUB_RELEASES_URL } from '../services/agentService';
+import { WIN_DOWNLOAD_URL, MAC_DOWNLOAD_URL, GITHUB_RELEASES_URL, isTauriEnv } from '../services/agentService';
 
 interface DirectoryBannerProps {
   onPickDirectory: () => void;
@@ -32,7 +32,8 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
   onSelectAgentInstallation,
   onPickAgentDirectory,
 }) => {
-  const isSupported = isFileSystemAccessSupported();
+  const isTauri = isTauriEnv();
+  const isSupported = isFileSystemAccessSupported() || isTauri;
   const isAgentConnected = !!agentStatus;
   const [showAllVersions, setShowAllVersions] = useState(false);
 
@@ -67,13 +68,18 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold">
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>智能混合架构 · 云端网页 + 本地极速通道</span>
+            <span>智能架构 · 云端网页 + 本地极速通道</span>
           </div>
 
-          {isAgentConnected ? (
+          {isTauri ? (
+            <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs font-semibold">
+              <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+              <span>Tauri 原生桌面端 · 极速本地访问</span>
+            </div>
+          ) : isAgentConnected ? (
             <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>本地助手在线 (v{agentStatus.version}) · 已解除沙箱限制</span>
+              <span>本地助手在线 (v{agentStatus?.version || '1.0.4'}) · 已解除沙箱限制</span>
             </div>
           ) : (
             <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400 text-xs">
@@ -279,14 +285,15 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
               </div>
             </div>
 
-            {/* Incompatible alert for older browsers */}
-            {!isSupported && (
-              <div className="flex items-start space-x-3 p-4 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 mb-6">
-                <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            {/* Incompatible alert for older browsers or Safari without desktop app */}
+            {!isSupported && !isTauri && (
+              <div className="flex items-start space-x-3 p-4 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-200 mb-6">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                 <div className="text-sm">
-                  <p className="font-semibold text-rose-200">当前浏览器不支持文件系统直接访问</p>
-                  <p className="text-rose-300/90 mt-1">
-                    如使用 Safari 或 Firefox，推荐直接下载上方【魔兽本地助手】，即可无缝在当前浏览器使用全部功能！
+                  <p className="font-semibold text-amber-100">当前浏览器受沙箱限制无法直接访问本地目录</p>
+                  <p className="text-amber-200/90 mt-1 leading-relaxed">
+                    🍎 <strong>Mac 用户</strong>：因 Safari 浏览器安全策略限制，推荐直接下载上方的 <strong>macOS 客户端 (.dmg)</strong>，独立原生运行，无需依赖 Chrome 也无需设置默认浏览器！<br />
+                    🪟 <strong>Windows 用户</strong>：可下载上方 <strong>单文件绿色免安装版 (.exe)</strong>，或在 Chrome / Edge 中直接访问。
                   </p>
                 </div>
               </div>

@@ -249,7 +249,7 @@ fn parse_toc_file(path: &Path, folder_name: &str) -> AddonInfo {
     }
 }
 
-fn scan_addons_dir(addons_path: &Path) -> Vec<AddonInfo> {
+pub fn scan_addons_dir(addons_path: &Path) -> Vec<AddonInfo> {
     let mut addons = Vec::new();
     let entries = match fs::read_dir(addons_path) {
         Ok(e) => e,
