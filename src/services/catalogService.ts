@@ -255,8 +255,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
 export async function downloadAndInstallAddon(
   addon: CuratedAddon,
   targetDirHandle: FileSystemDirectoryHandle,
-  onProgress: (progress: InstallProgress) => void
-): Promise<number> {
+  onProgress: (p: InstallProgress) => void
+): Promise<{ installedFolders: string[] }> {
   onProgress({
     status: 'downloading',
     addonName: addon.name,
@@ -271,10 +271,32 @@ export async function downloadAndInstallAddon(
 
   const arrayBuffer = await response.arrayBuffer();
 
-  return installAddonFromZip(targetDirHandle, arrayBuffer, (progress) => {
+  await installAddonFromZip(targetDirHandle, arrayBuffer, (progress) => {
     onProgress({
       ...progress,
       addonName: addon.name,
     });
   });
+
+  return { installedFolders: [addon.defaultFolderName] };
+}
+
+/**
+ * Generate a JSON export of installed addons for sharing or syncing
+ */
+export function generateShareManifest(
+  installedAddons: { name: string; folderName: string; version: string; interfaceVersion: string }[]
+): string {
+  const data = {
+    app: 'WoW Web Addon Manager',
+    createdAt: new Date().toISOString(),
+    total: installedAddons.length,
+    addons: installedAddons.map((a) => ({
+      name: a.name,
+      folder: a.folderName,
+      version: a.version,
+      interface: a.interfaceVersion,
+    })),
+  };
+  return JSON.stringify(data, null, 2);
 }
