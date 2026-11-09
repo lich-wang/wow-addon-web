@@ -1,6 +1,6 @@
 [package]
 name = "wow-addon-manager"
-version = "1.0.1"
+version = "1.0.2"
 description = "World of Warcraft Addon Manager Desktop"
 authors = ["lich"]
 license = "MIT"

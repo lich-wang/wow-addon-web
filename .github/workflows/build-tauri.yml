@@ -1,60 +1,30 @@
-name: Build Tauri Desktop App
+name: Release Tauri Desktop App
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v1.0.2)'
+        required: false
+        default: ''
 
 jobs:
-  create-release:
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Pre-create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: '魔兽世界插件管理器桌面版 ${{ github.ref_name }}'
-          body: |
-            魔兽世界网页插件管理器 - 原生桌面客户端 (基于 Tauri 2.0)。
-
-            ### ✨ 特性
-            - 🚀 **完美突破浏览器权限限制**：原生读写 `C:\Program Files (x86)\World of Warcraft`，无需每次浏览器弹窗授权。
-            - 🔄 **云端自动同步更新**：与网页端（https://wow.lich.tech）实时同步，随时获取最新插件源与功能，无需频繁重装客户端。
-            - ⚡ **无限服 (WoW Forever) 优先适配**：优先展示与识别无限服目录及专属插件。
-            - 🟢 **进程运行感知**：智能感知正在运行的魔兽版本，无缝切换。
-
-            ### 📦 下载说明
-            - **Windows**: 下载 `.exe` (一键安装包) 或 `.msi`
-            - **macOS**: 下载 `.dmg` (支持 Apple Silicon 与 Intel Mac)
-          draft: false
-          prerelease: false
-
   build-tauri:
-    needs: create-release
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: 'windows-latest'
-            args: ''
+            build-cmd: 'npm run tauri build'
+            artifact-name: 'windows-assets'
           - platform: 'macos-latest'
-            args: '--target universal-apple-darwin'
+            build-cmd: 'npm run tauri build -- --target universal-apple-darwin'
+            artifact-name: 'macos-assets'
 
     runs-on: ${{ matrix.platform }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -70,16 +40,97 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build Tauri Desktop App
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri Desktop Package
+        run: ${{ matrix.build-cmd }}
+
+      - name: Gather Windows bundles
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist-bundles
+          find src-tauri/target/release/bundle -type f \( -name "*.exe" -o -name "*.msi" \) -exec cp {} dist-bundles/ \;
+          ls -la dist-bundles/
+
+      - name: Gather macOS bundles
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          mkdir -p dist-bundles
+          find src-tauri/target/universal-apple-darwin/release/bundle -type f -name "*.dmg" -exec cp {} dist-bundles/ \;
+          if [ -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/WoW-Addon-Manager.app" ]; then
+            tar -czf dist-bundles/WoW-Addon-Manager_universal.app.tar.gz -C src-tauri/target/universal-apple-darwin/release/bundle/macos WoW-Addon-Manager.app
+          fi
+          ls -la dist-bundles/
+
+      - name: Upload Platform Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: '魔兽世界插件管理器桌面版 ${{ github.ref_name }}'
-          releaseDraft: false
+          name: ${{ matrix.artifact-name }}
+          path: dist-bundles/*
+          if-no-files-found: error
+
+  publish-release:
+    needs: build-tauri
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Determine Tag
+        id: get_tag
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+            TAG="v${VERSION}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using release tag: $TAG"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List all downloaded release files
+        run: |
+          ls -la release-assets/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: '魔兽世界插件管理器桌面版 ${{ steps.get_tag.outputs.tag }}'
+          body: |
+            魔兽世界网页插件管理器 - 官方原生桌面客户端 (基于 Tauri 2.0)。
+
+            ### ✨ 核心特性
+            - 🚀 **彻底解除系统盘权限限制**：原生直通读写 `C:\Program Files (x86)\World of Warcraft`，无需每次浏览器弹窗授权。
+            - 🔄 **随 Web 服务器自动同步更新**：自动加载云端（https://wow.lich.tech），界面与插件源随时最新，无需频繁重装。
+            - ⚡ **无限服 (WoW Forever) 优先适配**：优先展示与识别无限服目录及专属插件。
+            - 🟢 **游戏运行状态实时感知**：智能感知正在运行的魔兽版本，无缝切换。
+
+            ### 📦 下载安装
+            - **Windows**: 下载 `.exe` (一键安装) 或 `.msi`
+            - **macOS**: 下载 `.dmg` (通用版，原生支持 M1/M2/M3/M4 及 Intel Mac)
+          files: release-assets/*
+          draft: false
           prerelease: false
-          args: ${{ matrix.args }}
