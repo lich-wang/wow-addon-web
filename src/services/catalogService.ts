@@ -88,21 +88,6 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     gameFlavors: ['forever', 'classic', 'vanilla'],
     isForeverRecommended: true,
   },
-  {
-    id: 'rxpguides',
-    name: 'RestedXP Guide (任务攻略)',
-    description: '全球极速升级必备的高效任务导航攻略！自动规划最高效的任务路线、精准指引任务NPC与目标点、自动追踪等级进度，内置海量官方简体中文指引与多版本任务路线。',
-    author: 'RestedXP',
-    category: 'QoL',
-    icon: 'MapPin',
-    defaultFolderName: 'RXPGuides',
-    latestVersion: 'v4.11.35 (官方中文版)',
-    downloadUrl: '/addons/rxpguides.zip',
-    githubRepo: 'RestedXP/RXPGuides',
-    homeUrl: 'https://www.restedxp.com',
-    gameFlavors: ['forever', 'classic', 'retail', 'vanilla'],
-    isForeverRecommended: true,
-  },
 ];
 
 /**

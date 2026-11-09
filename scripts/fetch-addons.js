@@ -211,14 +211,6 @@ async function processLueur() {
   console.log(`[✓] lueur.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
-async function processRXPGuides() {
-  const url = 'https://github.com/RestedXP/RXPGuides/releases/download/v4.11.35/RXPGuides-v4.11.35.zip';
-  const outPath = path.join(OUTPUT_DIR, 'rxpguides.zip');
-  const buf = await downloadBuffer(url, outPath);
-  fs.writeFileSync(outPath, buf);
-  console.log(`[✓] rxpguides.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
-}
-
 async function main() {
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await processSBF();
@@ -227,8 +219,7 @@ async function main() {
   await processDungeonsForever();
   await processBagnon();
   await processLueur();
-  await processRXPGuides();
-  console.log('=== All 7 Addons successfully bundled & localized into public/addons/ ===');
+  console.log('=== All 6 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {
