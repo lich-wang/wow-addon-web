@@ -1571,9 +1571,10 @@ for zip_path in ["public/addons/blackthornes-tradeskills.zip", "dist/addons/blac
                     replaced = True
                 elif norm_name == 'Blackthornes_TS/Logic/Disenchant.lua':
                     de_raw = zin.read(item.filename).decode('utf-8')
-                    de_raw = de_raw.replace(
-                        'for _, material in ipairs(Disenchant.MATERIALS) do\n    MATERIAL_NAME[material.itemID] = material.name\nend',
-                        'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
+                    de_raw = re.sub(
+                        r'for _, material in ipairs\(Disenchant\.MATERIALS\) do\r?\n\s*MATERIAL_NAME\[material\.itemID\] = material\.name\r?\nend',
+                        'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend',
+                        de_raw
                     )
                     zout.writestr(item, de_raw.encode('utf-8'))
                 else:
@@ -1581,5 +1582,6 @@ for zip_path in ["public/addons/blackthornes-tradeskills.zip", "dist/addons/blac
             if not replaced:
                 zout.writestr('Blackthornes_TS/Locale/zhCN.lua', final_text.encode('utf-8'))
         shutil.move(tmp_path, zip_path)
+        os.chmod(zip_path, 0o644)
         print(f"Updated zip archive: {zip_path}")
 

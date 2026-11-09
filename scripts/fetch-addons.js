@@ -80,7 +80,7 @@ async function processBlackthornes() {
   if (deFile) {
     let deText = await deFile.async('string');
     deText = deText.replace(
-      'for _, material in ipairs(Disenchant.MATERIALS) do\n    MATERIAL_NAME[material.itemID] = material.name\nend',
+      /for _, material in ipairs\(Disenchant\.MATERIALS\) do\r?\n\s*MATERIAL_NAME\[material\.itemID\] = material\.name\r?\nend/,
       'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
     );
     zip.file('Blackthornes_TS/Logic/Disenchant.lua', deText);
