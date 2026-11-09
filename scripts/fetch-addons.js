@@ -4,6 +4,8 @@ import JSZip from 'jszip';
 import { patchSBF } from './locales/sbf.js';
 import { patchIceHUDZhCN } from './locales/icehud.js';
 import { generateBTZhCN } from './locales/blackthornes.js';
+import { patchLueur } from './locales/lueur.js';
+import { patchBagnon } from './locales/bagnon.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -112,12 +114,62 @@ async function processIceHUD() {
   console.log(`[✓] icehud.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+async function processDungeonsForever() {
+  const url = 'https://edge.forgecdn.net/files/9506/425/DungeonsForever2.1.31.zip';
+  const buf = await downloadBuffer(url);
+  // DungeonsForever is already natively 100% Simplified Chinese!
+  const outPath = path.join(OUTPUT_DIR, 'dungeonsforever.zip');
+  fs.writeFileSync(outPath, buf);
+  console.log(`[✓] dungeonsforever.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
+async function processBagnon() {
+  const url = 'https://edge.forgecdn.net/files/9456/775/Bagnon-12.1.8.zip';
+  const buf = await downloadBuffer(url);
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log('Patching Bagnon TOC metadata...');
+  await patchBagnon(zip);
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  const outPath = path.join(OUTPUT_DIR, 'bagnon.zip');
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] bagnon.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
+async function processLueur() {
+  const url = 'https://edge.forgecdn.net/files/9281/32/Lueur-1.4.0.zip';
+  const buf = await downloadBuffer(url);
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log('Injecting full zhCN localization for Lueur...');
+  await patchLueur(zip);
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  const outPath = path.join(OUTPUT_DIR, 'lueur.zip');
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] lueur.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
+async function processRXPGuides() {
+  const url = 'https://github.com/RestedXP/RXPGuides/releases/download/v4.11.35/RXPGuides-v4.11.35.zip';
+  const buf = await downloadBuffer(url);
+  // RXPGuides has official zhCN guides and locales built-in!
+  const outPath = path.join(OUTPUT_DIR, 'rxpguides.zip');
+  fs.writeFileSync(outPath, buf);
+  console.log(`[✓] rxpguides.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
 async function main() {
-  console.log('=== Fetching & Bundling Curated Addons (SBF, Blackthornes, IceHUD) ===');
+  console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await processSBF();
   await processBlackthornes();
   await processIceHUD();
-  console.log('=== All 3 Addons successfully bundled & localized into public/addons/ ===');
+  await processDungeonsForever();
+  await processBagnon();
+  await processLueur();
+  await processRXPGuides();
+  console.log('=== All 7 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {
