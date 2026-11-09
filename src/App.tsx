@@ -52,7 +52,14 @@ export function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isPicking, setIsPicking] = useState(false);
   const [needsResumeAuth, setNeedsResumeAuth] = useState(false);
-  const [activeTab, setActiveTab] = useState<'installed' | 'market'>('installed');
+  const [activeTab, setActiveTab] = useState<'installed' | 'market'>('market');
+
+  const handleBrowseMarket = () => {
+    setActiveTab('market');
+    setTimeout(() => {
+      document.getElementById('addon-market-section')?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+  };
 
   // Modals state
   const [selectedAddonDetail, setSelectedAddonDetail] = useState<AddonInfo | null>(null);
@@ -439,6 +446,7 @@ export function App() {
             agentStatus={agentStatus}
             onSelectAgentInstallation={handleSelectAgentInstallation}
             onPickAgentDirectory={handlePickAgentDirectory}
+            onBrowseMarket={handleBrowseMarket}
           />
         )}
 
@@ -461,14 +469,22 @@ export function App() {
                 <div className="text-center py-12 p-6 rounded-2xl bg-slate-900/40 border border-slate-800">
                   <h3 className="text-lg font-bold text-slate-300 mb-2">尚未连接魔兽世界插件目录</h3>
                   <p className="text-xs text-slate-400 mb-5">
-                    请在上方点击“选择魔兽世界 AddOns 目录”或启动本地助手开始管理插件。
+                    您可以选择本地 AddOns 目录进行插件扫描与一键安装，或直接前往插件市场免设置下载插件 ZIP 包。
                   </p>
-                  <button
-                    onClick={handlePickDirectory}
-                    className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg transition-all cursor-pointer"
-                  >
-                    立即选择本地目录
-                  </button>
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      onClick={handlePickDirectory}
+                      className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg transition-all cursor-pointer"
+                    >
+                      立即选择本地目录
+                    </button>
+                    <button
+                      onClick={handleBrowseMarket}
+                      className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-bold text-xs shadow-lg transition-all cursor-pointer"
+                    >
+                      免设置 · 直接去市场下载插件 ZIP
+                    </button>
+                  </div>
                 </div>
               )
             ) : (

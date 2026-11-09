@@ -61,26 +61,26 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* Nav Tabs */}
-            <nav className="hidden md:flex space-x-1">
+            <nav className="flex space-x-1">
+              <button
+                onClick={() => setActiveTab('market')}
+                className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
+                  activeTab === 'market'
+                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                精选插件市场
+              </button>
               <button
                 onClick={() => setActiveTab('installed')}
-                className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
                   activeTab === 'installed'
                     ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
               >
                 已装插件 {directoryState.isAuthorized ? `(${directoryState.addonCount})` : ''}
-              </button>
-              <button
-                onClick={() => setActiveTab('market')}
-                className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === 'market'
-                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                }`}
-              >
-                常用插件市场
               </button>
             </nav>
           </div>

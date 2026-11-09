@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  FolderCheck,
   ShieldCheck,
   Zap,
   HardDrive,
@@ -23,6 +22,7 @@ interface DirectoryBannerProps {
   agentStatus: AgentStatus | null;
   onSelectAgentInstallation: (inst: WowInstallation) => void;
   onPickAgentDirectory: () => void;
+  onBrowseMarket?: () => void;
 }
 
 export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
@@ -31,6 +31,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
   agentStatus,
   onSelectAgentInstallation,
   onPickAgentDirectory,
+  onBrowseMarket,
 }) => {
   const isTauri = isTauriEnv();
   const isSupported = isFileSystemAccessSupported() || isTauri;
@@ -68,7 +69,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold">
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>智能架构 · 云端网页 + 本地极速通道</span>
+            <span>智能架构 · 免设置直下 ZIP + 浏览器直连 + 原生桌面端</span>
           </div>
 
           {isTauri ? (
@@ -82,21 +83,20 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
               <span>本地助手在线 (v{agentStatus?.version || '1.0.4'}) · 已解除沙箱限制</span>
             </div>
           ) : (
-            <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400 text-xs">
-              <Terminal className="w-3.5 h-3.5 text-slate-400" />
-              <span>助手未运行（使用浏览器直接访问）</span>
+            <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-xs">
+              <Terminal className="w-3.5 h-3.5 text-amber-400" />
+              <span>免配置模式（可直接下载插件 ZIP 或连接本地目录）</span>
             </div>
           )}
         </div>
 
         {/* Main Heading */}
         <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-3">
-          魔兽世界本地插件 · 在线智能管理器
+          魔兽世界本地插件 · 在线智能管理器与汉化市场
         </h1>
 
         <p className="text-slate-300 text-base md:text-lg leading-relaxed mb-6">
-          网页端直接读写管理本地魔兽插件，实时同步云端最新功能。
-          支持 <strong className="text-amber-400 font-semibold">Windows 与 Mac</strong> 用户，解除系统盘受限目录拦截。
+          无需任何繁琐设置，在首页即可<strong className="text-amber-400 font-semibold">直接下载</strong>《魔兽世界：无限服 (WoW Forever)》及经典/正式服精选 100% 深度汉化插件 ZIP 包；也可连接本地 <code className="text-amber-300 font-mono text-sm">AddOns</code> 目录，实现一键自动解压安装、TOC 扫描与多模块整合管理。
         </p>
 
         {/* If Agent is Connected: Show Auto-Discovered Versions */}
@@ -202,24 +202,34 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
         ) : (
           /* When Agent is NOT Connected */
           <>
-            {/* Primary Browser Action Button */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
+            {/* Primary Action Buttons */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3.5 mb-5">
+              {onBrowseMarket && (
+                <button
+                  onClick={onBrowseMarket}
+                  className="flex items-center justify-center space-x-2.5 px-6 py-3.5 rounded-xl font-bold text-base bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 shadow-xl shadow-amber-500/25 hover:scale-102 active:scale-98 transition-all cursor-pointer"
+                >
+                  <Download className="w-5 h-5" />
+                  <span>免设置 · 直接下载插件 ZIP</span>
+                </button>
+              )}
+
               <button
                 onClick={onPickDirectory}
                 disabled={!isSupported || isPicking}
-                className={`flex items-center space-x-3 px-6 py-3.5 rounded-xl font-bold text-base shadow-xl transition-all ${
+                className={`flex items-center justify-center space-x-2.5 px-5 py-3.5 rounded-xl font-bold text-sm sm:text-base border transition-all ${
                   !isSupported
-                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    ? 'bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed'
                     : isPicking
-                    ? 'bg-slate-800 text-slate-400 cursor-wait'
-                    : 'bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 shadow-amber-500/25 hover:scale-102 active:scale-98 cursor-pointer'
+                    ? 'bg-slate-800 border-slate-700 text-slate-400 cursor-wait'
+                    : 'bg-slate-800/90 hover:bg-slate-800 border-amber-500/40 hover:border-amber-400 text-amber-300 shadow-lg hover:scale-102 active:scale-98 cursor-pointer'
                 }`}
               >
                 <FolderOpen className="w-5 h-5" />
                 <span>
                   {isPicking
                     ? '已打开选择窗口，请在弹窗中选择文件夹...'
-                    : '直接在浏览器中选择 AddOns 目录'}
+                    : '连接本地 AddOns 目录（一键自动安装）'}
                 </span>
               </button>
             </div>
@@ -290,10 +300,10 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
               <div className="flex items-start space-x-3 p-4 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-200 mb-6">
                 <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                 <div className="text-sm">
-                  <p className="font-semibold text-amber-100">当前浏览器受沙箱限制无法直接访问本地目录</p>
+                  <p className="font-semibold text-amber-100">当前浏览器可直接下载插件 ZIP，本地目录自动直写受沙箱限制</p>
                   <p className="text-amber-200/90 mt-1 leading-relaxed">
-                    🍎 <strong>Mac 用户</strong>：因 Safari 浏览器安全策略限制，推荐直接下载上方的 <strong>macOS 客户端 (.dmg)</strong>，独立原生运行，无需依赖 Chrome 也无需设置默认浏览器！<br />
-                    🪟 <strong>Windows 用户</strong>：可下载上方 <strong>单文件绿色免安装版 (.exe)</strong>，或在 Chrome / Edge 中直接访问。
+                    📦 <strong>免设置直接下载</strong>：您依然可以在下方市场直接点击 <strong>「直接下载 ZIP」</strong> 保存插件包并手动解压！<br />
+                    🍎 <strong>Mac / Windows 一键直装</strong>：如需自动扫描与一键安装，推荐下载上方 <strong>macOS (.dmg)</strong> 或 <strong>Windows (.exe)</strong> 原生客户端。
                   </p>
                 </div>
               </div>
@@ -304,13 +314,13 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
         {/* 3 Pillars / Feature Highlights */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-6 border-t border-slate-800/80">
           <div className="flex items-start space-x-3">
-            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
-              <ShieldCheck className="w-4 h-4" />
+            <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
+              <Download className="w-4 h-4" />
             </div>
             <div>
-              <h4 className="text-sm font-semibold text-slate-200">100% 本地安全保护</h4>
+              <h4 className="text-sm font-semibold text-slate-200">免配置直接下载 & 一键直装</h4>
               <p className="text-xs text-slate-400 mt-1">
-                所有解压与读取仅在本地完成，绝不上传游戏账号与个人数据。
+                未设置目录时可直接下载插件 ZIP 压缩包；连接目录后更支持流式解压一键安装。
               </p>
             </div>
           </div>
@@ -320,21 +330,21 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
               <HardDrive className="w-4 h-4" />
             </div>
             <div>
-              <h4 className="text-sm font-semibold text-slate-200">直读 TOC 与版本</h4>
+              <h4 className="text-sm font-semibold text-slate-200">无限服精选 100% 深度汉化</h4>
               <p className="text-xs text-slate-400 mt-1">
-                智能解析魔兽插件 TOC 元数据、作者、依赖关系与对应怀旧/正式服版本。
+                内置单键钓鱼 (SBF)、商业制造拍卖、IceHUD、无限副本手册、Bagnon 等全中文插件与多模块聚合管理。
               </p>
             </div>
           </div>
 
           <div className="flex items-start space-x-3">
-            <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
-              <FolderCheck className="w-4 h-4" />
+            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
+              <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
-              <h4 className="text-sm font-semibold text-slate-200">云端即时同步</h4>
+              <h4 className="text-sm font-semibold text-slate-200">100% 本地安全与跨平台</h4>
               <p className="text-xs text-slate-400 mt-1">
-                网站在 Cloudflare 持续更新，打开即最新，免去传统客户端繁重更新。
+                纯网页沙箱 + Tauri 2.0 原生桌面端双擎驱动，所有读写均在本地完成，绝不上传个人数据。
               </p>
             </div>
           </div>

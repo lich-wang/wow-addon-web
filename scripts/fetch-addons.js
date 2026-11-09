@@ -6,6 +6,8 @@ import { patchIceHUDZhCN } from './locales/icehud.js';
 import { generateBTZhCN } from './locales/blackthornes.js';
 import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
+import { patchBtWQuests, patchQuestie, patchQuestieDB } from './locales/quests.js';
+import { patchForeverMouseTooltip, patchTinyTooltipForever } from './locales/tooltip.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -211,6 +213,69 @@ async function processLueur() {
   console.log(`[✓] lueur.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+async function processQuestieForever() {
+  const coreUrl = 'https://edge.forgecdn.net/files/9502/146/Questie-v12.6.4.zip';
+  const dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
+  const outPath = path.join(OUTPUT_DIR, 'questie-forever.zip');
+
+  console.log('Fetching Questie Core (v12.6.4) + QuestieDB Forever (v1.0.13)...');
+  const coreBuf = await downloadBuffer(coreUrl);
+  const dbBuf = await downloadBuffer(dbUrl);
+
+  const zip = await JSZip.loadAsync(coreBuf);
+  await patchQuestie(zip);
+
+  // Merge QuestieDB into the same zip archive so 1-click install sets up both Questie and QuestieDB
+  await zip.loadAsync(dbBuf);
+  await patchQuestieDB(zip);
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] questie-forever.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
+async function processBtWQuests() {
+  const url = 'https://edge.forgecdn.net/files/9498/296/BtWQuests-v2.69.1-forever.zip';
+  const outPath = path.join(OUTPUT_DIR, 'btwquests.zip');
+  const buf = await downloadBuffer(url, outPath);
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log('Completing zhCN localization & TOC metadata for BtWQuests Forever...');
+  await patchBtWQuests(zip);
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] btwquests.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
+async function processForeverMouseTooltip() {
+  const url = 'https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip';
+  const outPath = path.join(OUTPUT_DIR, 'forever-mouse-tooltip.zip');
+  const buf = await downloadBuffer(url, outPath);
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log('Injecting full zhCN localization for Forever Mouse Tooltip...');
+  await patchForeverMouseTooltip(zip);
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] forever-mouse-tooltip.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
+async function processTinyTooltipForever() {
+  const url = 'https://github.com/notBrian2/TinyTooltip-Forever/releases/download/1.1.1/TinyTooltip-Forever-1.1.1.zip';
+  const outPath = path.join(OUTPUT_DIR, 'tinytooltip-forever.zip');
+  const buf = await downloadBuffer(url, outPath);
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log('Completing zhCN localization for TinyTooltip Forever...');
+  await patchTinyTooltipForever(zip);
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] tinytooltip-forever.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
 async function main() {
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await processSBF();
@@ -219,7 +284,11 @@ async function main() {
   await processDungeonsForever();
   await processBagnon();
   await processLueur();
-  console.log('=== All 6 Addons successfully bundled & localized into public/addons/ ===');
+  await processQuestieForever();
+  await processBtWQuests();
+  await processForeverMouseTooltip();
+  await processTinyTooltipForever();
+  console.log('=== All 10 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {

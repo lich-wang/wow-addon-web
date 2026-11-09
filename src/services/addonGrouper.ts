@@ -72,6 +72,22 @@ const KNOWN_BUNDLES: BundleRule[] = [
       f.toLowerCase().startsWith('tradeskillmaster_') &&
       f.toLowerCase() !== 'tradeskillmaster',
   },
+  {
+    id: 'questie',
+    mainFolder: 'Questie',
+    matcher: (f) => {
+      const lower = f.toLowerCase();
+      return lower.startsWith('questie') && lower !== 'questie';
+    },
+  },
+  {
+    id: 'btwquests',
+    mainFolder: 'BtWQuests',
+    matcher: (f) => {
+      const lower = f.toLowerCase();
+      return lower.startsWith('btwquests') && lower !== 'btwquests';
+    },
+  },
 ];
 
 /**
