@@ -294,7 +294,10 @@ export function App() {
           message: `正在从 wow.lich.tech 下载 ${addon.name}...`,
         });
 
-        const res = await fetch(addon.downloadUrl);
+        const url = addon.downloadUrl.startsWith('http')
+          ? addon.downloadUrl
+          : `https://wow.lich.tech${addon.downloadUrl}`;
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`下载失败 (HTTP ${res.status})`);
         const blob = await res.blob();
 

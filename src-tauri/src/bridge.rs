@@ -1,6 +1,6 @@
 use axum::{
     body::Bytes,
-    extract::Query,
+    extract::{DefaultBodyLimit, Query},
     http::{header::HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Json},
     routing::{get, post},
@@ -495,6 +495,7 @@ pub fn start_bridge_server() {
                 )
                 .layer(
                     tower::ServiceBuilder::new()
+                        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
                         .layer(
                             CorsLayer::new()
                                 .allow_origin(Any)
