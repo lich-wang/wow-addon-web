@@ -1535,6 +1535,20 @@ with open(BT_ZH_PATH, 'w', encoding='utf-8') as f:
     f.write(final_text)
 print(f"Updated {BT_ZH_PATH}: {changed_count} entries refined, {fmt_mismatch} format mismatches.")
 
+UPSTREAM_ZH_PATH = "scripts/locales/upstream_Blackthornes_zhCN.lua"
+upstream_header = (
+    '-- Blackthornes Tradeskills -- Locale/zhCN.lua\n'
+    '-- Simplified Chinese (zhCN) & Traditional Chinese (zhTW) localization\n\n'
+    'local _, ns = ...\n'
+    'local L = ns.L\n\n'
+    'local ok, locale = pcall(function() return GetLocale() end)\n'
+    'if not (ok and (locale == "zhCN" or locale == "zhTW")) then return end\n\n'
+)
+upstream_body = '\n'.join(out_lines[6:]) + '\n'
+with open(UPSTREAM_ZH_PATH, 'w', encoding='utf-8') as f:
+    f.write(upstream_header + upstream_body)
+print(f"Generated upstream-ready file: {UPSTREAM_ZH_PATH}")
+
 if os.path.exists(os.path.dirname(GAME_ZH_PATH)):
     with open(GAME_ZH_PATH, 'w', encoding='utf-8') as f:
         f.write(final_text)
