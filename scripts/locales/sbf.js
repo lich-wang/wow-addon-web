@@ -299,6 +299,10 @@ export const SBF_WIDGETS_REPLACEMENTS = [
    'local GEAR_LABEL = { equipGear = "换上钓鱼配装", restoreGear = "恢复常规装备" }'],
   ['slotId == "equipGear" and "Equip profile gear" or "Restore normal gear"',
    'slotId == "equipGear" and "换上钓鱼配装" or "恢复常规装备"'],
+  [
+    `local MOUSE_LABEL = {\n  BUTTON1 = "Left Button", BUTTON2 = "Right Button", BUTTON3 = "Middle Button",\n  BUTTON4 = "Button 4", BUTTON5 = "Button 5",\n}`,
+    `local MOUSE_LABEL = {\n  BUTTON1 = "鼠标左键", BUTTON2 = "鼠标右键", BUTTON3 = "鼠标中键",\n  BUTTON4 = "鼠标侧键4", BUTTON5 = "鼠标侧键5",\n}`
+  ],
   ['{ check = { label = "Active"', '{ check = { label = "启用"']
 ];
 
@@ -433,6 +437,17 @@ end
       }
     }
     zip.file('SBF/OptionsWidgets.lua', widText);
+  }
+
+  // 5b. Patch SBF/Libs/GECBind-1.0/GECBind-1.0.lua
+  const gecFile = zip.file('SBF/Libs/GECBind-1.0/GECBind-1.0.lua');
+  if (gecFile) {
+    let gecText = await gecFile.async('string');
+    gecText = gecText
+      .replaceAll('if not key or key == "" then return "Set key" end', 'if not key or key == "" then return "设置按键" end')
+      .replaceAll('self:SetText(kind == "pad" and "press a controller button..." or "press key...")', 'self:SetText(kind == "pad" and "请按手柄按键..." or "请按按键...")')
+      .replaceAll('text = "|cffffd100%s|r is already bound to |cffffffff%s|r.\\n\\nReassign that key here? "\n    .. "The other binding will be cleared.",', 'text = "|cffffd100%s|r 已经被绑定到 |cffffffff%s|r。\\n\\n是否重新分配到此处？原有的绑定将被清除。",');
+    zip.file('SBF/Libs/GECBind-1.0/GECBind-1.0.lua', gecText);
   }
 
   // 6. Patch Core.lua for Skill Book expansions and label

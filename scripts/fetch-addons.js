@@ -18,32 +18,41 @@ const HEADERS = {
   ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
 };
 
-async function downloadBuffer(url) {
-  console.log(`Downloading: ${url}...`);
-  const res = await fetch(url, { headers: HEADERS });
-  if (!res.ok) {
-    throw new Error(`Failed to download ${url}: HTTP ${res.status}`);
+async function downloadBuffer(url, fallbackPath) {
+  try {
+    console.log(`Downloading: ${url}...`);
+    const res = await fetch(url, { headers: HEADERS });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (e) {
+    if (fallbackPath && fs.existsSync(fallbackPath)) {
+      console.log(`[Cache Fallback] Download failed (${e.message}), using existing: ${fallbackPath}`);
+      return fs.readFileSync(fallbackPath);
+    }
+    throw e;
   }
-  return Buffer.from(await res.arrayBuffer());
 }
 
 async function processSBF() {
   const url = 'https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.05.1/SBF-2026.11.05.1.zip';
-  const buf = await downloadBuffer(url);
+  const outPath = path.join(OUTPUT_DIR, 'sbf.zip');
+  const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Injecting zhCN localization for Single-Button Fishing...');
   await patchSBF(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  const outPath = path.join(OUTPUT_DIR, 'sbf.zip');
   fs.writeFileSync(outPath, outBuf);
   console.log(`[✓] sbf.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function processBlackthornes() {
   const url = 'https://edge.forgecdn.net/files/9228/138/Blackthornes_TS-v0.64.0-forever.zip';
-  const buf = await downloadBuffer(url);
+  const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
+  const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Generating zhCN localization for Blackthornes Tradeskills...');
@@ -88,14 +97,14 @@ async function processBlackthornes() {
   }
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
   fs.writeFileSync(outPath, outBuf);
   console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB) with ${entries.length} localized strings`);
 }
 
 async function processIceHUD() {
   const url = 'https://github.com/parnic/ice-hud/releases/download/v1.17.28/IceHUD-v1.17.28.zip';
-  const buf = await downloadBuffer(url);
+  const outPath = path.join(OUTPUT_DIR, 'icehud.zip');
+  const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Completing zhCN localization for IceHUD...');
@@ -118,53 +127,50 @@ async function processIceHUD() {
   }
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  const outPath = path.join(OUTPUT_DIR, 'icehud.zip');
   fs.writeFileSync(outPath, outBuf);
   console.log(`[✓] icehud.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function processDungeonsForever() {
   const url = 'https://edge.forgecdn.net/files/9506/425/DungeonsForever2.1.31.zip';
-  const buf = await downloadBuffer(url);
-  // DungeonsForever is already natively 100% Simplified Chinese!
   const outPath = path.join(OUTPUT_DIR, 'dungeonsforever.zip');
+  const buf = await downloadBuffer(url, outPath);
   fs.writeFileSync(outPath, buf);
   console.log(`[✓] dungeonsforever.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function processBagnon() {
   const url = 'https://edge.forgecdn.net/files/9456/775/Bagnon-12.1.8.zip';
-  const buf = await downloadBuffer(url);
+  const outPath = path.join(OUTPUT_DIR, 'bagnon.zip');
+  const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Patching Bagnon TOC metadata...');
   await patchBagnon(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  const outPath = path.join(OUTPUT_DIR, 'bagnon.zip');
   fs.writeFileSync(outPath, outBuf);
   console.log(`[✓] bagnon.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function processLueur() {
   const url = 'https://edge.forgecdn.net/files/9281/32/Lueur-1.4.0.zip';
-  const buf = await downloadBuffer(url);
+  const outPath = path.join(OUTPUT_DIR, 'lueur.zip');
+  const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Injecting full zhCN localization for Lueur...');
   await patchLueur(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  const outPath = path.join(OUTPUT_DIR, 'lueur.zip');
   fs.writeFileSync(outPath, outBuf);
   console.log(`[✓] lueur.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function processRXPGuides() {
   const url = 'https://github.com/RestedXP/RXPGuides/releases/download/v4.11.35/RXPGuides-v4.11.35.zip';
-  const buf = await downloadBuffer(url);
-  // RXPGuides has official zhCN guides and locales built-in!
   const outPath = path.join(OUTPUT_DIR, 'rxpguides.zip');
+  const buf = await downloadBuffer(url, outPath);
   fs.writeFileSync(outPath, buf);
   console.log(`[✓] rxpguides.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }

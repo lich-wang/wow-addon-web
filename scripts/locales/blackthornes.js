@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const DICTIONARY = {
   // Navigation & 12 Main Tabs (Both Title Case and UPPERCASE for robust matching)
@@ -266,6 +268,12 @@ export function translateBTKey(enKey, deVal) {
 }
 
 export function generateBTZhCN(entries) {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const pregen = path.join(__dirname, 'bt_zhCN.lua');
+  if (fs.existsSync(pregen)) {
+    return fs.readFileSync(pregen, 'utf8');
+  }
+
   const lines = [
     '-- Blackthornes Tradeskills -- Locale/zhCN.lua',
     '-- 简体中文 (Simplified Chinese) - 强制加载全部中文',
