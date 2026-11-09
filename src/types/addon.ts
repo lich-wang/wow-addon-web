@@ -21,6 +21,8 @@ export interface AddonInfo {
   dependencies: string[];
   category?: string;
   icon?: string;
+  subFolders?: string[];
+  isBundle?: boolean;
 }
 
 export interface CuratedAddon {

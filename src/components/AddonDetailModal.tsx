@@ -6,7 +6,7 @@ import { formatBytes } from '../services/fsService';
 interface AddonDetailModalProps {
   addon: AddonInfo | null;
   onClose: () => void;
-  onDelete: (folderName: string, name: string) => void;
+  onDelete: (folderName: string, name: string, subFolders?: string[]) => void;
 }
 
 export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
@@ -95,6 +95,26 @@ export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
             </div>
           </div>
 
+          {/* Sub-modules for Bundles */}
+          {addon.subFolders && addon.subFolders.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-amber-400 mb-2 flex items-center space-x-1.5">
+                <Folder className="w-3.5 h-3.5" />
+                <span>包含的子组件模块目录 ({addon.subFolders.length} 个):</span>
+              </h4>
+              <div className="flex flex-wrap gap-1.5">
+                {addon.subFolders.map((sf, index) => (
+                  <span
+                    key={index}
+                    className="px-2 py-0.5 rounded bg-amber-950/40 border border-amber-600/30 text-xs font-mono text-amber-300"
+                  >
+                    {sf}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Dependencies */}
           {addon.dependencies && addon.dependencies.length > 0 && (
             <div>
@@ -117,13 +137,17 @@ export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
         <div className="px-6 py-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between">
           <button
             onClick={() => {
-              onDelete(addon.folderName, addon.name);
+              onDelete(addon.folderName, addon.name, addon.subFolders);
               onClose();
             }}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-rose-950/40 border border-rose-500/30 text-rose-300 hover:bg-rose-900/50 text-xs font-medium transition-colors cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span>彻底卸载此插件</span>
+            <span>
+              {addon.subFolders && addon.subFolders.length > 0
+                ? `一并卸载全部 ${addon.subFolders.length + 1} 个关联目录`
+                : '彻底卸载此插件'}
+            </span>
           </button>
 
           <button

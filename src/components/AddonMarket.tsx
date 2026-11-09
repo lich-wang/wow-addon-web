@@ -73,9 +73,11 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
   ];
 
   const getInstalledState = (curated: CuratedAddon) => {
+    const curFolder = curated.defaultFolderName.toLowerCase();
     return installedAddons.find(
       (installed) =>
-        installed.folderName.toLowerCase() === curated.defaultFolderName.toLowerCase() ||
+        installed.folderName.toLowerCase() === curFolder ||
+        installed.subFolders?.some((sf) => sf.toLowerCase() === curFolder) ||
         installed.name.toLowerCase().includes(curated.id.toLowerCase())
     );
   };

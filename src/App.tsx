@@ -19,6 +19,7 @@ import {
   deleteAddon,
   installAddonFromZip,
 } from './services/fsService';
+import { groupAddons } from './services/addonGrouper';
 
 import { downloadAndInstallAddon } from './services/catalogService';
 
@@ -90,10 +91,11 @@ export function App() {
     setIsLoading(true);
     try {
       const list = await scanAddOns(handle);
-      setAddons(list);
+      const grouped = groupAddons(list);
+      setAddons(grouped);
       setDirectoryState((prev) => ({
         ...prev,
-        addonCount: list.length,
+        addonCount: grouped.length,
       }));
     } catch (err) {
       console.error('Browser scan error:', err);
@@ -107,10 +109,11 @@ export function App() {
     setIsLoading(true);
     try {
       const list = await agentScanAddons(addonsPath);
-      setAddons(list);
+      const grouped = groupAddons(list);
+      setAddons(grouped);
       setDirectoryState((prev) => ({
         ...prev,
-        addonCount: list.length,
+        addonCount: grouped.length,
       }));
     } catch (err: any) {
       console.error('Agent scan error:', err);
@@ -258,19 +261,30 @@ export function App() {
     }
   };
 
-  // Delete an addon
-  const handleDeleteAddon = async (folderName: string, name: string) => {
+  // Delete an addon (handles both single folder and multi-folder bundles)
+  const handleDeleteAddon = async (folderName: string, name: string, subFolders?: string[]) => {
+    const allFolders = [folderName, ...(subFolders || [])];
+    const foldersDesc =
+      allFolders.length > 1
+        ? `\n\n该插件组合由 ${allFolders.length} 个关联组件目录组成，将一并彻底删除：\n${allFolders.map((f) => ` • ${f}`).join('\n')}`
+        : ` (${folderName})`;
+
     const confirmed = window.confirm(
-      `确定要彻底从魔兽本地目录中删除插件 [${name}] (${folderName}) 吗？\n删除后不可撤销。`
+      `确定要彻底从魔兽本地目录中删除插件 [${name}] 吗？${foldersDesc}\n\n删除后不可撤销。`
     );
     if (!confirmed) return;
 
     try {
+      for (const folder of allFolders) {
+        if (directoryState.mode === 'agent' && directoryState.agentPath) {
+          await agentDeleteAddon(directoryState.agentPath, folder);
+        } else if (directoryState.handle) {
+          await deleteAddon(directoryState.handle, folder);
+        }
+      }
       if (directoryState.mode === 'agent' && directoryState.agentPath) {
-        await agentDeleteAddon(directoryState.agentPath, folderName);
         await loadAgentAddons(directoryState.agentPath);
       } else if (directoryState.handle) {
-        await deleteAddon(directoryState.handle, folderName);
         await loadBrowserAddons(directoryState.handle);
       }
     } catch (err: any) {

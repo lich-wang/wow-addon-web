@@ -13,7 +13,7 @@ import { formatBytes } from '../services/fsService';
 
 interface AddonListProps {
   addons: AddonInfo[];
-  onDeleteAddon: (folderName: string, name: string) => void;
+  onDeleteAddon: (folderName: string, name: string, subFolders?: string[]) => void;
   onSelectAddonDetail: (addon: AddonInfo) => void;
 }
 
@@ -201,6 +201,12 @@ export const AddonList: React.FC<AddonListProps> = ({
                       TOC: {addon.interfaceVersion}
                     </span>
                   )}
+
+                  {addon.subFolders && addon.subFolders.length > 0 && (
+                    <span className="px-2 py-0.5 rounded bg-amber-950/40 text-amber-300 border border-amber-500/30 font-semibold">
+                      全套组件 ({addon.subFolders.length + 1})
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -224,9 +230,13 @@ export const AddonList: React.FC<AddonListProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDeleteAddon(addon.folderName, addon.name);
+                      onDeleteAddon(addon.folderName, addon.name, addon.subFolders);
                     }}
-                    title="卸载删除此插件"
+                    title={
+                      addon.subFolders && addon.subFolders.length > 0
+                        ? `一并卸载全部 ${addon.subFolders.length + 1} 个关联组件目录`
+                        : '卸载删除此插件'
+                    }
                     className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition-colors cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
