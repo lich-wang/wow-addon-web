@@ -64,12 +64,12 @@ async function processSBF() {
 }
 
 async function processBlackthornes() {
-  const url = 'https://edge.forgecdn.net/files/9228/138/Blackthornes_TS-v0.64.0-forever.zip';
+  const url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.19.1/Blackthornes_TS-v1.19.1-forever.zip';
   const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
-  console.log('Injecting clean 100% complete zhCN for Blackthornes Tradeskills...');
+  console.log('Injecting clean 100% complete zhCN for Blackthornes Tradeskills v1.19.1...');
   const btZhCNPath = path.resolve('scripts/locales/bt_zhCN.lua');
   if (fs.existsSync(btZhCNPath)) {
     zip.file('Blackthornes_TS/Locale/zhCN.lua', fs.readFileSync(btZhCNPath, 'utf-8'));
@@ -79,10 +79,15 @@ async function processBlackthornes() {
   const deFile = zip.file('Blackthornes_TS/Logic/Disenchant.lua');
   if (deFile) {
     let deText = await deFile.async('string');
-    deText = deText.replace(
-      /for _, material in ipairs\(Disenchant\.MATERIALS\) do\r?\n\s*MATERIAL_NAME\[material\.itemID\] = material\.name\r?\nend/,
-      'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
-    );
+    deText = deText
+      .replace(
+        /for _, material in ipairs\(Disenchant\.MATERIALS\) do\r?\n\s*MATERIAL_NAME\[material\.itemID\] = material\.name\r?\nend/,
+        'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
+      )
+      .replace(
+        /function Disenchant:MaterialName\(itemID\)\r?\n\s*return MATERIAL_NAME\[itemID\]\r?\nend/,
+        'function Disenchant:MaterialName(itemID)\n    if not MATERIAL_NAME[itemID] then return nil end\n    return self:ItemName(itemID)\nend'
+      );
     zip.file('Blackthornes_TS/Logic/Disenchant.lua', deText);
   }
 
@@ -144,11 +149,13 @@ async function processBlackthornes() {
   const tocFile = zip.file('Blackthornes_TS/Blackthornes_TS.toc');
   if (tocFile) {
     let toc = await tocFile.async('string');
-    if (!toc.includes('Locale\\zhCN.lua')) {
+    if (!toc.includes('Title-zhCN:')) {
       toc = toc
         .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r Blackthornes Tradeskills (商业制造与拍卖)')
-        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 专为无限服打造的专业制造与拍卖行全能管理插件，实时计算配方利润、排队制造与防亏损上架。')
-        .replace('Locale\\deDE.lua', 'Locale\\deDE.lua\nLocale\\zhCN.lua');
+        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 专为无限服打造的专业制造与拍卖行全能管理插件，实时计算配方利润、排队制造与防亏损上架。');
+      if (!toc.includes('Locale\\zhCN.lua')) {
+        toc = toc.replace('Locale\\deDE.lua', 'Locale\\deDE.lua\nLocale\\zhCN.lua');
+      }
       zip.file('Blackthornes_TS/Blackthornes_TS.toc', toc);
     }
   }

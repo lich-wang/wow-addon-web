@@ -1477,10 +1477,11 @@ def clean_machine_zh(en, zh):
     return s
 
 def get_format_tokens(text):
-    # Match Lua printf specifiers: %%, %s, %d, %2d, %02d, %.1f, %.0f, etc.
-    return [t for t in re.findall(r'%[-+0 #]*\d*(?:\.\d+)?[sdifxXouceEgG%]', text) if t != '%%']
+    # Match Lua printf specifiers: %%, %s, %d, %1$s, %2$d, %2d, %02d, %.1f, %.0f, etc.
+    return [t for t in re.findall(r'%(?:\d+\$)?[-+0 #]*\d*(?:\.\d+)?[sdifxXouceEgG%]', text) if t != '%%']
 
-with open(BT_ZH_PATH, 'r', encoding='utf-8') as f:
+BASE_SRC_PATH = "scripts/locales/v119_upstream_zhCN.lua" if os.path.exists("scripts/locales/v119_upstream_zhCN.lua") else BT_ZH_PATH
+with open(BASE_SRC_PATH, 'r', encoding='utf-8') as f:
     raw_content = f.read()
 
 pattern = re.compile(r'L\["((?:[^"\\]|\\.)*)"\]\s*=\s*"((?:[^"\\]|\\.)*)"')
@@ -1590,7 +1591,48 @@ for zip_path in ["public/addons/blackthornes-tradeskills.zip", "dist/addons/blac
                         'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend',
                         de_raw
                     )
+                    de_raw = re.sub(
+                        r'function Disenchant:MaterialName\(itemID\)\r?\n\s*return MATERIAL_NAME\[itemID\]\r?\nend',
+                        'function Disenchant:MaterialName(itemID)\n    if not MATERIAL_NAME[itemID] then return nil end\n    return self:ItemName(itemID)\nend',
+                        de_raw
+                    )
                     zout.writestr(item, de_raw.encode('utf-8'))
+                elif norm_name == 'Blackthornes_TS/Core/Util.lua':
+                    u_raw = zin.read(item.filename).decode('utf-8')
+                    u_raw = (u_raw
+                        .replace('local GOLD_SUFFIX   = "|cffffd700g|r"', 'local GOLD_SUFFIX   = "|cffffd700金|r"')
+                        .replace('local SILVER_SUFFIX = "|cffc7c7cfs|r"', 'local SILVER_SUFFIX = "|cffc7c7cf银|r"')
+                        .replace('local COPPER_SUFFIX = "|cffeda55fc|r"', 'local COPPER_SUFFIX = "|cffeda55f铜|r"')
+                        .replace('g, s, c = "g", "s", "c"', 'g, s, c = "金", "银", "铜"'))
+                    zout.writestr(item, u_raw.encode('utf-8'))
+                elif norm_name == 'Blackthornes_TS/UI/PriceEditor.lua':
+                    pe_raw = zin.read(item.filename).decode('utf-8')
+                    pe_raw = (pe_raw
+                        .replace('Coin(48, 214748, "|cffffd700g|r")', 'Coin(48, 214748, "|cffffd700金|r")')
+                        .replace('Coin(30, 99, "|cffc7c7cfs|r")', 'Coin(30, 99, "|cffc7c7cf银|r")')
+                        .replace('Coin(30, 99, "|cffeda55fc|r")', 'Coin(30, 99, "|cffeda55f铜|r")'))
+                    zout.writestr(item, pe_raw.encode('utf-8'))
+                elif norm_name == 'Blackthornes_TS/UI/Tab_Prices.lua':
+                    tp_raw = zin.read(item.filename).decode('utf-8')
+                    tp_raw = (tp_raw
+                        .replace('Coin("gold", 44, 214748, "|cffffd700g|r")', 'Coin("gold", 44, 214748, "|cffffd700金|r")')
+                        .replace('Coin("silver", 28, 99, "|cffc7c7cfs|r")', 'Coin("silver", 28, 99, "|cffc7c7cf银|r")')
+                        .replace('Coin("copper", 28, 99, "|cffeda55fc|r")', 'Coin("copper", 28, 99, "|cffeda55f铜|r")'))
+                    zout.writestr(item, tp_raw.encode('utf-8'))
+                elif norm_name == 'Blackthornes_TS/UI/GoldGoal.lua':
+                    gg_raw = zin.read(item.filename).decode('utf-8')
+                    gg_raw = gg_raw.replace('unit:SetText("g")', 'unit:SetText("金")')
+                    zout.writestr(item, gg_raw.encode('utf-8'))
+                elif norm_name == 'Blackthornes_TS/UI/Tab_Settings.lua':
+                    ts_raw = zin.read(item.filename).decode('utf-8')
+                    ts_raw = ts_raw.replace('AddUnit(goalRow, widgets.goldGoal, "g")', 'AddUnit(goalRow, widgets.goldGoal, "金")')
+                    zout.writestr(item, ts_raw.encode('utf-8'))
+                elif norm_name == 'Blackthornes_TS/Blackthornes_TS.toc':
+                    toc_raw = zin.read(item.filename).decode('utf-8')
+                    if 'Title-zhCN:' not in toc_raw:
+                        toc_raw = re.sub(r'## Title: (.*)', r'## Title: \1\n## Title-zhCN: |cff00ff00[商业]|r Blackthornes Tradeskills (商业制造与拍卖)', toc_raw)
+                        toc_raw = re.sub(r'## Notes: (.*)', r'## Notes: \1\n## Notes-zhCN: 专为无限服打造的专业制造与拍卖行全能管理插件，实时计算配方利润、排队制造与防亏损上架。', toc_raw)
+                    zout.writestr(item, toc_raw.encode('utf-8'))
                 else:
                     zout.writestr(item, zin.read(item.filename))
             if not replaced:
