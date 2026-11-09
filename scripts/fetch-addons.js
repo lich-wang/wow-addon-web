@@ -73,6 +73,52 @@ async function processBlackthornes() {
     zip.file('Blackthornes_TS/Locale/zhCN.lua', fs.readFileSync(btZhCNPath, 'utf-8'));
   }
 
+  // Patch money unit symbols to 金/银/铜
+  const utilFile = zip.file('Blackthornes_TS/Core/Util.lua');
+  if (utilFile) {
+    let utilText = await utilFile.async('string');
+    utilText = utilText
+      .replace('local GOLD_SUFFIX   = "|cffffd700g|r"', 'local GOLD_SUFFIX   = "|cffffd700金|r"')
+      .replace('local SILVER_SUFFIX = "|cffc7c7cfs|r"', 'local SILVER_SUFFIX = "|cffc7c7cf银|r"')
+      .replace('local COPPER_SUFFIX = "|cffeda55fc|r"', 'local COPPER_SUFFIX = "|cffeda55f铜|r"')
+      .replace('g, s, c = "g", "s", "c"', 'g, s, c = "金", "银", "铜"');
+    zip.file('Blackthornes_TS/Core/Util.lua', utilText);
+  }
+
+  const peFile = zip.file('Blackthornes_TS/UI/PriceEditor.lua');
+  if (peFile) {
+    let peText = await peFile.async('string');
+    peText = peText
+      .replace('Coin(48, 214748, "|cffffd700g|r")', 'Coin(48, 214748, "|cffffd700金|r")')
+      .replace('Coin(30, 99, "|cffc7c7cfs|r")', 'Coin(30, 99, "|cffc7c7cf银|r")')
+      .replace('Coin(30, 99, "|cffeda55fc|r")', 'Coin(30, 99, "|cffeda55f铜|r")');
+    zip.file('Blackthornes_TS/UI/PriceEditor.lua', peText);
+  }
+
+  const tpFile = zip.file('Blackthornes_TS/UI/Tab_Prices.lua');
+  if (tpFile) {
+    let tpText = await tpFile.async('string');
+    tpText = tpText
+      .replace('Coin("gold", 44, 214748, "|cffffd700g|r")', 'Coin("gold", 44, 214748, "|cffffd700金|r")')
+      .replace('Coin("silver", 28, 99, "|cffc7c7cfs|r")', 'Coin("silver", 28, 99, "|cffc7c7cf银|r")')
+      .replace('Coin("copper", 28, 99, "|cffeda55fc|r")', 'Coin("copper", 28, 99, "|cffeda55f铜|r")');
+    zip.file('Blackthornes_TS/UI/Tab_Prices.lua', tpText);
+  }
+
+  const ggFile = zip.file('Blackthornes_TS/UI/GoldGoal.lua');
+  if (ggFile) {
+    let ggText = await ggFile.async('string');
+    ggText = ggText.replace('unit:SetText("g")', 'unit:SetText("金")');
+    zip.file('Blackthornes_TS/UI/GoldGoal.lua', ggText);
+  }
+
+  const tsFile = zip.file('Blackthornes_TS/UI/Tab_Settings.lua');
+  if (tsFile) {
+    let tsText = await tsFile.async('string');
+    tsText = tsText.replace('AddUnit(goalRow, widgets.goldGoal, "g")', 'AddUnit(goalRow, widgets.goldGoal, "金")');
+    zip.file('Blackthornes_TS/UI/Tab_Settings.lua', tsText);
+  }
+
   const themeFile = zip.file('Blackthornes_TS/UI/Theme.lua');
   if (themeFile) {
     let themeText = await themeFile.async('string');
