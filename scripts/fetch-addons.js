@@ -64,12 +64,12 @@ async function processSBF() {
 }
 
 async function processBlackthornes() {
-  const url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.19.1/Blackthornes_TS-v1.19.1-forever.zip';
+  const url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.20.1/Blackthornes_TS-v1.20.1-forever.zip';
   const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
   const buf = await downloadBuffer(url, outPath);
   const zip = await JSZip.loadAsync(buf);
 
-  console.log('Injecting clean 100% complete zhCN for Blackthornes Tradeskills v1.19.1...');
+  console.log('Injecting clean 100% complete zhCN for Blackthornes Tradeskills v1.20.1...');
   const btZhCNPath = path.resolve('scripts/locales/bt_zhCN.lua');
   if (fs.existsSync(btZhCNPath)) {
     zip.file('Blackthornes_TS/Locale/zhCN.lua', fs.readFileSync(btZhCNPath, 'utf-8'));

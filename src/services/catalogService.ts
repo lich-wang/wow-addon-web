@@ -25,7 +25,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Trade',
     icon: 'Coins',
     defaultFolderName: 'Blackthornes_TS',
-    latestVersion: 'v1.19.1 (Forever 中文版)',
+    latestVersion: 'v1.20.1 (Forever 中文版)',
     downloadUrl: '/addons/blackthornes-tradeskills.zip',
     githubRepo: 'Blackthornes/Blackthornes_Tradeskills',
     homeUrl: 'https://www.curseforge.com/wow/addons/blackthornes-tradeskills',
