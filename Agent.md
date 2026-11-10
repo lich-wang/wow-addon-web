@@ -18,8 +18,8 @@
 ## 一、核心准则
 
 1. **零直接推送**：严禁直接向 `main` 分支推送或提交代码，所有代码必须通过 Pull Request (PR) 合入。
-2. **Issue 驱动**：每个 PR 必须明确关联一个已存在的 GitHub Issue，杜绝无据可依的代码改动。
-3. **AI 审核门禁**：每个 PR 必须由 CodeRabbit AI 进行全量代码评审并通过其状态检查（Status Check）。
+2. **Issue 驱动**：每个 PR 必须明确关联一个已存在的真实 GitHub Issue，杜绝无据可依的代码改动。
+3. **AI 审核门禁**：每个 PR 必须由 CodeRabbit AI 进行全量代码评审，并在确认审查实际完成且无阻塞意见后方可合入。
 4. **自测通过**：在提交 PR 前，本地必须通过构建与代码规范检查（`npm run lint` & `npm run build`）。
 
 ---
@@ -28,6 +28,16 @@
 
 ### 1. 分支保护机制
 - **本地拦截**：通过 `.githooks/pre-push` 钩子，阻止直接执行 `git push origin main`。
+- **本地钩子启用步骤**：
+  1. 新克隆项目后运行 `npm install`（会自动触发 `package.json` 中的 `prepare` 脚本设置 `core.hooksPath` 为 `.githooks`）。
+  2. 或手动执行启用命令：
+     ```bash
+     git config core.hooksPath .githooks
+     ```
+  3. 执行如下命令验证配置是否生效（应输出 `.githooks`）：
+     ```bash
+     git config --get core.hooksPath
+     ```
 - **远程分支保护**：GitHub `main` 分支开启了严格分支保护规则（包括管理员），仅允许通过符合门禁要求的 PR 方式合入。
 
 ### 2. 分支命名规则
@@ -42,10 +52,10 @@
 
 ## 三、Issue 关联规范
 
-为保证代码可追溯性，PR 与 Issue 之间必须建立强关联。
+为保证代码改动的可追溯性，PR 与 Issue 之间必须建立强关联。
 
 ### 1. 关联语法
-在提交 PR 时，描述（Description）或标题中必须包含以下任意一种 GitHub 识别的关联关键字及 Issue 编号：
+在提交 PR 时，**必须在 PR 描述（Description）** 中包含以下 GitHub 识别的关联关键字及 Issue 编号，或在页面侧边栏手动关联（**请勿仅写在 PR 标题中，GitHub 标题不会触发 Issue 关联与自动关闭**）：
 - `Fixes #<Issue编号>`（如 `Fixes #42`）
 - `Closes #<Issue编号>`（如 `Closes #42`）
 - `Resolves #<Issue编号>`（如 `Resolves #42`）
@@ -54,8 +64,12 @@
 ### 2. 自动化门禁校验
 仓库配置了 GitHub Actions 工作流 `.github/workflows/pr-check.yml`：
 - 在 PR 打开、编辑、重新打开或推送代码时触发。
-- 自动查询 GitHub GraphQL API 以及正则解析 PR 描述。
-- **若未检测到关联 Issue，CI 校验直接失败**，阻断合并按钮。
+- 优先通过 GitHub GraphQL API 查询 `closingIssuesReferences` 获取真实关联的 Issue。
+- 若 GraphQL 未能获取，工作流将对 PR 描述进行正则匹配，并通过 GitHub REST API 验证所引用的 Issue 真实存在。
+- **若未检测到有效关联的 Issue，CI 校验直接失败**，阻断合并按钮。
+
+> [!NOTE]
+> 门禁检查通过仅代表满足语法与关联规则，合并前请评审人员再次确认关联的 Issue 与本改动实际对应。
 
 ---
 
@@ -67,7 +81,7 @@
 仓库根目录包含 `.coderabbit.yaml`：
 - **审查语言**：全中文输出 (`language: "zh-CN"`)。
 - **审查概要**：生成高阶变更摘要与 Walkthrough 导读。
-- **状态检查**：开启了 `reviews.review_status: true`，CodeRabbit 会在审查完毕后发布名为 `CodeRabbit` 的 Commit Status Check。
+- **状态检查**：CodeRabbit 会自动在 PR 中生成名为 `CodeRabbit` 的 Commit Status Check，作为 GitHub 分支保护的必需检查项。
 
 ### 2. 交互式审查与对话
 - 开发者与 Agent 可在 PR 评论中直接 `@coderabbitai` 进行交互（例如请求重新审查、询问重构建议或澄清问题）。
@@ -85,23 +99,32 @@ flowchart TD
     B --> C["3. 创建特性分支 (feat/* 或 fix/*)"]
     C --> D["4. 编码修改与本地自测 (npm run lint / build)"]
     D --> E["5. 提交代码并推送到远端特性分支"]
-    E --> F["6. 发起 GitHub Pull Request 并填写 Fixes #xxx"]
-    F --> G{"7. CI 门禁检查"}
-    G -->|"检查是否关联 Issue"| H["PR Check CI 通过"]
-    G -->|"CodeRabbit 自动评审"| I["CodeRabbit 审查状态完成 (Green)"]
-    H --> J{"全部 Checks 通过?"}
-    I --> J
-    J -->|Yes| K["8. Squash and Merge 合入 main"]
-    J -->|No| L["9. 根据反馈修改代码并重新 Push"]
-    L --> G
+    E --> F["6. 发起 PR (描述中填写 Fixes #xxx)"]
+    F --> G{"7. CI 与 AI 门禁检查"}
+    G -->|"check-linked-issue"| H["PR Check CI 通过 (Success)"]
+    G -->|"CodeRabbit 自动评审"| I["CodeRabbit 审查运行"]
+    I --> J{"审查是否实际完成且覆盖有效?"}
+    J -->|"被跳过 / 限流"| L["排查原因并在 PR 评论中触发 @coderabbitai full review"]
+    L --> I
+    J -->|"审查完成无阻塞问题"| M["CodeRabbit 审查通过 (Success)"]
+    H --> N{"全部 Checks 通过 & 审查确认无误?"}
+    M --> N
+    N -->|Yes| O["8. Squash and Merge 合入 main"]
+    N -->|No| P["9. 根据反馈修改代码并重新 Push"]
+    P --> G
 ```
+
+> [!IMPORTANT]
+> **合并前确认审查实际完成**：
+> GitHub 分支保护可能会将跳过（Skipped）或限流（Rate-limited）状态视为检查通过。因此在点击合并前，必须人工或流程确认 CodeRabbit **实际完成了有效审查**，且没有遗留的高风险待解决评论。若审查被跳过，可在 PR 中评论 `@coderabbitai full review` 重新触发。
 
 ### 详细步骤命令示范
 
 ```bash
-# 步骤 1：同步并切换到最新 main 分支
+# 步骤 1：同步并切换到最新 main 分支，确认本地 hooks 启用
 git checkout main
 git pull origin main
+git config --get core.hooksPath || git config core.hooksPath .githooks
 
 # 步骤 2：创建特性分支
 git checkout -b feat/add-addon-search
@@ -131,7 +154,7 @@ git push origin feat/add-addon-search
 | 门禁层级 | 校验项 | 校验方式 | 失败处理 |
 | :--- | :--- | :--- | :--- |
 | **本地防护** | 禁止 Push 到 main | `.githooks/pre-push` 钩子拦截 | 本地直接退出并提示切分支 |
-| **远端第一道门禁** | PR 必须关联 Issue | GitHub Action (`check-linked-issue`) | CI 标红，阻断合入 |
+| **远端第一道门禁** | PR 必须关联有效 Issue | GitHub Action (`check-linked-issue`) | CI 标红，阻断合入 |
 | **远端第二道门禁** | CodeRabbit AI 审查 | GitHub App Status Check (`CodeRabbit`) | 等待审查完成并标记 Success |
 | **远端保护策略** | 禁止直接推送到 main | GitHub Branch Protection Rule | 远端直接拒绝 Push（包括管理员） |
 
@@ -151,6 +174,6 @@ git push origin feat/add-addon-search
   2. 在 PR 评论区输入 `@coderabbitai full review` 即可手动强制触发全量审查。
   3. 确认 `.coderabbit.yaml` 文件语法正确。
 
-### 3. CI 提示 "PR 未关联任何 Issue"？
-- 检查 PR 标题或正文是否含有有效的 Issue 编号（例如 `Fixes #12`）。
+### 3. CI 提示 "PR 未在描述中关联任何 Issue"？
+- 检查 PR 描述（Description）是否含有有效的 Issue 编号（例如 `Fixes #12`）。注意：写在标题中不会生效。
 - 亦可在 PR 右侧边栏的 **Development** 分组中，手动搜索并勾选对应的 Issue。修改后重新触发工作流即可通过。
