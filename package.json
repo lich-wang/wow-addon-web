@@ -19,7 +19,8 @@
     "build": "tsc -b && vite build",
     "tauri": "tauri",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

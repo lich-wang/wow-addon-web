@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Git pre-push hook to prevent pushing directly to main
+
+remote="$1"
+url="$2"
+
+zero_oid="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+    # 检查是否推送到 main 分支
+    if [ "$remote_ref" = "refs/heads/main" ]; then
+        if [ "$local_oid" = "$zero_oid" ]; then
+            echo "❌ [Git Hook 拦截] 禁止删除远程 main 分支！"
+            exit 1
+        fi
+        echo "=========================================================="
+        echo "❌ [Git Hook 拦截] 禁止直接推送代码到 main 分支！"
+        echo "👉 仓库已配置分支保护策略："
+        echo "   1. 禁止直接向 main 推送，所有更改必须通过 Pull Request (PR)"
+        echo "   2. PR 必须关联对应 Issue (例如 Fixes #123)"
+        echo "   3. PR 必须经过 CodeRabbit 审核通过后方可合入"
+        echo ""
+        echo "💡 正确流程："
+        echo "   git checkout -b feat/your-feature-name"
+        echo "   git push origin feat/your-feature-name"
+        echo "   在 GitHub 上发起 PR，并在描述中关联 Issue。"
+        echo "=========================================================="
+        exit 1
+    fi
+done
+
+exit 0

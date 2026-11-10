@@ -1,0 +1,81 @@
+name: PR Quality Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  pull-requests: read
+  issues: read
+  contents: read
+
+jobs:
+  check-linked-issue:
+    name: 检查是否关联 Issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: 验证关联的 Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+            const title = pr.title || '';
+
+            // 1. 查询 GitHub GraphQL 获取原生通过 Development 面板或关键字关联的 Issue
+            const query = `
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 5) {
+                      totalCount
+                      nodes {
+                        number
+                        title
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            let linkedCount = 0;
+            try {
+              const res = await github.graphql(query, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: pr.number
+              });
+              linkedCount = res?.repository?.pullRequest?.closingIssuesReferences?.totalCount || 0;
+              if (linkedCount > 0) {
+                const issues = res.repository.pullRequest.closingIssuesReferences.nodes
+                  .map(n => `#${n.number} ("${n.title}")`)
+                  .join(', ');
+                console.log(`✅ 校验通过：已检测到原生关联的 Issue：${issues}`);
+                return;
+              }
+            } catch (err) {
+              console.log('ℹ️ GraphQL 查询 closingIssuesReferences 提示：', err.message);
+            }
+
+            // 2. 正则检查 PR Description 或 Title 中是否包含 Issue 编号或关联关键字
+            // 支持格式：Fixes #12, Closes #12, Resolves #12, #12, GH-12, 或完整 GitHub Issue URL
+            const patterns = [
+              /(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved|refs?|issue)\s*[:#]?\s*#?(\d+)/i,
+              /(?:^|\s)#(\d+)(?:\s|$|[.,!?])/m,
+              /https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/i
+            ];
+
+            const found = patterns.some(pattern => pattern.test(body) || pattern.test(title));
+
+            if (!found) {
+              core.setFailed(
+                '❌ PR 未关联任何 Issue！\n\n' +
+                '【规则说明】：合并到 main 分支的所有 PR 必须关联对应的 Issue。\n' +
+                '【如何修复】：\n' +
+                '  1. 编辑当前 PR 描述（Description），添加：Fixes #<Issue编号> 或 Closes #<Issue编号>\n' +
+                '  2. 或者在 PR 页面右侧栏的 "Development" 部分手动点击并链接对应的 Issue。\n'
+              );
+            } else {
+              console.log('✅ 校验通过：在 PR 描述或标题中检测到关联 Issue 引用。');
+            }
