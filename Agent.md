@@ -34,9 +34,9 @@
      ```bash
      git config core.hooksPath .githooks
      ```
-  3. 执行如下命令验证配置是否生效（应输出 `.githooks`）：
+  3. 执行如下命令验证配置是否生效（需确保实际值为 `.githooks`；若当前配置为其他路径，请调整为 `.githooks` 或将本仓库钩子整合进去）：
      ```bash
-     git config --get core.hooksPath
+     [ "$(git config --get core.hooksPath)" = ".githooks" ] && echo "✅ Hooks path is .githooks" || git config core.hooksPath .githooks
      ```
 - **远程分支保护**：GitHub `main` 分支开启了严格分支保护规则（包括管理员），仅允许通过符合门禁要求的 PR 方式合入。
 
@@ -121,10 +121,10 @@ flowchart TD
 ### 详细步骤命令示范
 
 ```bash
-# 步骤 1：同步并切换到最新 main 分支，确认本地 hooks 启用
+# 步骤 1：同步并切换到最新 main 分支，确认本地 hooks 路径正确设置为 .githooks
 git checkout main
 git pull origin main
-git config --get core.hooksPath || git config core.hooksPath .githooks
+[ "$(git config --get core.hooksPath)" = ".githooks" ] || git config core.hooksPath .githooks
 
 # 步骤 2：创建特性分支
 git checkout -b feat/add-addon-search
