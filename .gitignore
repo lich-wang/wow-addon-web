@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 public/addons/*.zip
+public/downloads/*.exe
+public/downloads/*.dmg
 
 # Editor directories and files
 .vscode/*

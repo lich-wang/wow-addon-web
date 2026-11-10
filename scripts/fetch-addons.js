@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import JSZip from 'jszip';
-import { patchSBF } from './locales/sbf.js';
 import { patchIceHUDZhCN } from './locales/icehud.js';
 import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
@@ -394,8 +393,41 @@ async function processForeverMouseTooltip() {
   console.log(`[✓] forever-mouse-tooltip.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+async function ensureClientBinaries() {
+  const downloadsDir = path.resolve('public/downloads');
+  if (!fs.existsSync(downloadsDir)) {
+    fs.mkdirSync(downloadsDir, { recursive: true });
+  }
+
+  const exePath = path.join(downloadsDir, 'WoW-Addon-Manager.exe');
+  const dmgPath = path.join(downloadsDir, 'WoW-Addon-Manager.dmg');
+
+  if (!fs.existsSync(exePath) || fs.statSync(exePath).size < 1000000) {
+    console.log('Fetching WoW-Addon-Manager.exe from latest release...');
+    try {
+      const buf = await downloadBuffer('https://github.com/lich-wang/wow-addon-web/releases/download/v1.0.5/WoW-Addon-Manager.exe');
+      fs.writeFileSync(exePath, buf);
+      console.log(`[✓] WoW-Addon-Manager.exe saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
+    } catch (e) {
+      console.warn('Failed to fetch WoW-Addon-Manager.exe:', e.message);
+    }
+  }
+
+  if (!fs.existsSync(dmgPath) || fs.statSync(dmgPath).size < 1000000) {
+    console.log('Fetching WoW-Addon-Manager.dmg from latest release...');
+    try {
+      const buf = await downloadBuffer('https://github.com/lich-wang/wow-addon-web/releases/download/v1.0.5/WoW-Addon-Manager_1.0.5_universal.dmg');
+      fs.writeFileSync(dmgPath, buf);
+      console.log(`[✓] WoW-Addon-Manager.dmg saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
+    } catch (e) {
+      console.warn('Failed to fetch WoW-Addon-Manager.dmg:', e.message);
+    }
+  }
+}
+
 async function main() {
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
+  await ensureClientBinaries();
   await processSBF();
   await processBlackthornes();
   await processIceHUD();

@@ -19,8 +19,8 @@ export interface AgentStatus {
 }
 
 export const GITHUB_RELEASES_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
-export const WIN_DOWNLOAD_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
-export const MAC_DOWNLOAD_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
+export const WIN_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.exe';
+export const MAC_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.dmg';
 
 /**
  * Check if running inside the Tauri native desktop app

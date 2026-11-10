@@ -118,35 +118,6 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
 
   return (
     <div id="addon-market-section" className="space-y-6">
-      {/* Direct Download Mode Banner when directory is not configured */}
-      {!hasDirectory && (
-        <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-900 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
-          <div className="flex items-start sm:items-center space-x-3">
-            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
-              <Download className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                <span>免设置直接下载已开启</span>
-                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200">
-                  零配置即下即用
-                </span>
-              </h4>
-              <p className="text-xs text-slate-300 mt-0.5">
-                无需授权或设置本地目录，点击任意插件的 <strong className="text-amber-300">「直接下载 ZIP」</strong> 即可保存压缩包（手动解压至 <code className="text-amber-200/90 font-mono">Interface/AddOns</code>）；连接目录后更可一键自动解压安装。
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onPromptPickDirectory}
-            className="inline-flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 text-xs font-semibold transition-all cursor-pointer shrink-0"
-          >
-            <FolderOpen className="w-3.5 h-3.5" />
-            <span>连接目录开启一键直装</span>
-          </button>
-        </div>
-      )}
-
       {/* Forever Server Priority Banner */}
       {currentFlavor === 'forever' && (
         <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/40 via-amber-900/20 to-slate-900 border border-amber-500/30 flex items-center justify-between shadow-lg">

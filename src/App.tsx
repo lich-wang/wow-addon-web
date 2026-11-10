@@ -9,6 +9,7 @@ import { ZipInstallModal } from './components/ZipInstallModal';
 import { ShareModal } from './components/ShareModal';
 import { DeployModal } from './components/DeployModal';
 import { ProgressModal } from './components/ProgressModal';
+import { ClientDownloadModal } from './components/ClientDownloadModal';
 
 import {
   pickAddOnsDirectory,
@@ -66,6 +67,7 @@ export function App() {
   const [isZipModalOpen, setIsZipModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
 
   // Install Progress State
   const [installProgress, setInstallProgress] = useState<InstallProgress>({
@@ -410,6 +412,7 @@ export function App() {
         onOpenZipModal={() => setIsZipModalOpen(true)}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenDeployModal={() => setIsDeployModalOpen(true)}
+        onOpenClientModal={() => setIsClientModalOpen(true)}
         isPicking={isPicking}
         agentStatus={agentStatus}
       />
@@ -446,7 +449,7 @@ export function App() {
             agentStatus={agentStatus}
             onSelectAgentInstallation={handleSelectAgentInstallation}
             onPickAgentDirectory={handlePickAgentDirectory}
-            onBrowseMarket={handleBrowseMarket}
+            onOpenClientModal={() => setIsClientModalOpen(true)}
           />
         )}
 
@@ -555,6 +558,11 @@ export function App() {
       <ProgressModal
         progress={installProgress}
         onClose={() => setInstallProgress((p) => ({ ...p, status: 'idle' }))}
+      />
+
+      <ClientDownloadModal
+        isOpen={isClientModalOpen}
+        onClose={() => setIsClientModalOpen(false)}
       />
     </div>
   );

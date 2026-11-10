@@ -11,7 +11,6 @@ import {
 import { GithubIcon } from './icons/GithubIcon';
 import type { DirectoryState } from '../types/addon';
 import type { AgentStatus } from '../services/agentService';
-import { GITHUB_RELEASES_URL } from '../services/agentService';
 
 interface NavbarProps {
   directoryState: DirectoryState;
@@ -22,6 +21,7 @@ interface NavbarProps {
   onOpenZipModal: () => void;
   onOpenShareModal: () => void;
   onOpenDeployModal: () => void;
+  onOpenClientModal?: () => void;
   isPicking?: boolean;
   agentStatus: AgentStatus | null;
 }
@@ -35,6 +35,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenZipModal,
   onOpenShareModal,
   onOpenDeployModal,
+  onOpenClientModal,
   isPicking = false,
   agentStatus,
 }) => {
@@ -87,7 +88,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Directory Status & Actions */}
           <div className="flex items-center space-x-3">
-            {/* Agent Status Indicator */}
+            {/* Agent Status Indicator or Direct Client Download */}
             {agentStatus ? (
               <div
                 title="已连接本地助手，已解除所有目录权限限制"
@@ -96,18 +97,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>助手在线</span>
               </div>
-            ) : (
-              <a
-                href={GITHUB_RELEASES_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="受系统盘或浏览器限制？点击下载本地极速助手"
-                className="hidden xl:flex items-center space-x-1 px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-slate-200 text-xs transition-colors"
+            ) : onOpenClientModal ? (
+              <button
+                onClick={onOpenClientModal}
+                title="受系统盘或浏览器限制？点击极速下载桌面客户端"
+                className="hidden xl:flex items-center space-x-1.5 px-3 py-1 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs transition-colors cursor-pointer"
               >
-                <Download className="w-3 h-3 text-amber-400" />
-                <span>下载本地助手 (Win/Mac)</span>
-              </a>
-            )}
+                <Download className="w-3.5 h-3.5 text-amber-400" />
+                <span>下载客户端 (Win/Mac)</span>
+              </button>
+            ) : null}
 
             {directoryState.isAuthorized ? (
               <div className="flex items-center space-x-2">
