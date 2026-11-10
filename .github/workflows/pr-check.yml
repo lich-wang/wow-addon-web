@@ -59,18 +59,29 @@ jobs:
 
             // 2. 正则检查 PR 描述（Description）中是否包含关闭或关联关键字
             // 注意：GitHub 仅识别 PR 描述或 Development 面板关联，标题中的关键字不会自动关联/关闭 Issue
-            const patterns = [
-              /(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved|refs?|issue)\s*[:#]?\s*#?(\d+)/i,
-              /(?:^|\s)#(\d+)(?:\s|$|[.,!?])/m,
-              /https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/i
-            ];
-
+            let targetOwner = context.repo.owner;
+            let targetRepo = context.repo.repo;
             let matchedIssue = null;
-            for (const pattern of patterns) {
-              const match = body.match(pattern);
-              if (match) {
-                matchedIssue = match[1] || match[2] || match[3];
-                break;
+
+            // 优先检查是否提供了完整的 GitHub Issue URL
+            const urlMatch = body.match(/https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/i);
+            if (urlMatch) {
+              targetOwner = urlMatch[1];
+              targetRepo = urlMatch[2];
+              matchedIssue = parseInt(urlMatch[3], 10);
+            } else {
+              // 匹配 Fixes #123, Closes #123, 或独立 #123
+              const patterns = [
+                /(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved|refs?|issue)\s*[:#]?\s*#?(\d+)/i,
+                /(?:^|\s)#(\d+)(?:\s|$|[.,!?])/m
+              ];
+
+              for (const pattern of patterns) {
+                const match = body.match(pattern);
+                if (match) {
+                  matchedIssue = parseInt(match[1], 10);
+                  break;
+                }
               }
             }
 
@@ -86,14 +97,24 @@ jobs:
               return;
             }
 
-            // 3. 校验匹配到的 Issue 是否真实存在
+            // 3. 校验匹配到的目标是否真实存在，且必须是 Issue（而非 Pull Request）
             try {
               const issueRes = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: parseInt(matchedIssue, 10)
+                owner: targetOwner,
+                repo: targetRepo,
+                issue_number: matchedIssue
               });
-              console.log(`✅ 校验通过：在 PR 描述中检测到并验证了真实存在的 Issue #${matchedIssue} ("${issueRes.data.title}")`);
+
+              // GitHub Issues API 在查询 Pull Request 时也会返回数据，通过 pull_request 属性进行区分
+              if (issueRes.data.pull_request) {
+                core.setFailed(
+                  `❌ 关联目标 ${targetOwner}/${targetRepo}#${matchedIssue} 是 Pull Request 而非 Issue！\n` +
+                  '【规则说明】：PR 必须关联对应的 Issue，不能关联另一个 PR。'
+                );
+                return;
+              }
+
+              console.log(`✅ 校验通过：在 PR 描述中检测到并验证了真实存在的 Issue ${targetOwner}/${targetRepo}#${matchedIssue} ("${issueRes.data.title}")`);
             } catch (err) {
-              core.setFailed(`❌ PR 描述中引用的 Issue #${matchedIssue} 不存在或无权访问，请检查 Issue 编号是否正确！`);
+              core.setFailed(`❌ PR 描述中引用的 Issue ${targetOwner}/${targetRepo}#${matchedIssue} 不存在或无权访问，请检查 Issue 编号是否正确！`);
             }
