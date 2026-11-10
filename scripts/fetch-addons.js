@@ -405,7 +405,9 @@ async function ensureClientBinaries() {
   if (!fs.existsSync(exePath) || fs.statSync(exePath).size < 1000000) {
     console.log('Fetching WoW-Addon-Manager.exe from latest release...');
     try {
-      const buf = await downloadBuffer('https://github.com/lich-wang/wow-addon-web/releases/download/v1.0.5/WoW-Addon-Manager.exe');
+      const latest = await getLatestGitHubRelease('lich-wang/wow-addon-web', name => name === 'WoW-Addon-Manager.exe');
+      const url = latest?.url || 'https://github.com/lich-wang/wow-addon-web/releases/download/v1.0.5/WoW-Addon-Manager.exe';
+      const buf = await downloadBuffer(url);
       fs.writeFileSync(exePath, buf);
       console.log(`[✓] WoW-Addon-Manager.exe saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
     } catch (e) {
@@ -416,7 +418,9 @@ async function ensureClientBinaries() {
   if (!fs.existsSync(dmgPath) || fs.statSync(dmgPath).size < 1000000) {
     console.log('Fetching WoW-Addon-Manager.dmg from latest release...');
     try {
-      const buf = await downloadBuffer('https://github.com/lich-wang/wow-addon-web/releases/download/v1.0.5/WoW-Addon-Manager_1.0.5_universal.dmg');
+      const latest = await getLatestGitHubRelease('lich-wang/wow-addon-web', name => name.endsWith('.dmg'));
+      const url = latest?.url || 'https://github.com/lich-wang/wow-addon-web/releases/download/v1.0.5/WoW-Addon-Manager_1.0.5_universal.dmg';
+      const buf = await downloadBuffer(url);
       fs.writeFileSync(dmgPath, buf);
       console.log(`[✓] WoW-Addon-Manager.dmg saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
     } catch (e) {
