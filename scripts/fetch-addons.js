@@ -406,8 +406,9 @@ async function processMapzeroth() {
   const zip = new JSZip();
   for (const [p, file] of Object.entries(srcZip.files)) {
     if (file.dir) continue;
-    // Mapzeroth-main/* -> Mapzeroth/*
+    // Mapzeroth-main/* -> Mapzeroth/* 并严格校验目录防路径穿越
     const rel = p.replace(/^Mapzeroth-[^/]+\//, 'Mapzeroth/');
+    if (!rel.startsWith('Mapzeroth/') || rel.includes('..')) continue;
     zip.file(rel, await file.async('nodebuffer'));
   }
 
