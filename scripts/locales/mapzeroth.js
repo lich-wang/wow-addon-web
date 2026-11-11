@@ -265,8 +265,8 @@ export function generateMapzerothZhCN() {
 export function patchMapzerothToc(originalToc) {
   let toc = originalToc;
 
-  // 统一 Interface 为 16001 (Forever 无限服) 与 11505 (Classic 经典怀旧服)
-  toc = toc.replace(/## Interface: .*/, '## Interface: 16001, 11505');
+  // 统一 Interface 为 16001 (Forever 无限服原生接口版本)
+  toc = toc.replace(/## Interface: .*/, '## Interface: 16001');
 
   // 替换 Title 与注入 Title-zhCN
   if (toc.includes('## Title-zhCN:')) {

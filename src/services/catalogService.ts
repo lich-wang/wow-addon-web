@@ -145,7 +145,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     downloadUrl: '/addons/mapzeroth.zip',
     githubRepo: 'tr0tsky0/Mapzeroth',
     homeUrl: 'https://www.curseforge.com/wow/addons/mapzeroth',
-    gameFlavors: ['forever', 'classic', 'vanilla'],
+    gameFlavors: ['forever'],
     isForeverRecommended: true,
   },
 ];
