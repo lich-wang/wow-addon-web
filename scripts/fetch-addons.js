@@ -14,15 +14,35 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 }
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
-const HEADERS = {
+const BASE_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+};
+const GITHUB_HEADERS = {
+  ...BASE_HEADERS,
   ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
 };
+
+function getHeadersForUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.hostname === 'github.com' ||
+      parsed.hostname.endsWith('.github.com') ||
+      parsed.hostname === 'api.github.com' ||
+      parsed.hostname.endsWith('.githubusercontent.com')
+    ) {
+      return GITHUB_HEADERS;
+    }
+  } catch {
+    // fallback to non-sensitive base headers
+  }
+  return BASE_HEADERS;
+}
 
 async function downloadBuffer(url, fallbackPath) {
   try {
     console.log(`Downloading: ${url}...`);
-    const res = await fetch(url, { headers: HEADERS });
+    const res = await fetch(url, { headers: getHeadersForUrl(url) });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -39,7 +59,7 @@ async function downloadBuffer(url, fallbackPath) {
 async function getLatestGitHubRelease(repo, assetMatch) {
   try {
     const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
-    const res = await fetch(apiUrl, { headers: HEADERS });
+    const res = await fetch(apiUrl, { headers: GITHUB_HEADERS });
     if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
     const data = await res.json();
     const tag = data.tag_name;
