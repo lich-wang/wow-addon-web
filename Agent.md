@@ -19,7 +19,7 @@
 
 1. **零直接推送**：严禁直接向 `main` 分支推送或提交代码，所有代码必须通过 Pull Request (PR) 合入。
 2. **Issue 驱动**：每个 PR 必须明确关联一个已存在的真实 GitHub Issue，杜绝无据可依的代码改动。
-3. **AI 审核门禁与审查闭环**：每个 PR 必须由 CodeRabbit AI 进行全量代码评审。**严禁在 CodeRabbit 意见处理完毕之前汇报完成或合入 PR**！必须逐条处理所有 Review 意见与 Pre-merge Checks、确认所有代码讨论线程（Conversations）标记为 Resolved，且 CodeRabbit 状态变为 Approved / Success 后方可合入。
+3. **AI 审核门禁与审查闭环**：每个 PR 必须由 CodeRabbit AI 进行全量代码评审。**严禁在 CodeRabbit 意见处理完毕之前汇报完成或合入 PR**！必须逐条处理所有 Review 意见（若存在澄清性或不适用的意见，须在 PR 讨论中说明充分理由并在达成结论后 Resolve），确认所有代码讨论线程（Conversations）标记为 Resolved，且最新提交已完成有效审查且 CodeRabbit 正式审查状态为 **Approved**（Status Check 的 Success 仅代表检查流水线完成，不得作为 Approved 的替代条件），方可合入。
 4. **自测通过**：在提交 PR 前，本地必须通过构建与代码规范检查（`npm run lint` & `npm run build`）。
 5. **严禁绕过门禁**：严禁任何人或 Agent 通过修改分支保护设置、临时剔除 Required Checks 等手段强行合入未完成审查的代码。
 
@@ -88,7 +88,7 @@
 ### 2. 交互式审查与对话
 - 开发者与 Agent 可在 PR 评论中直接 `@coderabbitai` 进行交互（例如请求重新审查、询问重构建议或澄清问题）。
 - 当向分支追加提交时，CodeRabbit 会自动触发增量复审并更新状态。
-- **审查闭环要求**：在向用户汇报任务完成之前，必须确保 CodeRabbit 的所有审查意见已逐条在代码中解决、所有 conversation 标记为 Resolved，且状态转为 Approved / Success。严禁提前汇报或以任何方式绕过。
+- **审查闭环要求**：在向用户汇报任务完成之前，必须确认最新提交已完成有效审查、CodeRabbit 的所有审查意见已逐条处理（对于澄清性或不适用的意见，允许在讨论中说明明确理由并在达成共识后将对应 conversation 标记为 Resolved）、所有代码讨论线程（Conversations）标记为 Resolved，且 CodeRabbit 的正式审查状态转为 **Approved**（Status Check 的 Success 仅代表检查流水线执行完成，不得用它替代 Approved 验收）。严禁提前汇报或以任何方式绕过。
 
 ---
 
