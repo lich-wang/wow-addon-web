@@ -19,8 +19,9 @@
 
 1. **零直接推送**：严禁直接向 `main` 分支推送或提交代码，所有代码必须通过 Pull Request (PR) 合入。
 2. **Issue 驱动**：每个 PR 必须明确关联一个已存在的真实 GitHub Issue，杜绝无据可依的代码改动。
-3. **AI 审核门禁**：每个 PR 必须由 CodeRabbit AI 进行全量代码评审，并在确认审查实际完成且无阻塞意见后方可合入。
+3. **AI 审核门禁与审查闭环**：每个 PR 必须由 CodeRabbit AI 进行全量代码评审。**严禁在 CodeRabbit 意见处理完毕之前汇报完成或合入 PR**！必须逐条处理所有 Review 意见（若存在澄清性或不适用的意见，须在 PR 讨论中说明充分理由并在达成结论后 Resolve），确认所有代码讨论线程（Conversations）标记为 Resolved，且最新提交已完成有效审查且 CodeRabbit 正式审查状态为 **Approved**（Status Check 的 Success 仅代表检查流水线完成，不得作为 Approved 的替代条件），方可合入。
 4. **自测通过**：在提交 PR 前，本地必须通过构建与代码规范检查（`npm run lint` & `npm run build`）。
+5. **严禁绕过门禁**：严禁任何人或 Agent 通过修改分支保护设置、临时剔除 Required Checks 等手段强行合入未完成审查的代码。
 
 ---
 
@@ -81,11 +82,13 @@
 仓库根目录包含 `.coderabbit.yaml`：
 - **审查语言**：全中文输出 (`language: "zh-CN"`)。
 - **审查概要**：生成高阶变更摘要与 Walkthrough 导读。
+- **阻塞性工作流 (`request_changes_workflow: true`)**：当 CodeRabbit 发现代码中存在风险、缺失或可改进项时，会以官方 **Request Changes** 状态阻断 PR 合入；当开发者修复代码并重新推送后，CodeRabbit 自动复审通过才会转为 **Approved**。
 - **状态检查**：CodeRabbit 会自动在 PR 中生成名为 `CodeRabbit` 的 Commit Status Check，作为 GitHub 分支保护的必需检查项。
 
 ### 2. 交互式审查与对话
 - 开发者与 Agent 可在 PR 评论中直接 `@coderabbitai` 进行交互（例如请求重新审查、询问重构建议或澄清问题）。
 - 当向分支追加提交时，CodeRabbit 会自动触发增量复审并更新状态。
+- **审查闭环要求**：在向用户汇报任务完成之前，必须确认最新提交已完成有效审查、CodeRabbit 的所有审查意见已逐条处理（对于澄清性或不适用的意见，允许在讨论中说明明确理由并在达成共识后将对应 conversation 标记为 Resolved）、所有代码讨论线程（Conversations）标记为 Resolved，且 CodeRabbit 的正式审查状态转为 **Approved**（Status Check 的 Success 仅代表检查流水线执行完成，不得用它替代 Approved 验收）。严禁提前汇报或以任何方式绕过。
 
 ---
 
@@ -149,14 +152,15 @@ git push origin feat/add-addon-search
 
 ## 六、质量门禁与 CI/CD 机制
 
-进入 `main` 分支受两道防线保护：
+进入 `main` 分支受多重强刚性防线保护：
 
 | 门禁层级 | 校验项 | 校验方式 | 失败处理 |
 | :--- | :--- | :--- | :--- |
 | **本地防护** | 禁止 Push 到 main | `.githooks/pre-push` 钩子拦截 | 本地直接退出并提示切分支 |
 | **远端第一道门禁** | PR 必须关联有效 Issue | GitHub Action (`check-linked-issue`) | CI 标红，阻断合入 |
-| **远端第二道门禁** | CodeRabbit AI 审查 | GitHub App Status Check (`CodeRabbit`) | 等待审查完成并标记 Success |
-| **远端保护策略** | 禁止直接推送到 main | GitHub Branch Protection Rule | 远端直接拒绝 Push（包括管理员） |
+| **远端第二道门禁** | 代码行评审意见必须完全解决 | GitHub 原生 `required_conversation_resolution: true` | 有未 Resolved 对话时硬性锁死合并按钮 |
+| **远端第三道门禁** | CodeRabbit 阻塞性审查与变更验收 | GitHub App Status Check (`CodeRabbit`) + `request_changes_workflow: true` | 检测到缺陷时发起 Request Changes，阻断合并直至修复并 Approved |
+| **远端保护策略** | 禁止直接推送到 main 并严格执行管理员限制 | GitHub Branch Protection Rule (`enforce_admins: true`) | 远端直接拒绝直接 Push |
 
 ---
 
