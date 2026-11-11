@@ -6,6 +6,7 @@ import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
 import { patchBtWQuests, patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
+import { patchMapzeroth } from './locales/mapzeroth.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -393,6 +394,35 @@ async function processForeverMouseTooltip() {
   console.log(`[✓] forever-mouse-tooltip.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 10. Mapzeroth (Forever GPS Navigation)
+// ---------------------------------------------------------------------------
+async function processMapzeroth() {
+  const url = 'https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip';
+  const outPath = path.join(OUTPUT_DIR, 'mapzeroth.zip');
+  const buf = await downloadBuffer(url, outPath);
+  const srcZip = await JSZip.loadAsync(buf);
+
+  const zip = new JSZip();
+  for (const [p, file] of Object.entries(srcZip.files)) {
+    if (file.dir) continue;
+    // Mapzeroth-main/* -> Mapzeroth/*
+    const rel = p.replace(/^Mapzeroth-[^/]+\//, 'Mapzeroth/');
+    zip.file(rel, await file.async('nodebuffer'));
+  }
+
+  console.log('Injecting 100% full zhCN localization for Mapzeroth...');
+  await patchMapzeroth(zip);
+
+  const outBuf = await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 9 },
+  });
+  fs.writeFileSync(outPath, outBuf);
+  console.log(`[✓] mapzeroth.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
 async function ensureClientBinaries() {
   const downloadsDir = path.resolve('public/downloads');
   if (!fs.existsSync(downloadsDir)) {
@@ -441,7 +471,8 @@ async function main() {
   await processQuestieForever();
   await processBtWQuests();
   await processForeverMouseTooltip();
-  console.log('=== All 9 Addons successfully bundled & localized into public/addons/ ===');
+  await processMapzeroth();
+  console.log('=== All 10 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {

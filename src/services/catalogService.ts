@@ -133,6 +133,21 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     gameFlavors: ['forever', 'classic', 'retail', 'vanilla'],
     isForeverRecommended: true,
   },
+  {
+    id: 'mapzeroth',
+    name: 'Mapzeroth (艾泽拉斯智能导航 GPS)',
+    description: '魔兽世界公交换乘与智能 GPS 导航神器（Forever 无限服专版）！根据当前位置与已解锁飞行点/传送门，综合规划轮船、飞艇、矿道地铁、飞行管理员与炉石的最快路线，提供步进式指引与 100% 深度汉化。',
+    author: 'tr0tsky0',
+    category: 'QoL',
+    icon: 'Compass',
+    defaultFolderName: 'Mapzeroth',
+    latestVersion: 'v1.0.0 (Forever 全汉化版)',
+    downloadUrl: '/addons/mapzeroth.zip',
+    githubRepo: 'tr0tsky0/Mapzeroth',
+    homeUrl: 'https://www.curseforge.com/wow/addons/mapzeroth',
+    gameFlavors: ['forever', 'classic', 'vanilla'],
+    isForeverRecommended: true,
+  },
 ];
 
 /**
