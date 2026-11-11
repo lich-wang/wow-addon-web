@@ -22,6 +22,11 @@ const GITHUB_HEADERS = {
   ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
 };
 
+/**
+ * 根据请求目标 URL 选择适合的请求头（仅针对 GitHub 域发送敏感认证 Token）
+ * @param {string} url - 目标请求地址
+ * @returns {Record<string, string>} 适用的 HTTP 请求头对象
+ */
 function getHeadersForUrl(url) {
   try {
     const parsed = new URL(url);
@@ -39,6 +44,12 @@ function getHeadersForUrl(url) {
   return BASE_HEADERS;
 }
 
+/**
+ * 安全下载远程二进制 Buffer，若下载失败则尝试使用本地缓存回退
+ * @param {string} url - 远程文件下载地址
+ * @param {string} [fallbackPath] - 本地可用作回退的文件路径
+ * @returns {Promise<Buffer>} 下载完成或读取回退的二进制数据
+ */
 async function downloadBuffer(url, fallbackPath) {
   try {
     console.log(`Downloading: ${url}...`);
@@ -56,6 +67,12 @@ async function downloadBuffer(url, fallbackPath) {
   }
 }
 
+/**
+ * 查询指定 GitHub 仓库的最新 Release，并匹配对应资产文件的下载信息
+ * @param {string} repo - GitHub 仓库全名（例如 owner/repo）
+ * @param {(name: string) => boolean} assetMatch - 资产文件名匹配断言函数
+ * @returns {Promise<{ tag: string, url: string } | null>} 匹配到的标签与下载链接，失败时返回 null
+ */
 async function getLatestGitHubRelease(repo, assetMatch) {
   try {
     const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
