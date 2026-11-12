@@ -265,12 +265,14 @@ function compareNumberParts(local: number[], remote: number[]): number {
 }
 
 /**
- * 校验版本标识是否属于严格语义化预发布标签 (alpha, beta, rc, preview, dev, test 等)
- * 避免将魔兽世界插件生态中的渠道/运行环境变体标识 (如 forever, classic, vanilla, retail, release 等) 误判为预发布
+ * 校验版本标识是否属于严格语义化预发布标签 (如 alpha, beta, rc, preview, dev, test, b1 等)
+ * - 针对以 b 开头的简写形式，严格要求至少携带一个后续数字 (b\d+)，避免将 burning-crusade 等魔兽资料片环境标识误判
+ * - 针对标准关键字设置标签边界，仅允许其后紧跟数字或连接符 (例如 alpha, alpha-1, beta.2, rc1)
+ * - 避免将魔兽世界插件生态中的渠道/运行环境变体标识 (如 forever, classic, vanilla, retail, release 等) 误判为预发布
  */
 function isTruePreRelease(tag: string | null): boolean {
   if (!tag) return false;
-  return /^(alpha|beta|rc|preview|dev|test|canary|b\d*)/i.test(tag);
+  return /^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+)?$|^b\d+/i.test(tag.trim());
 }
 
 /**
