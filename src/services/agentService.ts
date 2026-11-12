@@ -102,6 +102,27 @@ export function isTauriEnv(): boolean {
   );
 }
 
+function inferFlavorAndLabel(pathStr: string): { flavor: string; label: string } {
+  const lower = pathStr.toLowerCase();
+  const flavors = [
+    { pattern: '_classic_era_', flavor: 'classic_era', label: '经典旧世 (Era)' },
+    { pattern: '_classic_titan_', flavor: 'classic_titan', label: '怀旧泰坦 (Titan)' },
+    { pattern: '_classic_', flavor: 'classic', label: '经典怀旧服 (Classic)' },
+    { pattern: '_forever_', flavor: 'forever', label: '无限服 (WoW Forever)' },
+    { pattern: '_ptr_', flavor: 'ptr', label: '测试服 (PTR)' },
+    { pattern: '_retail_', flavor: 'retail', label: '正式服 (The War Within)' },
+  ];
+  for (const item of flavors) {
+    if (lower.includes(item.pattern)) {
+      return { flavor: item.flavor, label: item.label };
+    }
+  }
+  return { flavor: 'retail', label: '魔兽客户端' };
+}
+
+let activeRecoveryPromise: Promise<AddonInfo[]> | null = null;
+let activeRecoveryPath: string | null = null;
+
 /**
  * Check if the native local bridge agent is running on 127.0.0.1:24642,
  * or connect directly via Tauri native IPC if inside desktop app.
@@ -150,10 +171,21 @@ export async function checkAgentStatus(): Promise<AgentStatus | null> {
       );
       if (!alreadyHas) {
         try {
-          const addons = await agentScanAddons(lastAgentPath);
+          if (!activeRecoveryPromise || activeRecoveryPath !== lastAgentPath) {
+            activeRecoveryPath = lastAgentPath;
+            activeRecoveryPromise = agentScanAddons(lastAgentPath).finally(() => {
+              activeRecoveryPromise = null;
+              activeRecoveryPath = null;
+            });
+          }
+
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('recovery scan timeout')), 1500)
+          );
+          const addons = await Promise.race([activeRecoveryPromise, timeoutPromise]);
+
           if (Array.isArray(addons)) {
-            const flavor = lastAgentPath.includes('_forever_') ? 'forever' : 'retail';
-            const label = flavor === 'forever' ? '无限服 (WoW Forever)' : '魔兽客户端';
+            const { flavor, label } = inferFlavorAndLabel(lastAgentPath);
             status.installations.unshift({
               name: `${label} (${flavor})`,
               flavor,
@@ -163,7 +195,7 @@ export async function checkAgentStatus(): Promise<AgentStatus | null> {
             });
           }
         } catch {
-          // ignore scan error for obsolete saved path
+          // ignore scan error or timeout for obsolete saved path; keep successful ping status
         }
       }
     }

@@ -59,38 +59,6 @@ struct InstallZipQuery {
     path: Option<String>,
 }
 
-fn percent_decode_str(input: &str) -> String {
-    let mut bytes = Vec::with_capacity(input.len());
-    let mut iter = input.bytes();
-    while let Some(b) = iter.next() {
-        if b == b'%' {
-            let mut clone = iter.clone();
-            if let (Some(h1), Some(h2)) = (clone.next(), clone.next()) {
-                let v1 = match h1 {
-                    b'0'..=b'9' => Some(h1 - b'0'),
-                    b'a'..=b'f' => Some(h1 - b'a' + 10),
-                    b'A'..=b'F' => Some(h1 - b'A' + 10),
-                    _ => None,
-                };
-                let v2 = match h2 {
-                    b'0'..=b'9' => Some(h2 - b'0'),
-                    b'a'..=b'f' => Some(h2 - b'a' + 10),
-                    b'A'..=b'F' => Some(h2 - b'A' + 10),
-                    _ => None,
-                };
-                if let (Some(v1), Some(v2)) = (v1, v2) {
-                    bytes.push((v1 << 4) | v2);
-                    iter.next();
-                    iter.next();
-                    continue;
-                }
-            }
-        }
-        bytes.push(b);
-    }
-    String::from_utf8(bytes).unwrap_or_else(|_| input.to_string())
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeleteRequest {
@@ -510,17 +478,12 @@ pub fn start_bridge_server() {
                         let target_path_str = if let Some(p) = q.path.filter(|s| !s.trim().is_empty()) {
                             p
                         } else if let Some(val) = headers.get("x-addons-path") {
-                            let raw = match val.to_str() {
+                            match val.to_str() {
                                 Ok(s) => s.to_string(),
                                 Err(_) => match String::from_utf8(val.as_bytes().to_vec()) {
                                     Ok(s) => s,
                                     Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid target path header" }))),
                                 },
-                            };
-                            if raw.contains('%') {
-                                percent_decode_str(&raw)
-                            } else {
-                                raw
                             }
                         } else {
                             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Missing path parameter or x-addons-path header" })));

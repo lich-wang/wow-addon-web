@@ -226,12 +226,10 @@ class LocalBridgeHandler(BaseHTTPRequestHandler):
             return
 
         if path == '/api/install-zip':
-            # Receive zip binary and target path (query param or X-Addons-Path header with unquote support)
+            # Receive zip binary and target path (query param decoded or raw X-Addons-Path header)
             target_path = params.get('path', [None])[0]
             if not target_path:
-                header_path = self.headers.get('X-Addons-Path')
-                if header_path:
-                    target_path = unquote(header_path) if '%' in header_path else header_path
+                target_path = self.headers.get('X-Addons-Path')
 
             if not target_path or not os.path.isdir(target_path):
                 self.send_json({"error": "Invalid target path"}, status=400)
