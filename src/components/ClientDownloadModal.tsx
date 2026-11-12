@@ -37,6 +37,7 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
   useEffect(() => {
     if (isOpen) {
       let isMounted = true;
+      setIsLoading(true);
       fetchClientReleaseInfo(true)
         .then((info) => {
           if (isMounted) {
