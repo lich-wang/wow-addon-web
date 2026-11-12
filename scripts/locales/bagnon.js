@@ -29,6 +29,10 @@ export async function patchBagnon(zip) {
     let stale = await staleFile.async('string');
     stale = stale
       .replace(
+        "local Lib = LibStub:NewLibrary('StaleCheck-1.0', 5)\nif not Lib then\n\treturn",
+        "local Lib = LibStub:NewLibrary('StaleCheck-1.0', 99999) or LibStub('StaleCheck-1.0', true)\nif not Lib then\n\treturn"
+      )
+      .replace(
         'function Lib:CheckForUpdates(addon, sets, icon)',
         'function Lib:CheckForUpdates(addon, sets, icon)\n\tdo return end -- Disabled for private servers to avoid false-positive update popups'
       )
@@ -40,6 +44,10 @@ export async function patchBagnon(zip) {
         'function Lib:Broadcast()',
         'function Lib:Broadcast()\n\tdo return end -- Disabled'
       );
+
+    // Neutralize any shared LibStub instance regardless of load order
+    stale += `\n-- Neutralize any shared LibStub instance regardless of load order\nlocal sharedLib = LibStub and LibStub('StaleCheck-1.0', true)\nif sharedLib then\n\tsharedLib.CheckForUpdates = function() end\n\tsharedLib.CHAT_MSG_ADDON = function() end\n\tsharedLib.Broadcast = function() end\nend\n`;
+
     zip.file('BagBrother/libs/StaleCheck-1.0/StaleCheck-1.0.lua', stale);
   }
 }
