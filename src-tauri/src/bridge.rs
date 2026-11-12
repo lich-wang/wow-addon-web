@@ -437,6 +437,12 @@ pub fn start_bridge_server() {
                 .route(
                     "/api/delete",
                     post(|Json(req): Json<DeleteRequest>| async move {
+                        if req.folder_name.contains("..") || req.folder_name.contains('/') || req.folder_name.contains('\\') {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                Json(serde_json::json!({ "error": "非法的插件目录名称" })),
+                            );
+                        }
                         let base = PathBuf::from(&req.addons_path);
                         let target = base.join(&req.folder_name);
 
@@ -477,6 +483,16 @@ pub fn start_bridge_server() {
                             Ok(z) => z,
                             Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Invalid ZIP archive: {}", e) }))),
                         };
+
+                        for i in 0..zip.len() {
+                            let file = match zip.by_index(i) {
+                                Ok(f) => f,
+                                Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Failed to read zip entry: {}", e) }))),
+                            };
+                            if file.enclosed_name().is_none() {
+                                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Zip contains unsafe relative paths" })));
+                            }
+                        }
 
                         let file_count = zip.len();
                         if let Err(e) = zip.extract(&target_dir) {

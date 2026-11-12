@@ -52,6 +52,9 @@ fn scan_addons(path: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn delete_addon(addons_path: String, folder_name: String) -> Result<Value, String> {
+    if folder_name.contains("..") || folder_name.contains('/') || folder_name.contains('\\') {
+        return Err("非法的插件目录名称".to_string());
+    }
     let base = PathBuf::from(&addons_path);
     let target = base.join(&folder_name);
     if !target.is_dir() {
@@ -69,6 +72,12 @@ fn install_zip(addons_path: String, zip_bytes: Vec<u8>) -> Result<Value, String>
     }
     let cursor = Cursor::new(zip_bytes);
     let mut zip = zip::ZipArchive::new(cursor).map_err(|e| format!("无效的 ZIP 压缩包: {}", e))?;
+    for i in 0..zip.len() {
+        let file = zip.by_index(i).map_err(|e| format!("读取压缩包条目失败: {}", e))?;
+        if file.enclosed_name().is_none() {
+            return Err("压缩包包含不安全的文件路径 (Zip Slip)".to_string());
+        }
+    }
     let file_count = zip.len();
     zip.extract(&target_dir).map_err(|e| format!("解压失败: {}", e))?;
     Ok(json!({ "success": true, "fileCount": file_count }))
