@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "allow-addon-commands"
+description = "Enables WoW Addon Manager custom backend commands"
+commands.allow = [
+  "ping",
+  "pick_folder",
+  "scan_addons",
+  "delete_addon",
+  "install_zip",
+  "open_folder"
+]
