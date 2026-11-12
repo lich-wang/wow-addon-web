@@ -122,6 +122,7 @@ function inferFlavorAndLabel(pathStr: string): { flavor: string; label: string }
 
 let activeRecoveryPromise: Promise<AddonInfo[]> | null = null;
 let activeRecoveryPath: string | null = null;
+const verifiedPathCache = new Map<string, { addons: AddonInfo[]; timestamp: number }>();
 
 /**
  * Check if the native local bridge agent is running on 127.0.0.1:24642,
@@ -166,36 +167,59 @@ export async function checkAgentStatus(): Promise<AgentStatus | null> {
     }
 
     if (lastAgentPath) {
+      const normalizedPath = lastAgentPath.toLowerCase();
       const alreadyHas = status.installations.some(
-        (inst) => inst.addonsPath.toLowerCase() === lastAgentPath!.toLowerCase()
+        (inst) => inst.addonsPath.toLowerCase() === normalizedPath
       );
       if (!alreadyHas) {
-        try {
-          if (!activeRecoveryPromise || activeRecoveryPath !== lastAgentPath) {
-            activeRecoveryPath = lastAgentPath;
-            activeRecoveryPromise = agentScanAddons(lastAgentPath).finally(() => {
-              activeRecoveryPromise = null;
-              activeRecoveryPath = null;
-            });
-          }
+        const cached = verifiedPathCache.get(normalizedPath);
+        if (cached && Date.now() - cached.timestamp < 60000 && Array.isArray(cached.addons)) {
+          const { flavor, label } = inferFlavorAndLabel(lastAgentPath);
+          status.installations.unshift({
+            name: `${label} (${flavor})`,
+            flavor,
+            addonsPath: lastAgentPath,
+            gameRoot: lastAgentPath.split(/_[a-z0-9_]+_/i)[0] || lastAgentPath,
+            isRunning: false,
+          });
+        } else {
+          try {
+            if (!activeRecoveryPromise || activeRecoveryPath !== lastAgentPath) {
+              activeRecoveryPath = lastAgentPath;
+              activeRecoveryPromise = agentScanAddons(lastAgentPath)
+                .then((scanned) => {
+                  if (Array.isArray(scanned)) {
+                    verifiedPathCache.set(normalizedPath, {
+                      addons: scanned,
+                      timestamp: Date.now(),
+                    });
+                  }
+                  return scanned;
+                })
+                .finally(() => {
+                  activeRecoveryPromise = null;
+                  activeRecoveryPath = null;
+                });
+            }
 
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('recovery scan timeout')), 1500)
-          );
-          const addons = await Promise.race([activeRecoveryPromise, timeoutPromise]);
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('recovery scan timeout')), 1500)
+            );
+            const addons = await Promise.race([activeRecoveryPromise, timeoutPromise]);
 
-          if (Array.isArray(addons)) {
-            const { flavor, label } = inferFlavorAndLabel(lastAgentPath);
-            status.installations.unshift({
-              name: `${label} (${flavor})`,
-              flavor,
-              addonsPath: lastAgentPath,
-              gameRoot: lastAgentPath.split(/_[a-z0-9_]+_/i)[0] || lastAgentPath,
-              isRunning: false,
-            });
+            if (Array.isArray(addons)) {
+              const { flavor, label } = inferFlavorAndLabel(lastAgentPath);
+              status.installations.unshift({
+                name: `${label} (${flavor})`,
+                flavor,
+                addonsPath: lastAgentPath,
+                gameRoot: lastAgentPath.split(/_[a-z0-9_]+_/i)[0] || lastAgentPath,
+                isRunning: false,
+              });
+            }
+          } catch {
+            // ignore scan error or timeout for obsolete saved path; keep successful ping status
           }
-        } catch {
-          // ignore scan error or timeout for obsolete saved path; keep successful ping status
         }
       }
     }
