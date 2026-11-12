@@ -107,71 +107,69 @@ export function isTauriEnv(): boolean {
  * or connect directly via Tauri native IPC if inside desktop app.
  */
 export async function checkAgentStatus(): Promise<AgentStatus | null> {
+  let status: AgentStatus | null = null;
+
   if (isTauriEnv()) {
     try {
-      const res = await invoke<AgentStatus>('ping');
-      return res;
+      status = await invoke<AgentStatus>('ping');
     } catch (e) {
       console.warn('Tauri ping error:', e);
     }
+  } else {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1200);
+
+      const res = await fetch(`${AGENT_BASE}/api/ping`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        status = (await res.json()) as AgentStatus;
+      }
+    } catch {
+      // Agent is not active or blocked by browser
+    }
   }
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
+  // Restore and verify recently used custom path if available
+  if (status && typeof window !== 'undefined') {
+    let lastAgentPath: string | null = null;
+    try {
+      lastAgentPath = localStorage.getItem('wow_addon_last_agent_path');
+    } catch (storageErr) {
+      console.warn('读取助手路径失败:', storageErr);
+    }
 
-    const res = await fetch(`${AGENT_BASE}/api/ping`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const status = (await res.json()) as AgentStatus;
-      
-      // Auto-discover known custom paths or last used path if not present in default candidates
-      if (typeof window !== 'undefined') {
-        const candidatePaths = [
-          localStorage.getItem('wow_addon_last_agent_path'),
-          'C:\\Users\\lich\\games\\网络游戏\\World of Warcraft\\_forever_\\Interface\\AddOns',
-        ].filter(Boolean) as string[];
-
-        for (const cPath of candidatePaths) {
-          const alreadyHas = status.installations.some(
-            (inst) => inst.addonsPath.toLowerCase() === cPath.toLowerCase()
-          );
-          if (!alreadyHas) {
-            try {
-              const testRes = await fetch(`${AGENT_BASE}/api/addons?path=${encodeURIComponent(cPath)}`, {
-                method: 'GET',
-                signal: AbortSignal.timeout(1000),
-              });
-              if (testRes.ok) {
-                const flavor = cPath.includes('_forever_') ? 'forever' : 'retail';
-                const label = flavor === 'forever' ? '无限服 (WoW Forever)' : '魔兽客户端';
-                status.installations.unshift({
-                  name: `${label} (${flavor})`,
-                  flavor,
-                  addonsPath: cPath,
-                  gameRoot: cPath.split(/_[a-z0-9_]+_/i)[0] || cPath,
-                  isRunning: false,
-                });
-                break;
-              }
-            } catch {
-              // ignore
-            }
+    if (lastAgentPath) {
+      const alreadyHas = status.installations.some(
+        (inst) => inst.addonsPath.toLowerCase() === lastAgentPath!.toLowerCase()
+      );
+      if (!alreadyHas) {
+        try {
+          const addons = await agentScanAddons(lastAgentPath);
+          if (Array.isArray(addons)) {
+            const flavor = lastAgentPath.includes('_forever_') ? 'forever' : 'retail';
+            const label = flavor === 'forever' ? '无限服 (WoW Forever)' : '魔兽客户端';
+            status.installations.unshift({
+              name: `${label} (${flavor})`,
+              flavor,
+              addonsPath: lastAgentPath,
+              gameRoot: lastAgentPath.split(/_[a-z0-9_]+_/i)[0] || lastAgentPath,
+              isRunning: false,
+            });
           }
+        } catch {
+          // ignore scan error for obsolete saved path
         }
       }
-
-      return status;
     }
-  } catch {
-    // Agent is not active or blocked by browser
   }
-  return null;
+
+  return status;
 }
 
 /**
@@ -270,16 +268,30 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
   }
 
   const encodedPath = encodeURIComponent(addonsPath);
+  const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/zip',
+  };
+  // Send raw unencoded path in header only when ASCII-safe, ensuring backwards compatibility
+  // with older agents without triggering browser ISO-8859-1 header errors on Chinese paths
+  if (isAsciiOnly) {
+    headers['X-Addons-Path'] = addonsPath;
+  }
+
   const res = await fetch(`${AGENT_BASE}/api/install-zip?path=${encodedPath}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/zip',
-      'X-Addons-Path': encodedPath,
-    },
+    headers,
     body: zipBlob,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (!isAsciiOnly && (res.status === 400 || res.status === 404)) {
+      throw new Error(
+        err.error
+          ? `${err.error} (如果使用中文等特殊游戏路径，请下载并升级至最新版客户端/助手)`
+          : '本地助手安装插件失败，如果游戏路径包含中文，请升级至最新版助手客户端'
+      );
+    }
     throw new Error(err.error || '本地助手安装插件失败');
   }
   const data = await res.json();
