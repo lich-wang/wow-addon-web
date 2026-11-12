@@ -276,11 +276,22 @@ function isTruePreRelease(tag: string | null): boolean {
 }
 
 /**
+ * 从可能带有渠道/环境后缀的预发布标签中提取核心预发布段 (如 beta1-classic -> beta1, alpha.2-forever -> alpha.2)
+ * 避免渠道名称的字符字典序 (如 forever > classic) 干扰预发布阶段的更新判定
+ */
+function extractCorePreRelease(tag: string | null): string | null {
+  if (!tag) return null;
+  const match = tag.trim().match(/^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+)?|^b\d+/i);
+  return match ? match[0].toLowerCase() : null;
+}
+
+/**
  * 比较主版本数字分段与预发布标识
  * 严格语义版本标准：
  * 1. 若版本数字序列不同，直接以数字大小为准
  * 2. 若版本数字序列相同，仅当一方为真正预发布标识 (alpha/beta/rc等) 时，正式版或变体版高于预发布版
- * 3. 若双方标签均为渠道变体标识 (如 forever/classic) 或均非测试版，主版本相同时视为等价，避免无限提示更新
+ * 3. 若双方均为真正预发布版，提取核心预发布段 (如 beta1 vs beta2) 进行比对，渠道后缀不参与递增比较
+ * 4. 若双方标签均为渠道变体标识 (如 forever/classic) 或均非测试版，主版本相同时视为等价，避免无限提示更新
  * @returns 1 表示 remote 更新，-1 表示 local 更新，0 表示相等
  */
 function compareMainVersion(local: ParsedVersion, remote: ParsedVersion): number {
@@ -300,9 +311,14 @@ function compareMainVersion(local: ParsedVersion, remote: ParsedVersion): number
   if (localIsPre && !remoteIsPre) return 1;
   // 2. 远端是真正预发布版，本地是正式版或变体版 -> 本地更新
   if (!localIsPre && remoteIsPre) return -1;
-  // 3. 两者均为真正预发布版时进行自然版本排序比较
+  // 3. 两者均为真正预发布版时，提取核心预发布段比较，忽略尾随的渠道名称差异
   if (localIsPre && remoteIsPre) {
-    return (remoteTag ?? '').localeCompare(localTag ?? '', undefined, {
+    const localCore = extractCorePreRelease(localTag) ?? (localTag ?? '').toLowerCase();
+    const remoteCore = extractCorePreRelease(remoteTag) ?? (remoteTag ?? '').toLowerCase();
+    if (localCore === remoteCore) {
+      return 0;
+    }
+    return remoteCore.localeCompare(localCore, undefined, {
       numeric: true,
     });
   }
