@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, FolderSync } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { DirectoryBanner } from './components/DirectoryBanner';
@@ -10,6 +10,7 @@ import { ShareModal } from './components/ShareModal';
 import { DeployModal } from './components/DeployModal';
 import { ProgressModal } from './components/ProgressModal';
 import { ClientDownloadModal } from './components/ClientDownloadModal';
+import { UpdateBanner, type OutdatedAddonItem } from './components/UpdateBanner';
 
 import {
   pickAddOnsDirectory,
@@ -22,7 +23,11 @@ import {
 } from './services/fsService';
 import { groupAddons } from './services/addonGrouper';
 
-import { downloadAndInstallAddon } from './services/catalogService';
+import {
+  downloadAndInstallAddon,
+  enrichAddonsWithUpdateStatus,
+  findMatchingCuratedAddon,
+} from './services/catalogService';
 
 import {
   checkAgentStatus,
@@ -101,10 +106,11 @@ export function App() {
     try {
       const list = await scanAddOns(handle);
       const grouped = groupAddons(list);
-      setAddons(grouped);
+      const enriched = enrichAddonsWithUpdateStatus(grouped);
+      setAddons(enriched);
       setDirectoryState((prev) => ({
         ...prev,
-        addonCount: grouped.length,
+        addonCount: enriched.length,
       }));
     } catch (err) {
       console.error('Browser scan error:', err);
@@ -119,10 +125,11 @@ export function App() {
     try {
       const list = await agentScanAddons(addonsPath);
       const grouped = groupAddons(list);
-      setAddons(grouped);
+      const enriched = enrichAddonsWithUpdateStatus(grouped);
+      setAddons(enriched);
       setDirectoryState((prev) => ({
         ...prev,
-        addonCount: grouped.length,
+        addonCount: enriched.length,
       }));
     } catch (err: any) {
       console.error('Agent scan error:', err);
@@ -357,6 +364,78 @@ export function App() {
     }
   };
 
+  // Filter outdated items
+  const outdatedItems = useMemo<OutdatedAddonItem[]>(() => {
+    const list: OutdatedAddonItem[] = [];
+    for (const addon of addons) {
+      if (addon.status === 'update-available') {
+        const curated = findMatchingCuratedAddon(addon);
+        if (curated) {
+          list.push({ addon, curated });
+        }
+      }
+    }
+    return list;
+  }, [addons]);
+
+  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+
+  // Batch update all outdated addons
+  const handleUpdateAllOutdated = async () => {
+    if (outdatedItems.length === 0 || isUpdatingAll) return;
+    setIsUpdatingAll(true);
+    try {
+      for (let i = 0; i < outdatedItems.length; i++) {
+        const { curated } = outdatedItems[i];
+        setInstallProgress({
+          status: 'downloading',
+          addonName: curated.name,
+          percent: Math.round(((i) / outdatedItems.length) * 100),
+          message: `[${i + 1}/${outdatedItems.length}] 正在下载更新: ${curated.name}...`,
+        });
+
+        if (directoryState.mode === 'agent' && directoryState.agentPath) {
+          const url = curated.downloadUrl.startsWith('http')
+            ? curated.downloadUrl
+            : `https://wow.lich.tech${curated.downloadUrl}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`下载 ${curated.name} 失败 (HTTP ${res.status})`);
+          const blob = await res.blob();
+          await agentInstallZip(directoryState.agentPath, blob);
+        } else if (directoryState.handle) {
+          await downloadAndInstallAddon(curated, directoryState.handle, (p) => {
+            setInstallProgress({
+              ...p,
+              message: `[${i + 1}/${outdatedItems.length}] ${p.message}`,
+            });
+          });
+        }
+      }
+
+      setInstallProgress({
+        status: 'completed',
+        addonName: '所有过期插件',
+        percent: 100,
+        message: `成功完成 ${outdatedItems.length} 个插件的批量更新！`,
+      });
+
+      if (directoryState.mode === 'agent' && directoryState.agentPath) {
+        await loadAgentAddons(directoryState.agentPath);
+      } else if (directoryState.handle) {
+        await loadBrowserAddons(directoryState.handle);
+      }
+    } catch (err: any) {
+      setInstallProgress({
+        status: 'error',
+        addonName: '批量更新',
+        percent: 0,
+        message: err.message || '批量更新时发生异常',
+      });
+    } finally {
+      setIsUpdatingAll(false);
+    }
+  };
+
   // Install Local ZIP file
   const handleInstallZip = async (file: File) => {
     if (!directoryState.isAuthorized) {
@@ -415,6 +494,7 @@ export function App() {
         onOpenClientModal={() => setIsClientModalOpen(true)}
         isPicking={isPicking}
         agentStatus={agentStatus}
+        outdatedCount={outdatedItems.length}
       />
 
       {/* Main Container */}
@@ -439,6 +519,17 @@ export function App() {
               一键恢复授权
             </button>
           </div>
+        )}
+
+        {/* Update Banner when outdated addons exist */}
+        {directoryState.isAuthorized && outdatedItems.length > 0 && (
+          <UpdateBanner
+            outdatedItems={outdatedItems}
+            onUpdateSingle={handleInstallCuratedAddon}
+            onUpdateAll={handleUpdateAllOutdated}
+            onViewInstalledTab={() => setActiveTab('installed')}
+            isUpdatingAll={isUpdatingAll}
+          />
         )}
 
         {/* Directory Banner when not authorized */}
@@ -467,6 +558,7 @@ export function App() {
                   addons={addons}
                   onDeleteAddon={handleDeleteAddon}
                   onSelectAddonDetail={(addon) => setSelectedAddonDetail(addon)}
+                  onUpdateAddon={handleInstallCuratedAddon}
                 />
               ) : (
                 <div className="text-center py-12 p-6 rounded-2xl bg-slate-900/40 border border-slate-800">

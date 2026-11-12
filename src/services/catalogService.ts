@@ -1,4 +1,4 @@
-import type { CuratedAddon, InstallProgress } from '../types/addon';
+import type { AddonInfo, CuratedAddon, InstallProgress } from '../types/addon';
 import { installAddonFromZip } from './fsService';
 
 export const POPULAR_ADDONS: CuratedAddon[] = [
@@ -25,7 +25,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Trade',
     icon: 'Coins',
     defaultFolderName: 'Blackthornes_TS',
-    latestVersion: 'v1.20.1 (Forever 中文版)',
+    latestVersion: 'v1.23.0 (Forever 中文版)',
     downloadUrl: '/addons/blackthornes-tradeskills.zip',
     githubRepo: 'Blackthornes/Blackthornes_Tradeskills',
     homeUrl: 'https://www.curseforge.com/wow/addons/blackthornes-tradeskills',
@@ -40,7 +40,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'Eye',
     defaultFolderName: 'IceHUD',
-    latestVersion: 'v1.17.28 (全汉化版)',
+    latestVersion: 'v1.17.29 (全汉化版)',
     downloadUrl: '/addons/icehud.zip',
     githubRepo: 'parnic/ice-hud',
     homeUrl: 'https://www.curseforge.com/wow/addons/ice-hud',
@@ -97,7 +97,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'MapPin',
     defaultFolderName: 'Questie',
-    latestVersion: 'v12.6.4 + DB v1.0.13 (中文版)',
+    latestVersion: 'v12.6.4 + DB v1.0.14 (中文版)',
     downloadUrl: '/addons/questie-forever.zip',
     githubRepo: 'Questie/Questie',
     homeUrl: 'https://www.curseforge.com/wow/addons/questie',
@@ -203,4 +203,101 @@ export function generateShareManifest(
     })),
   };
   return JSON.stringify(data, null, 2);
+}
+
+/**
+ * 从版本字符串中提取数字分段数组（例如 "v1.23.0 (Forever 中文版)" -> [1, 23, 0]）
+ * @param versionStr - 原始版本字符串
+ * @returns 解析得到的版本数字段数组，若无法解析则返回 null
+ */
+export function extractVersionNumbers(versionStr: string): number[] | null {
+  if (!versionStr || versionStr.includes('未知')) return null;
+  const match = versionStr.match(/\d+(?:\.\d+)+/);
+  if (match) {
+    return match[0].split('.').map((n) => parseInt(n, 10));
+  }
+  const single = versionStr.match(/\d+/);
+  if (single) {
+    return [parseInt(single[0], 10)];
+  }
+  return null;
+}
+
+/**
+ * 校验本地已安装版本与远端精选市场最新版本是否存在可用更新
+ * @param localVersion - 本地插件 TOC 解析出的版本号
+ * @param remoteVersion - 市场最新版本号
+ * @returns true 表示存在新版本可用，false 表示已是最新或无需更新
+ */
+export function isUpdateAvailable(localVersion: string, remoteVersion: string): boolean {
+  if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
+    return true;
+  }
+  const localParts = extractVersionNumbers(localVersion);
+  const remoteParts = extractVersionNumbers(remoteVersion);
+
+  if (!localParts || !remoteParts) {
+    const cleanL = localVersion.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const cleanR = remoteVersion.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    return cleanL !== cleanR;
+  }
+
+  const maxLen = Math.max(localParts.length, remoteParts.length);
+  for (let i = 0; i < maxLen; i++) {
+    const l = localParts[i] ?? 0;
+    const r = remoteParts[i] ?? 0;
+    if (r > l) return true;
+    if (r < l) return false;
+  }
+
+  return false;
+}
+
+/**
+ * 在精选插件库中查找与本地已装插件相匹配的项目
+ * @param addon - 本地已扫描插件信息
+ * @param curatedList - 待匹配的精选插件列表（默认使用 POPULAR_ADDONS）
+ * @returns 匹配到的精选插件对象，未匹配时返回 undefined
+ */
+export function findMatchingCuratedAddon(
+  addon: { folderName: string; name: string; subFolders?: string[] },
+  curatedList: CuratedAddon[] = POPULAR_ADDONS
+): CuratedAddon | undefined {
+  const folder = addon.folderName.toLowerCase();
+  const subFolders = addon.subFolders?.map((f) => f.toLowerCase()) || [];
+  const name = addon.name.toLowerCase();
+
+  return curatedList.find((c) => {
+    const defaultFolder = c.defaultFolderName.toLowerCase();
+    const id = c.id.toLowerCase();
+    if (folder === defaultFolder || subFolders.includes(defaultFolder)) return true;
+    if (folder === id || subFolders.includes(id)) return true;
+    if (name.includes(c.name.toLowerCase()) || name.includes(id)) return true;
+    return false;
+  });
+}
+
+/**
+ * 为已扫描插件列表注入市场比对状态（标记 update-available 或 up-to-date）
+ * @param addons - 扫描得到的插件列表
+ * @param curatedList - 市场精选插件列表
+ * @returns 附带最新状态与下载链接的插件列表
+ */
+export function enrichAddonsWithUpdateStatus(
+  addons: AddonInfo[],
+  curatedList: CuratedAddon[] = POPULAR_ADDONS
+): AddonInfo[] {
+  return addons.map((addon) => {
+    const matched = findMatchingCuratedAddon(addon, curatedList);
+    if (!matched) {
+      return addon;
+    }
+    const hasUpdate = isUpdateAvailable(addon.version, matched.latestVersion);
+    return {
+      ...addon,
+      status: hasUpdate ? 'update-available' : 'up-to-date',
+      latestVersion: matched.latestVersion,
+      downloadUrl: matched.downloadUrl,
+    };
+  });
 }

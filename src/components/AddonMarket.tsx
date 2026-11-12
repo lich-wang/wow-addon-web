@@ -23,7 +23,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
-import { POPULAR_ADDONS } from '../services/catalogService';
+import { POPULAR_ADDONS, isUpdateAvailable } from '../services/catalogService';
 import type { AddonInfo, CuratedAddon, GameFlavor } from '../types/addon';
 
 interface AddonMarketProps {
@@ -64,15 +64,39 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
   );
   const [searchQuery, setSearchQuery] = useState('');
 
-  const categories = [
-    { id: 'forever', label: '🔥 无限服推荐', highlight: true },
-    { id: 'all', label: '全部插件' },
-    { id: 'Combat', label: '战斗统计' },
-    { id: 'Raid', label: '副本首领' },
-    { id: 'UI', label: '界面血条' },
-    { id: 'QoL', label: '便捷辅助' },
-    { id: 'Trade', label: '商业拍卖' },
-  ];
+  const outdatedCount = useMemo(() => {
+    return POPULAR_ADDONS.filter((item) => {
+      const curFolder = item.defaultFolderName.toLowerCase();
+      const installed = installedAddons.find(
+        (i) =>
+          i.folderName.toLowerCase() === curFolder ||
+          i.subFolders?.some((sf) => sf.toLowerCase() === curFolder) ||
+          i.name.toLowerCase().includes(item.id.toLowerCase())
+      );
+      if (!installed) return false;
+      return isUpdateAvailable(installed.version, item.latestVersion);
+    }).length;
+  }, [installedAddons]);
+
+  const categories = useMemo(() => {
+    const list = [
+      { id: 'forever', label: '🔥 无限服推荐', highlight: true },
+      { id: 'all', label: '全部插件', highlight: false },
+      { id: 'Combat', label: '战斗统计', highlight: false },
+      { id: 'Raid', label: '副本首领', highlight: false },
+      { id: 'UI', label: '界面血条', highlight: false },
+      { id: 'QoL', label: '便捷辅助', highlight: false },
+      { id: 'Trade', label: '商业拍卖', highlight: false },
+    ];
+    if (outdatedCount > 0) {
+      list.splice(1, 0, {
+        id: 'outdated',
+        label: `⚡ 待更新 (${outdatedCount})`,
+        highlight: true,
+      });
+    }
+    return list;
+  }, [outdatedCount]);
 
   const getInstalledState = (curated: CuratedAddon) => {
     const curFolder = curated.defaultFolderName.toLowerCase();
@@ -86,6 +110,19 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
 
   const filteredCatalog = useMemo(() => {
     let list = POPULAR_ADDONS.filter((item) => {
+      // Outdated filter
+      if (selectedCategory === 'outdated') {
+        const curFolder = item.defaultFolderName.toLowerCase();
+        const installed = installedAddons.find(
+          (i) =>
+            i.folderName.toLowerCase() === curFolder ||
+            i.subFolders?.some((sf) => sf.toLowerCase() === curFolder) ||
+            i.name.toLowerCase().includes(item.id.toLowerCase())
+        );
+        if (!installed) return false;
+        return isUpdateAvailable(installed.version, item.latestVersion);
+      }
+
       // Forever specific filter
       if (selectedCategory === 'forever') {
         if (!item.isForeverRecommended && !item.gameFlavors?.includes('forever')) {
@@ -114,7 +151,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
     }
 
     return list;
-  }, [selectedCategory, searchQuery, currentFlavor]);
+  }, [selectedCategory, searchQuery, currentFlavor, installedAddons]);
 
   return (
     <div id="addon-market-section" className="space-y-6">
@@ -187,12 +224,17 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredCatalog.map((addon) => {
           const installed = getInstalledState(addon);
+          const hasUpdate = installed
+            ? isUpdateAvailable(installed.version, addon.latestVersion)
+            : false;
 
           return (
             <div
               key={addon.id}
               className={`p-5 rounded-xl bg-slate-900 border flex flex-col justify-between shadow-lg transition-all ${
-                addon.isForeverRecommended
+                hasUpdate
+                  ? 'border-amber-500/60 bg-gradient-to-b from-slate-900 via-slate-900 to-amber-950/20 shadow-amber-500/10'
+                  : addon.isForeverRecommended
                   ? 'border-amber-500/30 hover:border-amber-500/60 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950/80'
                   : 'border-slate-800/90 hover:border-slate-700'
               }`}
@@ -275,19 +317,40 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                         <Download className="w-3 h-3" />
                         <span>ZIP</span>
                       </a>
-                      <span className="inline-flex items-center space-x-1 text-xs text-emerald-400 font-medium bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-md">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>已安装</span>
-                      </span>
-                      <button
-                        onClick={() =>
-                          hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
-                        }
-                        title="覆盖更新"
-                        className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors cursor-pointer"
-                      >
-                        重新覆盖
-                      </button>
+                      {hasUpdate ? (
+                        <>
+                          <span className="inline-flex items-center space-x-1 text-xs text-amber-300 font-semibold bg-amber-950/60 border border-amber-500/40 px-2 py-1 rounded-md animate-pulse">
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>可更新</span>
+                          </span>
+                          <button
+                            onClick={() =>
+                              hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
+                            }
+                            title={`本地版本: ${installed.version}，点击更新至最新版: ${addon.latestVersion}`}
+                            className="flex items-center space-x-1 px-2.5 py-1 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition-all hover:scale-102 cursor-pointer"
+                          >
+                            <Zap className="w-3 h-3 fill-slate-950" />
+                            <span>立即更新</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="inline-flex items-center space-x-1 text-xs text-emerald-400 font-medium bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-md">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>已是最新</span>
+                          </span>
+                          <button
+                            onClick={() =>
+                              hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
+                            }
+                            title="重新覆盖安装"
+                            className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors cursor-pointer"
+                          >
+                            重新覆盖
+                          </button>
+                        </>
+                      )}
                     </div>
                   ) : hasDirectory ? (
                     <div className="flex items-center space-x-1.5">
