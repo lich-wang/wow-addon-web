@@ -1,0 +1,12 @@
+{
+  "version": "1.0.7",
+  "tag": "v1.0.7",
+  "winUrl": "/downloads/WoW-Addon-Manager-v1.0.7.exe",
+  "winFileName": "WoW-Addon-Manager-v1.0.7.exe",
+  "winSize": 13196288,
+  "macUrl": "/downloads/WoW-Addon-Manager-v1.0.7.dmg",
+  "macFileName": "WoW-Addon-Manager-v1.0.7.dmg",
+  "macSize": 9091024,
+  "releaseUrl": "https://github.com/lich-wang/wow-addon-web/releases/tag/v1.0.7",
+  "publishedAt": "2026-11-12T02:40:12Z"
+}

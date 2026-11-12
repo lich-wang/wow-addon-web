@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Download,
   X,
@@ -6,8 +6,16 @@ import {
   ExternalLink,
   Laptop,
   CheckCircle2,
+  Loader2,
 } from 'lucide-react';
-import { WIN_DOWNLOAD_URL, MAC_DOWNLOAD_URL, GITHUB_RELEASES_URL } from '../services/agentService';
+import {
+  WIN_DOWNLOAD_URL,
+  MAC_DOWNLOAD_URL,
+  GITHUB_RELEASES_URL,
+  DEFAULT_CLIENT_RELEASE,
+  fetchClientReleaseInfo,
+  type ClientReleaseInfo,
+} from '../services/agentService';
 
 interface ClientDownloadModalProps {
   isOpen: boolean;
@@ -15,6 +23,8 @@ interface ClientDownloadModalProps {
 }
 
 export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen, onClose }) => {
+  const [releaseInfo, setReleaseInfo] = useState<ClientReleaseInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [userOS] = useState<'windows' | 'mac' | 'other'>(() => {
     if (typeof window !== 'undefined') {
       const ua = window.navigator.userAgent.toLowerCase();
@@ -24,7 +34,51 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
     return 'windows';
   });
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isMounted = true;
+    let timerId: ReturnType<typeof setTimeout>;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timerId = setTimeout(() => reject(new Error('Fetch client release timeout')), 5000);
+    });
+
+    Promise.race([fetchClientReleaseInfo(true, 5000), timeoutPromise])
+      .then((info) => {
+        if (isMounted) {
+          setReleaseInfo(info);
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setReleaseInfo((prev) => prev || DEFAULT_CLIENT_RELEASE);
+          setIsLoading(false);
+        }
+      })
+      .finally(() => {
+        clearTimeout(timerId);
+      });
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timerId);
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const currentRelease = releaseInfo || DEFAULT_CLIENT_RELEASE;
+  const winUrl = currentRelease.winUrl || WIN_DOWNLOAD_URL;
+  const winFileName = currentRelease.winFileName || 'WoW-Addon-Manager.exe';
+  const macUrl = currentRelease.macUrl || MAC_DOWNLOAD_URL;
+  const macFileName = currentRelease.macFileName || 'WoW-Addon-Manager.dmg';
+
+  const formatSize = (bytes?: number) => {
+    if (!bytes) return '';
+    return `，约 ${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
@@ -41,8 +95,15 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <span>下载魔兽插件管理器客户端</span>
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
-                  本站高速直链 · 免登录
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-1">
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>正在获取版本...</span>
+                    </>
+                  ) : (
+                    <span>{currentRelease.tag ? `最新 ${currentRelease.tag} · 高速直链` : '本站高速直链 · 免登录'}</span>
+                  )}
                 </span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -85,6 +146,7 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-base font-bold text-white flex items-center gap-1.5">
                     <span>🪟 Windows 客户端</span>
+                    {!isLoading && <span className="text-xs font-mono text-amber-400/90">({currentRelease.tag})</span>}
                   </span>
                   {userOS === 'windows' && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-slate-950">
@@ -93,21 +155,28 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                   )}
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed mb-3">
-                  单文件绿色免安装版，约 11.6 MB。下载后双击直接运行，自动识别所有魔兽版本。
+                  单文件绿色免安装版{formatSize(currentRelease.winSize)}。下载后双击直接运行，自动识别所有魔兽版本。
                 </p>
               </div>
 
               <div className="space-y-2 mt-2">
-                <a
-                  href={WIN_DOWNLOAD_URL}
-                  download="WoW-Addon-Manager.exe"
-                  className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition-all hover:scale-101 active:scale-99 cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>本站直接下载 (.exe)</span>
-                </a>
-                <span className="block text-center text-[10px] text-slate-500">
-                  绿色免安装 · 双击即可启动
+                {isLoading ? (
+                  <div className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-slate-800 border border-slate-700/60 text-slate-400 text-xs font-medium">
+                    <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                    <span>正在获取下载信息...</span>
+                  </div>
+                ) : (
+                  <a
+                    href={winUrl}
+                    download={winFileName}
+                    className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition-all hover:scale-101 active:scale-99 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>本站直接下载 {currentRelease.tag ? `(${currentRelease.tag} .exe)` : '(.exe)'}</span>
+                  </a>
+                )}
+                <span className="block text-center text-[10px] text-slate-500 font-mono">
+                  {winFileName}
                 </span>
               </div>
             </div>
@@ -124,6 +193,9 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-base font-bold text-white flex items-center gap-1.5">
                     <span>🍎 macOS 客户端</span>
+                    {!isLoading && currentRelease.tag && (
+                      <span className="text-xs font-mono text-blue-400/90">({currentRelease.tag})</span>
+                    )}
                   </span>
                   {userOS === 'mac' && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500 text-white">
@@ -132,21 +204,28 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                   )}
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed mb-3">
-                  通用架构 DMG 安装包，约 8.5 MB。原生支持 Apple Silicon (M1~M4) 及 Intel Mac。
+                  通用架构 DMG 安装包{formatSize(currentRelease.macSize)}。原生支持 Apple Silicon (M1~M4) 及 Intel Mac。
                 </p>
               </div>
 
               <div className="space-y-2 mt-2">
-                <a
-                  href={MAC_DOWNLOAD_URL}
-                  download="WoW-Addon-Manager.dmg"
-                  className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md transition-all hover:scale-101 active:scale-99 cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>本站直接下载 (.dmg)</span>
-                </a>
-                <span className="block text-center text-[10px] text-slate-500">
-                  通用安装包 · 支持所有 Mac
+                {isLoading ? (
+                  <div className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-slate-800 border border-slate-700/60 text-slate-400 text-xs font-medium">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                    <span>正在获取下载信息...</span>
+                  </div>
+                ) : (
+                  <a
+                    href={macUrl}
+                    download={macFileName}
+                    className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md transition-all hover:scale-101 active:scale-99 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>本站直接下载 {currentRelease.tag ? `(${currentRelease.tag} .dmg)` : '(.dmg)'}</span>
+                  </a>
+                )}
+                <span className="block text-center text-[10px] text-slate-500 font-mono">
+                  {macFileName}
                 </span>
               </div>
             </div>
@@ -160,12 +239,12 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
             </span>
 
             <a
-              href={GITHUB_RELEASES_URL}
+              href={currentRelease.releaseUrl || GITHUB_RELEASES_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center space-x-1 text-slate-500 hover:text-slate-300 transition-colors"
             >
-              <span>GitHub Releases 备用渠道</span>
+              <span>GitHub Releases {currentRelease.tag ? `(${currentRelease.tag})` : ''} 备用渠道</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>

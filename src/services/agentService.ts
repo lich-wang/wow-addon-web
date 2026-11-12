@@ -18,9 +18,79 @@ export interface AgentStatus {
   installations: WowInstallation[];
 }
 
+export interface ClientReleaseInfo {
+  version: string;
+  tag: string;
+  winUrl: string;
+  winFileName: string;
+  winSize?: number;
+  macUrl: string;
+  macFileName: string;
+  macSize?: number;
+  releaseUrl: string;
+  publishedAt?: string;
+}
+
 export const GITHUB_RELEASES_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
 export const WIN_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.exe';
 export const MAC_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.dmg';
+
+export const DEFAULT_CLIENT_RELEASE: ClientReleaseInfo = {
+  version: '',
+  tag: '',
+  winUrl: WIN_DOWNLOAD_URL,
+  winFileName: 'WoW-Addon-Manager.exe',
+  macUrl: MAC_DOWNLOAD_URL,
+  macFileName: 'WoW-Addon-Manager.dmg',
+  releaseUrl: GITHUB_RELEASES_URL,
+};
+
+let cachedClientRelease: { data: ClientReleaseInfo; timestamp: number } | null = null;
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+/**
+ * Fetch latest desktop client release information with TTL cache and fallback
+ * @param forceRefresh - If true, bypasses in-memory cache and re-fetches manifest
+ * @param timeoutMs - Maximum request time in milliseconds (defaults to 5000ms)
+ */
+export async function fetchClientReleaseInfo(forceRefresh = false, timeoutMs = 5000): Promise<ClientReleaseInfo> {
+  const now = Date.now();
+  if (!forceRefresh && cachedClientRelease && now - cachedClientRelease.timestamp < CACHE_TTL_MS) {
+    return cachedClientRelease.data;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`/downloads/client-version.json?_t=${now}`, {
+      cache: 'no-cache',
+      signal: controller.signal,
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.version && data.tag) {
+        const info = data as ClientReleaseInfo;
+        cachedClientRelease = { data: info, timestamp: now };
+        return info;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to fetch client-version.json, using fallback:', e);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (cachedClientRelease) {
+    return {
+      ...cachedClientRelease.data,
+      winUrl: WIN_DOWNLOAD_URL,
+      winFileName: 'WoW-Addon-Manager.exe',
+      macUrl: MAC_DOWNLOAD_URL,
+      macFileName: 'WoW-Addon-Manager.dmg',
+    };
+  }
+  return DEFAULT_CLIENT_RELEASE;
+}
 
 /**
  * Check if running inside the Tauri native desktop app
