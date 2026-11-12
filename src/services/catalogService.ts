@@ -207,13 +207,14 @@ export function generateShareManifest(
 
 export interface ParsedVersion {
   mainParts: number[];
+  preRelease: string | null;
   dbParts: number[] | null;
 }
 
 /**
- * 解析版本字符串，分离主版本号与数据库 (DB) 版本号段
+ * 解析版本字符串，分离主版本号、语义化预发布标识（如 -beta.1）与数据库 (DB) 版本号段
  * 自动剥离括号中的说明文字（如 100%全汉化版），防止非版本数字干扰比对
- * @param versionStr - 原始版本字符串（如 "v12.6.4 + DB v1.0.14 (中文版)"）
+ * @param versionStr - 原始版本字符串（如 "v12.6.4 + DB v1.0.14 (中文版)" 或 "v1.17.29-beta.1"）
  * @returns 解析得到的结构化版本对象，无法解析有效版本时返回 null
  */
 export function parseVersionParts(versionStr: string): ParsedVersion | null {
@@ -226,15 +227,16 @@ export function parseVersionParts(versionStr: string): ParsedVersion | null {
     dbParts = dbMatch[1].split('.').map((s) => parseInt(s, 10));
   }
 
-  // 2. 提取主版本：去除 DB 部分以及括号文字说明后匹配版本序列
+  // 2. 提取主版本与预发布标识：去除 DB 部分以及括号文字说明后匹配版本序列
   const withoutDb = versionStr.replace(/DB\s*v?\d+(?:\.\d+)*/gi, '');
-  const cleanStr = withoutDb.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '');
-  const mainMatch = cleanStr.match(/v?(\d+(?:\.\d+)*)/);
+  const cleanStr = withoutDb.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '').trim();
+  const mainMatch = cleanStr.match(/v?(\d+(?:\.\d+)*)(?:-([a-zA-Z0-9.-]+))?/);
 
   if (!mainMatch) return null;
 
   const mainParts = mainMatch[1].split('.').map((s) => parseInt(s, 10));
-  return { mainParts, dbParts };
+  const preRelease = mainMatch[2] ? mainMatch[2].toLowerCase() : null;
+  return { mainParts, preRelease, dbParts };
 }
 
 /**
@@ -263,11 +265,30 @@ function compareNumberParts(local: number[], remote: number[]): number {
 }
 
 /**
+ * 比较主版本数字分段与预发布标识（语义版本标准：正式版高于相同版本的预发布版）
+ * @returns 1 表示 remote 更新，-1 表示 local 更新，0 表示相等
+ */
+function compareMainVersion(local: ParsedVersion, remote: ParsedVersion): number {
+  const numDiff = compareNumberParts(local.mainParts, remote.mainParts);
+  if (numDiff !== 0) return numDiff;
+
+  // 主版本数字完全相同时，比较预发布标签
+  if (local.preRelease === remote.preRelease) return 0;
+  // 正式版（无 preRelease 标签）高于预发布版（有 preRelease 标签）
+  if (local.preRelease !== null && remote.preRelease === null) return 1;
+  if (local.preRelease === null && remote.preRelease !== null) return -1;
+  // 两者均为预发布版时进行自然版本排序比较
+  return (remote.preRelease ?? '').localeCompare(local.preRelease ?? '', undefined, {
+    numeric: true,
+  });
+}
+
+/**
  * 检查两个版本字符串是否均包含可比较的数字序列
- * 若本地或远端版本无法解析出版本号，则不可比较
+ * 若本地或远端版本无法解析出版本号，或者远端包含 DB 版本而本地缺少 DB 版本且主版本相同，则视为不可确认最新
  * @param localVersion - 本地插件版本号
  * @param remoteVersion - 远端市场版本号
- * @returns true 表示两者均能提取出有效版本数字可供比对
+ * @returns true 表示两者均能提取出有效版本且可以完整判定是否已是最新
  */
 export function canCompareVersions(localVersion: string, remoteVersion: string): boolean {
   if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
@@ -275,7 +296,17 @@ export function canCompareVersions(localVersion: string, remoteVersion: string):
   }
   const localParsed = parseVersionParts(localVersion);
   const remoteParsed = parseVersionParts(remoteVersion);
-  return Boolean(localParsed && remoteParsed);
+  if (!localParsed || !remoteParsed) {
+    return false;
+  }
+  // 若远端要求特定的 DB 数据库版本，而本地没有解析出 DB 版本信息，且主版本号相同，无法确定是否已是最新
+  if (remoteParsed.dbParts && !localParsed.dbParts) {
+    const mainDiff = compareMainVersion(localParsed, remoteParsed);
+    if (mainDiff === 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -297,8 +328,8 @@ export function isUpdateAvailable(localVersion: string, remoteVersion: string): 
     return false;
   }
 
-  // 1. 先独立比较主版本号
-  const mainDiff = compareNumberParts(localParsed.mainParts, remoteParsed.mainParts);
+  // 1. 先独立比较主版本号及预发布标签
+  const mainDiff = compareMainVersion(localParsed, remoteParsed);
   if (mainDiff > 0) return true;
   if (mainDiff < 0) return false;
 
