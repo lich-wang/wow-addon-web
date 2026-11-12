@@ -65,10 +65,15 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   const getInstalledState = useCallback((curated: CuratedAddon) => {
-    return installedAddons.find((installed) => {
+    // 查找所有匹配当前精选项目的本地已装插件
+    const matchedList = installedAddons.filter((installed) => {
       const matched = findMatchingCuratedAddon(installed);
       return matched?.id === curated.id;
     });
+    if (matchedList.length === 0) return undefined;
+    // 优先返回存在可用更新的那一项，确保卡片与角标一致显示为“可更新”
+    const outdatedItem = matchedList.find((i) => isUpdateAvailable(i.version, curated.latestVersion));
+    return outdatedItem || matchedList[0];
   }, [installedAddons]);
 
   const outdatedCount = useMemo(() => {

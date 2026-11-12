@@ -206,24 +206,32 @@ export function generateShareManifest(
 }
 
 /**
- * 从版本字符串中提取所有数字分段数组（例如 "v12.6.4 + DB v1.0.14" -> [12, 6, 4, 1, 0, 14]）
- * 支持复合版本（包含主版本及 DB 数据库版本）的完整序列提取与比对
+ * 从版本字符串中提取版本数字分段数组（例如 "v12.6.4 + DB v1.0.14" -> [12, 6, 4, 1, 0, 14]）
+ * 仅提取纯版本号段以及以 DB 标识的数据库版本号段，忽略括号内说明文字中的数字（如 100%全汉化版）
  * @param versionStr - 原始版本字符串
  * @returns 解析得到的完整版本数字段数组，若无法解析则返回 null
  */
 export function extractVersionNumbers(versionStr: string): number[] | null {
   if (!versionStr || versionStr.includes('未知')) return null;
-  const matches = versionStr.match(/\d+(?:\.\d+)*/g);
-  if (matches && matches.length > 0) {
-    const parts: number[] = [];
-    for (const m of matches) {
-      for (const seg of m.split('.')) {
-        parts.push(parseInt(seg, 10));
-      }
+
+  // 1. 若包含复合版本（如 "+ DB v..."），提取主版本与 DB 版本，避免说明文字污染
+  const parts: number[] = [];
+  const dbMatch = versionStr.match(/DB\s*v?(\d+(?:\.\d+)*)/i);
+  const mainMatch = versionStr.match(/v?(\d+(?:\.\d+)*)/);
+
+  if (mainMatch) {
+    for (const seg of mainMatch[1].split('.')) {
+      parts.push(parseInt(seg, 10));
     }
-    return parts;
   }
-  return null;
+
+  if (dbMatch) {
+    for (const seg of dbMatch[1].split('.')) {
+      parts.push(parseInt(seg, 10));
+    }
+  }
+
+  return parts.length > 0 ? parts : null;
 }
 
 /**

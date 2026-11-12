@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Loader2, FolderSync } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { DirectoryBanner } from './components/DirectoryBanner';
@@ -100,11 +100,15 @@ export function App() {
     };
   }, []);
 
+  const scanSeqRef = useRef(0);
+
   // Scan current browser directory handle
   const loadBrowserAddons = useCallback(async (handle: FileSystemDirectoryHandle) => {
+    const seq = ++scanSeqRef.current;
     setIsLoading(true);
     try {
       const list = await scanAddOns(handle);
+      if (seq !== scanSeqRef.current) return;
       const grouped = groupAddons(list);
       const enriched = enrichAddonsWithUpdateStatus(grouped);
       setAddons(enriched);
@@ -115,15 +119,19 @@ export function App() {
     } catch (err) {
       console.error('Browser scan error:', err);
     } finally {
-      setIsLoading(false);
+      if (seq === scanSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   // Scan addons via agent path
   const loadAgentAddons = useCallback(async (addonsPath: string) => {
+    const seq = ++scanSeqRef.current;
     setIsLoading(true);
     try {
       const list = await agentScanAddons(addonsPath);
+      if (seq !== scanSeqRef.current) return;
       const grouped = groupAddons(list);
       const enriched = enrichAddonsWithUpdateStatus(grouped);
       setAddons(enriched);
@@ -135,7 +143,9 @@ export function App() {
       console.error('Agent scan error:', err);
       alert(`扫描目录失败: ${err.message || '未知错误'}`);
     } finally {
-      setIsLoading(false);
+      if (seq === scanSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
