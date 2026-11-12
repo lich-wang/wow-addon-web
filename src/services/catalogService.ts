@@ -205,33 +205,61 @@ export function generateShareManifest(
   return JSON.stringify(data, null, 2);
 }
 
+export interface ParsedVersion {
+  mainParts: number[];
+  dbParts: number[] | null;
+}
+
 /**
- * 从版本字符串中提取版本数字分段数组（例如 "v12.6.4 + DB v1.0.14" -> [12, 6, 4, 1, 0, 14]）
- * 仅提取纯版本号段以及以 DB 标识的数据库版本号段，忽略括号内说明文字中的数字（如 100%全汉化版）
- * @param versionStr - 原始版本字符串
- * @returns 解析得到的完整版本数字段数组，若无法解析则返回 null
+ * 解析版本字符串，分离主版本号与数据库 (DB) 版本号段
+ * 自动剥离括号中的说明文字（如 100%全汉化版），防止非版本数字干扰比对
+ * @param versionStr - 原始版本字符串（如 "v12.6.4 + DB v1.0.14 (中文版)"）
+ * @returns 解析得到的结构化版本对象，无法解析有效版本时返回 null
  */
-export function extractVersionNumbers(versionStr: string): number[] | null {
+export function parseVersionParts(versionStr: string): ParsedVersion | null {
   if (!versionStr || versionStr.includes('未知')) return null;
 
-  // 1. 若包含复合版本（如 "+ DB v..."），提取主版本与 DB 版本，避免说明文字污染
-  const parts: number[] = [];
+  // 1. 提取 DB 版本 (如 "DB v1.0.14" -> [1, 0, 14])
+  let dbParts: number[] | null = null;
   const dbMatch = versionStr.match(/DB\s*v?(\d+(?:\.\d+)*)/i);
-  const mainMatch = versionStr.match(/v?(\d+(?:\.\d+)*)/);
-
-  if (mainMatch) {
-    for (const seg of mainMatch[1].split('.')) {
-      parts.push(parseInt(seg, 10));
-    }
-  }
-
   if (dbMatch) {
-    for (const seg of dbMatch[1].split('.')) {
-      parts.push(parseInt(seg, 10));
-    }
+    dbParts = dbMatch[1].split('.').map((s) => parseInt(s, 10));
   }
 
-  return parts.length > 0 ? parts : null;
+  // 2. 提取主版本：去除 DB 部分以及括号文字说明后匹配版本序列
+  const withoutDb = versionStr.replace(/DB\s*v?\d+(?:\.\d+)*/gi, '');
+  const cleanStr = withoutDb.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '');
+  const mainMatch = cleanStr.match(/v?(\d+(?:\.\d+)*)/);
+
+  if (!mainMatch) return null;
+
+  const mainParts = mainMatch[1].split('.').map((s) => parseInt(s, 10));
+  return { mainParts, dbParts };
+}
+
+/**
+ * 从版本字符串中提取主版本数字分段数组
+ * @param versionStr - 原始版本字符串
+ * @returns 解析得到的主版本数字数组，若无法解析则返回 null
+ */
+export function extractVersionNumbers(versionStr: string): number[] | null {
+  const parsed = parseVersionParts(versionStr);
+  return parsed ? parsed.mainParts : null;
+}
+
+/**
+ * 比较两组版本数字序列
+ * @returns 1 表示 remote 更新，-1 表示 local 更新，0 表示相等
+ */
+function compareNumberParts(local: number[], remote: number[]): number {
+  const maxLen = Math.max(local.length, remote.length);
+  for (let i = 0; i < maxLen; i++) {
+    const l = local[i] ?? 0;
+    const r = remote[i] ?? 0;
+    if (r > l) return 1;
+    if (r < l) return -1;
+  }
+  return 0;
 }
 
 /**
@@ -239,19 +267,20 @@ export function extractVersionNumbers(versionStr: string): number[] | null {
  * 若本地或远端版本无法解析出版本号，则不可比较
  * @param localVersion - 本地插件版本号
  * @param remoteVersion - 远端市场版本号
- * @returns true 表示两者均能提取出版本数字可供比对
+ * @returns true 表示两者均能提取出有效版本数字可供比对
  */
 export function canCompareVersions(localVersion: string, remoteVersion: string): boolean {
   if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
     return false;
   }
-  const localParts = extractVersionNumbers(localVersion);
-  const remoteParts = extractVersionNumbers(remoteVersion);
-  return Boolean(localParts && remoteParts);
+  const localParsed = parseVersionParts(localVersion);
+  const remoteParsed = parseVersionParts(remoteVersion);
+  return Boolean(localParsed && remoteParsed);
 }
 
 /**
  * 校验本地已安装版本与远端精选市场最新版本是否存在可用更新
+ * 独立按主版本 -> DB 版本顺序比对，保留版本边界，避免多段复合版本错位
  * 当本地版本未知或无法确认落后时，保守返回 false，避免误报更新
  * @param localVersion - 本地插件 TOC 解析出的版本号
  * @param remoteVersion - 市场最新版本号
@@ -261,19 +290,23 @@ export function isUpdateAvailable(localVersion: string, remoteVersion: string): 
   if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
     return false;
   }
-  const localParts = extractVersionNumbers(localVersion);
-  const remoteParts = extractVersionNumbers(remoteVersion);
+  const localParsed = parseVersionParts(localVersion);
+  const remoteParsed = parseVersionParts(remoteVersion);
 
-  if (!localParts || !remoteParts) {
+  if (!localParsed || !remoteParsed) {
     return false;
   }
 
-  const maxLen = Math.max(localParts.length, remoteParts.length);
-  for (let i = 0; i < maxLen; i++) {
-    const l = localParts[i] ?? 0;
-    const r = remoteParts[i] ?? 0;
-    if (r > l) return true;
-    if (r < l) return false;
+  // 1. 先独立比较主版本号
+  const mainDiff = compareNumberParts(localParsed.mainParts, remoteParsed.mainParts);
+  if (mainDiff > 0) return true;
+  if (mainDiff < 0) return false;
+
+  // 2. 主版本相等时，若两端均有 DB 数据库版本，比较 DB 版本号
+  if (localParsed.dbParts && remoteParsed.dbParts) {
+    const dbDiff = compareNumberParts(localParsed.dbParts, remoteParsed.dbParts);
+    if (dbDiff > 0) return true;
+    if (dbDiff < 0) return false;
   }
 
   return false;
