@@ -305,7 +305,12 @@ export function App() {
       await loadBrowserAddons(resolved.handle);
     } catch (err: any) {
       console.error('Directory pick error:', err);
-      alert(err.message || '选择目录失败，请重试');
+      const msg = err.message || '选择目录失败，请重试';
+      alert(msg);
+      // 若受系统盘安全限制，便捷弹出绿色桌面客户端下载窗口
+      if (msg.includes('系统盘') || msg.includes('Program Files')) {
+        setIsClientModalOpen(true);
+      }
     } finally {
       setIsPicking(false);
     }

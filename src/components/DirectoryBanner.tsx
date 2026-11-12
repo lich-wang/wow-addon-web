@@ -255,21 +255,39 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
             </div>
 
             {showSandboxTip && (
-              <div className="mt-2.5 p-3 rounded-xl bg-slate-950/80 border border-amber-500/20 text-xs text-slate-300 space-y-2 animate-in fade-in duration-150">
-                <p>
-                  由于 Chrome / Edge 等浏览器内核强制保护系统盘目录，若您的魔兽安装在 <code className="text-amber-300 font-mono">C:\Program Files</code>，浏览器会提示安全限制不可选择。
+              <div className="mt-2.5 p-3.5 rounded-xl bg-slate-950/80 border border-amber-500/20 text-xs text-slate-300 space-y-2.5 animate-in fade-in duration-150">
+                <p className="leading-relaxed">
+                  由于 Chrome / Edge 浏览器强制保护系统盘敏感目录，若您的魔兽安装在 <code className="text-amber-300 font-mono">C:\Program Files</code>，浏览器会触发安全保护限制，无法直接选择或授权读写。
                 </p>
-                <div className="flex flex-wrap items-center gap-3 pt-1">
-                  <span className="text-slate-400">💡 解决方案：</span>
-                  <button
-                    onClick={onOpenClientModal}
-                    className="inline-flex items-center space-x-1 text-amber-400 hover:underline font-semibold cursor-pointer"
-                  >
-                    <Laptop className="w-3.5 h-3.5" />
-                    <span>下载单文件绿色桌面端（本站极速直链，双击即用解除限制）</span>
-                  </button>
-                  <span className="text-slate-500">或直接在下方市场点击「直接下载 ZIP」手动解压。</span>
+                <div className="space-y-1.5 pt-0.5 text-xs">
+                  <p className="font-semibold text-amber-300">💡 推荐解决方案：</p>
+                  <div className="flex items-start space-x-2 text-slate-300 pl-1">
+                    <span className="text-amber-400 font-bold">1.</span>
+                    <span>
+                      <strong className="text-slate-100">移动游戏目录：</strong>
+                      将魔兽世界整体文件夹移动到非系统盘（例如 <code className="text-amber-300/90 font-mono">D:\World of Warcraft</code> 或 E 盘），即可在网页中无缝选择与一键管理。
+                    </span>
+                  </div>
+                  <div className="flex items-start space-x-2 text-slate-300 pl-1">
+                    <span className="text-amber-400 font-bold">2.</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <strong className="text-slate-100">换用本地客户端：</strong>
+                      <span>使用无需安装的单文件绿色桌面端，直接原生读写系统盘游戏目录。</span>
+                      {onOpenClientModal && (
+                        <button
+                          onClick={onOpenClientModal}
+                          className="inline-flex items-center space-x-1 text-amber-400 hover:text-amber-300 underline font-semibold cursor-pointer ml-1"
+                        >
+                          <Laptop className="w-3.5 h-3.5" />
+                          <span>点击极速下载桌面端</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
+                <p className="text-[11px] text-slate-500 pt-0.5">
+                  或者您也可以在下方插件市场直接点击「下载 ZIP」手动解压到本地 AddOns 目录。
+                </p>
               </div>
             )}
           </div>
