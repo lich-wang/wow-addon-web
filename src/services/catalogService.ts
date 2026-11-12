@@ -265,24 +265,26 @@ function compareNumberParts(local: number[], remote: number[]): number {
 }
 
 /**
- * 校验版本标识是否属于严格语义化预发布标签 (如 alpha, beta, rc, preview, dev, test, b1 等)
+ * 剥离尾随的环境渠道标识 (例如 -classic, -forever, -vanilla, -retail, -era, -tbc 等)，
+ * 完整保留多段预发布数字序列 (例如 rc.1.1, rc.1.2, beta1.3, alpha-2)，避免渠道字母序干扰更新判定
+ */
+function extractCorePreRelease(tag: string | null): string | null {
+  if (!tag) return null;
+  const stripped = tag.trim().replace(/(?:[-_](?:forever|classic|vanilla|retail|era|tbc|wotlk|titan))+$/i, '');
+  return stripped ? stripped.toLowerCase() : null;
+}
+
+/**
+ * 校验版本标识是否属于严格语义化预发布标签 (如 alpha, beta, rc.1.1, rc.1.2, preview, dev, test, b1 等)
  * - 针对以 b 开头的简写形式，严格要求至少携带一个后续数字 (b\d+)，避免将 burning-crusade 等魔兽资料片环境标识误判
- * - 针对标准关键字设置标签边界，仅允许其后紧跟数字或连接符 (例如 alpha, alpha-1, beta.2, rc1)
+ * - 针对标准关键字设置标签边界，仅允许其后紧跟数字序列或连接符，完整保留 rc.1.1 与 rc.1.2 的区分能力
  * - 避免将魔兽世界插件生态中的渠道/运行环境变体标识 (如 forever, classic, vanilla, retail, release 等) 误判为预发布
  */
 function isTruePreRelease(tag: string | null): boolean {
   if (!tag) return false;
-  return /^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+)?(?:[.-][a-z0-9]+)*$|^b\d+/i.test(tag.trim());
-}
-
-/**
- * 从可能带有渠道/环境后缀的预发布标签中提取核心预发布段 (如 beta1-classic -> beta1, alpha.2-forever -> alpha.2)
- * 避免渠道名称的字符字典序 (如 forever > classic) 干扰预发布阶段的更新判定
- */
-function extractCorePreRelease(tag: string | null): string | null {
-  if (!tag) return null;
-  const match = tag.trim().match(/^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+)?|^b\d+/i);
-  return match ? match[0].toLowerCase() : null;
+  const core = extractCorePreRelease(tag);
+  if (!core) return false;
+  return /^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+(?:\.\d+)*)?$|^b\d+/i.test(core);
 }
 
 /**
