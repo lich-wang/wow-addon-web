@@ -108,9 +108,11 @@ async function main() {
   // If download failed or was skipped, check if versioned file already exists
   if (fs.existsSync(winPath) && !winSize) {
     winSize = fs.statSync(winPath).size;
+    fs.copyFileSync(winPath, winGenericPath);
   }
   if (fs.existsSync(macPath) && !macSize) {
     macSize = fs.statSync(macPath).size;
+    fs.copyFileSync(macPath, macGenericPath);
   }
 
   // Verify that required client binary files exist and are not empty
@@ -120,6 +122,10 @@ async function main() {
   if (!fs.existsSync(macPath) || macSize === 0) {
     throw new Error(`macOS client binary is missing or empty: ${macPath} (${macSize} bytes)`);
   }
+
+  // Ensure generic fallback binaries are present and up to date
+  fs.copyFileSync(winPath, winGenericPath);
+  fs.copyFileSync(macPath, macGenericPath);
 
   const versionManifest = {
     version,

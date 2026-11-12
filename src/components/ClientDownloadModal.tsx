@@ -91,7 +91,7 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                       <span>正在获取版本...</span>
                     </>
                   ) : (
-                    <span>最新 {currentRelease.tag} · 高速直链</span>
+                    <span>{currentRelease.tag ? `最新 ${currentRelease.tag} · 高速直链` : '本站高速直链 · 免登录'}</span>
                   )}
                 </span>
               </h3>
@@ -161,7 +161,7 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                     className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition-all hover:scale-101 active:scale-99 cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
-                    <span>本站直接下载 ({currentRelease.tag} .exe)</span>
+                    <span>本站直接下载 {currentRelease.tag ? `(${currentRelease.tag} .exe)` : '(.exe)'}</span>
                   </a>
                 )}
                 <span className="block text-center text-[10px] text-slate-500 font-mono">
@@ -182,7 +182,9 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-base font-bold text-white flex items-center gap-1.5">
                     <span>🍎 macOS 客户端</span>
-                    {!isLoading && <span className="text-xs font-mono text-blue-400/90">({currentRelease.tag})</span>}
+                    {!isLoading && currentRelease.tag && (
+                      <span className="text-xs font-mono text-blue-400/90">({currentRelease.tag})</span>
+                    )}
                   </span>
                   {userOS === 'mac' && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500 text-white">
@@ -208,7 +210,7 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
                     className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md transition-all hover:scale-101 active:scale-99 cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
-                    <span>本站直接下载 ({currentRelease.tag} .dmg)</span>
+                    <span>本站直接下载 {currentRelease.tag ? `(${currentRelease.tag} .dmg)` : '(.dmg)'}</span>
                   </a>
                 )}
                 <span className="block text-center text-[10px] text-slate-500 font-mono">
@@ -231,7 +233,7 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
               rel="noopener noreferrer"
               className="inline-flex items-center space-x-1 text-slate-500 hover:text-slate-300 transition-colors"
             >
-              <span>GitHub Releases ({currentRelease.tag}) 备用渠道</span>
+              <span>GitHub Releases {currentRelease.tag ? `(${currentRelease.tag})` : ''} 备用渠道</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>

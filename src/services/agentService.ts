@@ -36,15 +36,13 @@ export const WIN_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.exe';
 export const MAC_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.dmg';
 
 export const DEFAULT_CLIENT_RELEASE: ClientReleaseInfo = {
-  version: '1.0.7',
-  tag: 'v1.0.7',
+  version: '',
+  tag: '',
   winUrl: WIN_DOWNLOAD_URL,
-  winFileName: 'WoW-Addon-Manager-v1.0.7.exe',
-  winSize: 13196288,
+  winFileName: 'WoW-Addon-Manager.exe',
   macUrl: MAC_DOWNLOAD_URL,
-  macFileName: 'WoW-Addon-Manager-v1.0.7.dmg',
-  macSize: 9091024,
-  releaseUrl: 'https://github.com/lich-wang/wow-addon-web/releases/tag/v1.0.7',
+  macFileName: 'WoW-Addon-Manager.dmg',
+  releaseUrl: GITHUB_RELEASES_URL,
 };
 
 let cachedClientRelease: { data: ClientReleaseInfo; timestamp: number } | null = null;
@@ -77,10 +75,10 @@ export async function fetchClientReleaseInfo(forceRefresh = false): Promise<Clie
   if (cachedClientRelease) {
     return {
       ...cachedClientRelease.data,
-      winUrl: DEFAULT_CLIENT_RELEASE.winUrl,
-      winFileName: DEFAULT_CLIENT_RELEASE.winFileName,
-      macUrl: DEFAULT_CLIENT_RELEASE.macUrl,
-      macFileName: DEFAULT_CLIENT_RELEASE.macFileName,
+      winUrl: WIN_DOWNLOAD_URL,
+      winFileName: 'WoW-Addon-Manager.exe',
+      macUrl: MAC_DOWNLOAD_URL,
+      macFileName: 'WoW-Addon-Manager.dmg',
     };
   }
   return DEFAULT_CLIENT_RELEASE;
