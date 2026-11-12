@@ -30,15 +30,15 @@ export async function patchBagnon(zip) {
     stale = stale
       .replace(
         'function Lib:CheckForUpdates(addon, sets, icon)',
-        'function Lib:CheckForUpdates(addon, sets, icon)\n\treturn -- Disabled for private servers to avoid false-positive update popups'
+        'function Lib:CheckForUpdates(addon, sets, icon)\n\tdo return end -- Disabled for private servers to avoid false-positive update popups'
       )
       .replace(
         'function Lib:CHAT_MSG_ADDON(prefix, message, channel, sender)',
-        'function Lib:CHAT_MSG_ADDON(prefix, message, channel, sender)\n\treturn -- Disabled'
+        'function Lib:CHAT_MSG_ADDON(prefix, message, channel, sender)\n\tdo return end -- Disabled'
       )
       .replace(
         'function Lib:Broadcast()',
-        'function Lib:Broadcast()\n\treturn -- Disabled'
+        'function Lib:Broadcast()\n\tdo return end -- Disabled'
       );
     zip.file('BagBrother/libs/StaleCheck-1.0/StaleCheck-1.0.lua', stale);
   }
