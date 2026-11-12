@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Loader2, FolderSync } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { DirectoryBanner } from './components/DirectoryBanner';
@@ -10,6 +10,7 @@ import { ShareModal } from './components/ShareModal';
 import { DeployModal } from './components/DeployModal';
 import { ProgressModal } from './components/ProgressModal';
 import { ClientDownloadModal } from './components/ClientDownloadModal';
+import { UpdateBanner, type OutdatedAddonItem } from './components/UpdateBanner';
 
 import {
   pickAddOnsDirectory,
@@ -22,7 +23,11 @@ import {
 } from './services/fsService';
 import { groupAddons } from './services/addonGrouper';
 
-import { downloadAndInstallAddon } from './services/catalogService';
+import {
+  downloadAndInstallAddon,
+  enrichAddonsWithUpdateStatus,
+  findMatchingCuratedAddon,
+} from './services/catalogService';
 
 import {
   checkAgentStatus,
@@ -95,45 +100,58 @@ export function App() {
     };
   }, []);
 
+  const scanSeqRef = useRef(0);
+
   // Scan current browser directory handle
   const loadBrowserAddons = useCallback(async (handle: FileSystemDirectoryHandle) => {
+    const seq = ++scanSeqRef.current;
     setIsLoading(true);
     try {
       const list = await scanAddOns(handle);
+      if (seq !== scanSeqRef.current) return;
       const grouped = groupAddons(list);
-      setAddons(grouped);
+      const enriched = enrichAddonsWithUpdateStatus(grouped);
+      setAddons(enriched);
       setDirectoryState((prev) => ({
         ...prev,
-        addonCount: grouped.length,
+        addonCount: enriched.length,
       }));
     } catch (err) {
       console.error('Browser scan error:', err);
     } finally {
-      setIsLoading(false);
+      if (seq === scanSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   // Scan addons via agent path
   const loadAgentAddons = useCallback(async (addonsPath: string) => {
+    const seq = ++scanSeqRef.current;
     setIsLoading(true);
     try {
       const list = await agentScanAddons(addonsPath);
+      if (seq !== scanSeqRef.current) return;
       const grouped = groupAddons(list);
-      setAddons(grouped);
+      const enriched = enrichAddonsWithUpdateStatus(grouped);
+      setAddons(enriched);
       setDirectoryState((prev) => ({
         ...prev,
-        addonCount: grouped.length,
+        addonCount: enriched.length,
       }));
     } catch (err: any) {
       console.error('Agent scan error:', err);
       alert(`扫描目录失败: ${err.message || '未知错误'}`);
     } finally {
-      setIsLoading(false);
+      if (seq === scanSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   // Select auto-discovered installation from agent
   const handleSelectAgentInstallation = async (inst: WowInstallation) => {
+    setAddons([]);
     setDirectoryState({
       handle: null,
       mode: 'agent',
@@ -153,6 +171,7 @@ export function App() {
     try {
       const picked = await agentPickFolder();
       if (picked) {
+        setAddons([]);
         setDirectoryState({
           handle: null,
           mode: 'agent',
@@ -222,6 +241,7 @@ export function App() {
     setIsPicking(true);
     try {
       const resolved = await pickAddOnsDirectory();
+      setAddons([]);
       setDirectoryState({
         handle: resolved.handle,
         mode: 'browser',
@@ -301,12 +321,16 @@ export function App() {
     }
   };
 
+  const [isUpdatingBusy, setIsUpdatingBusy] = useState(false);
+
   // Install Curated Addon from Market
   const handleInstallCuratedAddon = async (addon: CuratedAddon) => {
     if (!directoryState.isAuthorized) {
       handlePickDirectory();
       return;
     }
+    if (isUpdatingBusy) return;
+    setIsUpdatingBusy(true);
 
     try {
       if (directoryState.mode === 'agent' && directoryState.agentPath) {
@@ -354,6 +378,80 @@ export function App() {
         percent: 0,
         message: err.message || '安装过程中发生异常',
       });
+    } finally {
+      setIsUpdatingBusy(false);
+    }
+  };
+
+  // Filter outdated items
+  const outdatedItems = useMemo<OutdatedAddonItem[]>(() => {
+    const list: OutdatedAddonItem[] = [];
+    for (const addon of addons) {
+      if (addon.status === 'update-available') {
+        const curated = findMatchingCuratedAddon(addon);
+        if (curated) {
+          list.push({ addon, curated });
+        }
+      }
+    }
+    return list;
+  }, [addons]);
+
+  // Batch update all outdated addons
+  const handleUpdateAllOutdated = async () => {
+    if (outdatedItems.length === 0 || isUpdatingBusy) return;
+    setIsUpdatingBusy(true);
+    let updatedCount = 0;
+    try {
+      for (let i = 0; i < outdatedItems.length; i++) {
+        const { curated } = outdatedItems[i];
+        setInstallProgress({
+          status: 'downloading',
+          addonName: curated.name,
+          percent: Math.round(((i) / outdatedItems.length) * 100),
+          message: `[${i + 1}/${outdatedItems.length}] 正在下载更新: ${curated.name}...`,
+        });
+
+        if (directoryState.mode === 'agent' && directoryState.agentPath) {
+          const url = curated.downloadUrl.startsWith('http')
+            ? curated.downloadUrl
+            : `https://wow.lich.tech${curated.downloadUrl}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`下载 ${curated.name} 失败 (HTTP ${res.status})`);
+          const blob = await res.blob();
+          await agentInstallZip(directoryState.agentPath, blob);
+        } else if (directoryState.handle) {
+          await downloadAndInstallAddon(curated, directoryState.handle, (p) => {
+            setInstallProgress({
+              ...p,
+              message: `[${i + 1}/${outdatedItems.length}] ${p.message}`,
+            });
+          });
+        }
+        updatedCount++;
+      }
+
+      setInstallProgress({
+        status: 'completed',
+        addonName: '所有过期插件',
+        percent: 100,
+        message: `成功完成 ${outdatedItems.length} 个插件的批量更新！`,
+      });
+    } catch (err: any) {
+      setInstallProgress({
+        status: 'error',
+        addonName: '批量更新',
+        percent: 0,
+        message: err.message || '批量更新时发生异常',
+      });
+    } finally {
+      // 无论成功或部分更新失败，只要有安装变动均刷新目录状态，确保已写入项不重复展示为待更新
+      if (directoryState.mode === 'agent' && directoryState.agentPath) {
+        await loadAgentAddons(directoryState.agentPath);
+      } else if (directoryState.handle) {
+        await loadBrowserAddons(directoryState.handle);
+      }
+      setIsUpdatingBusy(false);
     }
   };
 
@@ -415,6 +513,7 @@ export function App() {
         onOpenClientModal={() => setIsClientModalOpen(true)}
         isPicking={isPicking}
         agentStatus={agentStatus}
+        outdatedCount={outdatedItems.length}
       />
 
       {/* Main Container */}
@@ -439,6 +538,18 @@ export function App() {
               一键恢复授权
             </button>
           </div>
+        )}
+
+        {/* Update Banner when outdated addons exist */}
+        {directoryState.isAuthorized && outdatedItems.length > 0 && (
+          <UpdateBanner
+            directoryKey={directoryState.agentPath || directoryState.folderName}
+            outdatedItems={outdatedItems}
+            onUpdateSingle={handleInstallCuratedAddon}
+            onUpdateAll={handleUpdateAllOutdated}
+            onViewInstalledTab={() => setActiveTab('installed')}
+            isUpdatingAll={isUpdatingBusy}
+          />
         )}
 
         {/* Directory Banner when not authorized */}
@@ -467,6 +578,7 @@ export function App() {
                   addons={addons}
                   onDeleteAddon={handleDeleteAddon}
                   onSelectAddonDetail={(addon) => setSelectedAddonDetail(addon)}
+                  onUpdateAddon={handleInstallCuratedAddon}
                 />
               ) : (
                 <div className="text-center py-12 p-6 rounded-2xl bg-slate-900/40 border border-slate-800">

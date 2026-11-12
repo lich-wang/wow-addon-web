@@ -1,4 +1,4 @@
-import type { CuratedAddon, InstallProgress } from '../types/addon';
+import type { AddonInfo, CuratedAddon, InstallProgress } from '../types/addon';
 import { installAddonFromZip } from './fsService';
 
 export const POPULAR_ADDONS: CuratedAddon[] = [
@@ -25,7 +25,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Trade',
     icon: 'Coins',
     defaultFolderName: 'Blackthornes_TS',
-    latestVersion: 'v1.20.1 (Forever 中文版)',
+    latestVersion: 'v1.23.0 (Forever 中文版)',
     downloadUrl: '/addons/blackthornes-tradeskills.zip',
     githubRepo: 'Blackthornes/Blackthornes_Tradeskills',
     homeUrl: 'https://www.curseforge.com/wow/addons/blackthornes-tradeskills',
@@ -40,7 +40,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'Eye',
     defaultFolderName: 'IceHUD',
-    latestVersion: 'v1.17.28 (全汉化版)',
+    latestVersion: 'v1.17.29 (全汉化版)',
     downloadUrl: '/addons/icehud.zip',
     githubRepo: 'parnic/ice-hud',
     homeUrl: 'https://www.curseforge.com/wow/addons/ice-hud',
@@ -97,7 +97,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'MapPin',
     defaultFolderName: 'Questie',
-    latestVersion: 'v12.6.4 + DB v1.0.13 (中文版)',
+    latestVersion: 'v12.6.4 + DB v1.0.14 (中文版)',
     downloadUrl: '/addons/questie-forever.zip',
     githubRepo: 'Questie/Questie',
     homeUrl: 'https://www.curseforge.com/wow/addons/questie',
@@ -203,4 +203,202 @@ export function generateShareManifest(
     })),
   };
   return JSON.stringify(data, null, 2);
+}
+
+export interface ParsedVersion {
+  mainParts: number[];
+  preRelease: string | null;
+  dbParts: number[] | null;
+}
+
+/**
+ * 解析版本字符串，分离主版本号、语义化预发布标识（如 -beta.1）与数据库 (DB) 版本号段
+ * 自动剥离括号中的说明文字（如 100%全汉化版），防止非版本数字干扰比对
+ * @param versionStr - 原始版本字符串（如 "v12.6.4 + DB v1.0.14 (中文版)" 或 "v1.17.29-beta.1"）
+ * @returns 解析得到的结构化版本对象，无法解析有效版本时返回 null
+ */
+export function parseVersionParts(versionStr: string): ParsedVersion | null {
+  if (!versionStr || versionStr.includes('未知')) return null;
+
+  // 1. 提取 DB 版本 (如 "DB v1.0.14" -> [1, 0, 14])
+  let dbParts: number[] | null = null;
+  const dbMatch = versionStr.match(/DB\s*v?(\d+(?:\.\d+)*)/i);
+  if (dbMatch) {
+    dbParts = dbMatch[1].split('.').map((s) => parseInt(s, 10));
+  }
+
+  // 2. 提取主版本与预发布标识：去除 DB 部分以及括号文字说明后匹配版本序列
+  const withoutDb = versionStr.replace(/DB\s*v?\d+(?:\.\d+)*/gi, '');
+  const cleanStr = withoutDb.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '').trim();
+  const mainMatch = cleanStr.match(/v?(\d+(?:\.\d+)*)(?:-([a-zA-Z0-9.-]+))?/);
+
+  if (!mainMatch) return null;
+
+  const mainParts = mainMatch[1].split('.').map((s) => parseInt(s, 10));
+  const preRelease = mainMatch[2] ? mainMatch[2].toLowerCase() : null;
+  return { mainParts, preRelease, dbParts };
+}
+
+/**
+ * 从版本字符串中提取主版本数字分段数组
+ * @param versionStr - 原始版本字符串
+ * @returns 解析得到的主版本数字数组，若无法解析则返回 null
+ */
+export function extractVersionNumbers(versionStr: string): number[] | null {
+  const parsed = parseVersionParts(versionStr);
+  return parsed ? parsed.mainParts : null;
+}
+
+/**
+ * 比较两组版本数字序列
+ * @returns 1 表示 remote 更新，-1 表示 local 更新，0 表示相等
+ */
+function compareNumberParts(local: number[], remote: number[]): number {
+  const maxLen = Math.max(local.length, remote.length);
+  for (let i = 0; i < maxLen; i++) {
+    const l = local[i] ?? 0;
+    const r = remote[i] ?? 0;
+    if (r > l) return 1;
+    if (r < l) return -1;
+  }
+  return 0;
+}
+
+/**
+ * 比较主版本数字分段与预发布标识（语义版本标准：正式版高于相同版本的预发布版）
+ * @returns 1 表示 remote 更新，-1 表示 local 更新，0 表示相等
+ */
+function compareMainVersion(local: ParsedVersion, remote: ParsedVersion): number {
+  const numDiff = compareNumberParts(local.mainParts, remote.mainParts);
+  if (numDiff !== 0) return numDiff;
+
+  // 主版本数字完全相同时，比较预发布标签
+  if (local.preRelease === remote.preRelease) return 0;
+  // 正式版（无 preRelease 标签）高于预发布版（有 preRelease 标签）
+  if (local.preRelease !== null && remote.preRelease === null) return 1;
+  if (local.preRelease === null && remote.preRelease !== null) return -1;
+  // 两者均为预发布版时进行自然版本排序比较
+  return (remote.preRelease ?? '').localeCompare(local.preRelease ?? '', undefined, {
+    numeric: true,
+  });
+}
+
+/**
+ * 检查两个版本字符串是否均包含可比较的数字序列
+ * 若本地或远端版本无法解析出版本号，或者远端包含 DB 版本而本地缺少 DB 版本且主版本相同，则视为不可确认最新
+ * @param localVersion - 本地插件版本号
+ * @param remoteVersion - 远端市场版本号
+ * @returns true 表示两者均能提取出有效版本且可以完整判定是否已是最新
+ */
+export function canCompareVersions(localVersion: string, remoteVersion: string): boolean {
+  if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
+    return false;
+  }
+  const localParsed = parseVersionParts(localVersion);
+  const remoteParsed = parseVersionParts(remoteVersion);
+  if (!localParsed || !remoteParsed) {
+    return false;
+  }
+  // 若远端要求特定的 DB 数据库版本，而本地没有解析出 DB 版本信息，且主版本号相同，无法确定是否已是最新
+  if (remoteParsed.dbParts && !localParsed.dbParts) {
+    const mainDiff = compareMainVersion(localParsed, remoteParsed);
+    if (mainDiff === 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 校验本地已安装版本与远端精选市场最新版本是否存在可用更新
+ * 独立按主版本 -> DB 版本顺序比对，保留版本边界，避免多段复合版本错位
+ * 当本地版本未知或无法确认落后时，保守返回 false，避免误报更新
+ * @param localVersion - 本地插件 TOC 解析出的版本号
+ * @param remoteVersion - 市场最新版本号
+ * @returns true 表示存在新版本可用，false 表示已是最新、无需更新或版本未知
+ */
+export function isUpdateAvailable(localVersion: string, remoteVersion: string): boolean {
+  if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
+    return false;
+  }
+  const localParsed = parseVersionParts(localVersion);
+  const remoteParsed = parseVersionParts(remoteVersion);
+
+  if (!localParsed || !remoteParsed) {
+    return false;
+  }
+
+  // 1. 先独立比较主版本号及预发布标签
+  const mainDiff = compareMainVersion(localParsed, remoteParsed);
+  if (mainDiff > 0) return true;
+  if (mainDiff < 0) return false;
+
+  // 2. 主版本相等时，若两端均有 DB 数据库版本，比较 DB 版本号
+  if (localParsed.dbParts && remoteParsed.dbParts) {
+    const dbDiff = compareNumberParts(localParsed.dbParts, remoteParsed.dbParts);
+    if (dbDiff > 0) return true;
+    if (dbDiff < 0) return false;
+  }
+
+  return false;
+}
+
+/**
+ * 在精选插件库中查找与本地已装插件相匹配的项目
+ * 严格按照文件夹标识及精确名称/别名匹配，避免因通用子字符串误匹配无关插件
+ * @param addon - 本地已扫描插件信息
+ * @param curatedList - 待匹配的精选插件列表（默认使用 POPULAR_ADDONS）
+ * @returns 匹配到的精选插件对象，未匹配时返回 undefined
+ */
+export function findMatchingCuratedAddon(
+  addon: { folderName: string; name: string; subFolders?: string[] },
+  curatedList: CuratedAddon[] = POPULAR_ADDONS
+): CuratedAddon | undefined {
+  const folder = addon.folderName.toLowerCase();
+  const subFolders = addon.subFolders?.map((f) => f.toLowerCase()) || [];
+  const name = addon.name.toLowerCase().trim();
+
+  return curatedList.find((c) => {
+    const defaultFolder = c.defaultFolderName.toLowerCase();
+    const id = c.id.toLowerCase();
+    const cName = c.name.toLowerCase().trim();
+
+    // 1. 文件夹名或子文件夹名与精选 defaultFolderName 严格匹配
+    if (folder === defaultFolder || subFolders.includes(defaultFolder)) return true;
+    // 2. 文件夹名与精选 id 严格匹配
+    if (folder === id || subFolders.includes(id)) return true;
+    // 3. 插件名称全等，或去除括号说明后全等
+    if (name === cName) return true;
+    const cleanAddonName = name.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '').trim();
+    const cleanCuratedName = cName.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '').trim();
+    if (cleanAddonName.length >= 3 && cleanAddonName === cleanCuratedName) return true;
+
+    return false;
+  });
+}
+
+/**
+ * 为已扫描插件列表注入市场比对状态（标记 update-available 或 up-to-date）
+ * @param addons - 扫描得到的插件列表
+ * @param curatedList - 市场精选插件列表
+ * @returns 附带最新状态与下载链接的插件列表
+ */
+export function enrichAddonsWithUpdateStatus(
+  addons: AddonInfo[],
+  curatedList: CuratedAddon[] = POPULAR_ADDONS
+): AddonInfo[] {
+  return addons.map((addon) => {
+    const matched = findMatchingCuratedAddon(addon, curatedList);
+    if (!matched) {
+      return addon;
+    }
+    const hasUpdate = isUpdateAvailable(addon.version, matched.latestVersion);
+    const isComparable = canCompareVersions(addon.version, matched.latestVersion);
+    return {
+      ...addon,
+      status: hasUpdate ? 'update-available' : isComparable ? 'up-to-date' : 'unknown',
+      latestVersion: matched.latestVersion,
+      downloadUrl: matched.downloadUrl,
+    };
+  });
 }
