@@ -47,24 +47,35 @@ export const DEFAULT_CLIENT_RELEASE: ClientReleaseInfo = {
   releaseUrl: 'https://github.com/lich-wang/wow-addon-web/releases/tag/v1.0.7',
 };
 
-let cachedClientRelease: ClientReleaseInfo | null = null;
+let cachedClientRelease: { data: ClientReleaseInfo; timestamp: number } | null = null;
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 
 /**
- * Fetch latest desktop client release information with fallback
+ * Fetch latest desktop client release information with TTL cache and fallback
+ * @param forceRefresh - If true, bypasses in-memory cache and re-fetches manifest
  */
-export async function fetchClientReleaseInfo(): Promise<ClientReleaseInfo> {
-  if (cachedClientRelease) return cachedClientRelease;
+export async function fetchClientReleaseInfo(forceRefresh = false): Promise<ClientReleaseInfo> {
+  const now = Date.now();
+  if (!forceRefresh && cachedClientRelease && now - cachedClientRelease.timestamp < CACHE_TTL_MS) {
+    return cachedClientRelease.data;
+  }
+
   try {
-    const res = await fetch('/downloads/client-version.json', { cache: 'no-cache' });
+    const res = await fetch(`/downloads/client-version.json?_t=${now}`, { cache: 'no-cache' });
     if (res.ok) {
       const data = await res.json();
       if (data && data.version && data.tag) {
-        cachedClientRelease = data as ClientReleaseInfo;
-        return cachedClientRelease;
+        const info = data as ClientReleaseInfo;
+        cachedClientRelease = { data: info, timestamp: now };
+        return info;
       }
     }
   } catch (e) {
     console.warn('Failed to fetch client-version.json, using fallback:', e);
+  }
+
+  if (cachedClientRelease) {
+    return cachedClientRelease.data;
   }
   return DEFAULT_CLIENT_RELEASE;
 }

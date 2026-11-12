@@ -119,6 +119,14 @@ async function main() {
     }
   }
 
+  // Verify that required client binary files exist and are not empty
+  if (!fs.existsSync(winPath) || winSize === 0) {
+    throw new Error(`Windows client binary is missing or empty: ${winPath} (${winSize} bytes)`);
+  }
+  if (!fs.existsSync(macPath) || macSize === 0) {
+    throw new Error(`macOS client binary is missing or empty: ${macPath} (${macSize} bytes)`);
+  }
+
   const versionManifest = {
     version,
     tag,
@@ -140,6 +148,5 @@ async function main() {
 
 main().catch((err) => {
   console.error('[fetch-client] Fatal error:', err);
-  // Do not crash the entire build if client download fails
-  process.exit(0);
+  process.exit(1);
 });
