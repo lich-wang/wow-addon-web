@@ -112,7 +112,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'Compass',
     defaultFolderName: 'BtWQuests',
-    latestVersion: 'v2.69.1 (Forever 中文版)',
+    latestVersion: 'v2.69.1-forever (中文版)',
     downloadUrl: '/addons/btwquests.zip',
     homeUrl: 'https://www.curseforge.com/wow/addons/btw-quests',
     gameFlavors: ['forever', 'classic', 'retail', 'vanilla'],
@@ -265,22 +265,48 @@ function compareNumberParts(local: number[], remote: number[]): number {
 }
 
 /**
- * 比较主版本数字分段与预发布标识（语义版本标准：正式版高于相同版本的预发布版）
+ * 校验版本标识是否属于严格语义化预发布标签 (alpha, beta, rc, preview, dev, test 等)
+ * 避免将魔兽世界插件生态中的渠道/运行环境变体标识 (如 forever, classic, vanilla, retail, release 等) 误判为预发布
+ */
+function isTruePreRelease(tag: string | null): boolean {
+  if (!tag) return false;
+  return /^(alpha|beta|rc|preview|dev|test|canary|b\d*)/i.test(tag);
+}
+
+/**
+ * 比较主版本数字分段与预发布标识
+ * 严格语义版本标准：
+ * 1. 若版本数字序列不同，直接以数字大小为准
+ * 2. 若版本数字序列相同，仅当一方为真正预发布标识 (alpha/beta/rc等) 时，正式版或变体版高于预发布版
+ * 3. 若双方标签均为渠道变体标识 (如 forever/classic) 或均非测试版，主版本相同时视为等价，避免无限提示更新
  * @returns 1 表示 remote 更新，-1 表示 local 更新，0 表示相等
  */
 function compareMainVersion(local: ParsedVersion, remote: ParsedVersion): number {
   const numDiff = compareNumberParts(local.mainParts, remote.mainParts);
   if (numDiff !== 0) return numDiff;
 
-  // 主版本数字完全相同时，比较预发布标签
-  if (local.preRelease === remote.preRelease) return 0;
-  // 正式版（无 preRelease 标签）高于预发布版（有 preRelease 标签）
-  if (local.preRelease !== null && remote.preRelease === null) return 1;
-  if (local.preRelease === null && remote.preRelease !== null) return -1;
-  // 两者均为预发布版时进行自然版本排序比较
-  return (remote.preRelease ?? '').localeCompare(local.preRelease ?? '', undefined, {
-    numeric: true,
-  });
+  const localTag = local.preRelease;
+  const remoteTag = remote.preRelease;
+
+  // 变体或预发布标签完全一致时视为相等
+  if (localTag === remoteTag) return 0;
+
+  const localIsPre = isTruePreRelease(localTag);
+  const remoteIsPre = isTruePreRelease(remoteTag);
+
+  // 1. 本地是真正预发布版，远端是正式版或变体版 -> 远端更新
+  if (localIsPre && !remoteIsPre) return 1;
+  // 2. 远端是真正预发布版，本地是正式版或变体版 -> 本地更新
+  if (!localIsPre && remoteIsPre) return -1;
+  // 3. 两者均为真正预发布版时进行自然版本排序比较
+  if (localIsPre && remoteIsPre) {
+    return (remoteTag ?? '').localeCompare(localTag ?? '', undefined, {
+      numeric: true,
+    });
+  }
+
+  // 4. 两者均非真正预发布版（例如一侧为渠道变体 forever/classic，另一侧无标签或同为变体），主版本数字相同时视为等价
+  return 0;
 }
 
 /**
