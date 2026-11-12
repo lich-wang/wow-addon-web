@@ -235,6 +235,22 @@ export function extractVersionNumbers(versionStr: string): number[] | null {
 }
 
 /**
+ * 检查两个版本字符串是否均包含可比较的数字序列
+ * 若本地或远端版本无法解析出版本号，则不可比较
+ * @param localVersion - 本地插件版本号
+ * @param remoteVersion - 远端市场版本号
+ * @returns true 表示两者均能提取出版本数字可供比对
+ */
+export function canCompareVersions(localVersion: string, remoteVersion: string): boolean {
+  if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
+    return false;
+  }
+  const localParts = extractVersionNumbers(localVersion);
+  const remoteParts = extractVersionNumbers(remoteVersion);
+  return Boolean(localParts && remoteParts);
+}
+
+/**
  * 校验本地已安装版本与远端精选市场最新版本是否存在可用更新
  * 当本地版本未知或无法确认落后时，保守返回 false，避免误报更新
  * @param localVersion - 本地插件 TOC 解析出的版本号
@@ -313,9 +329,10 @@ export function enrichAddonsWithUpdateStatus(
       return addon;
     }
     const hasUpdate = isUpdateAvailable(addon.version, matched.latestVersion);
+    const isComparable = canCompareVersions(addon.version, matched.latestVersion);
     return {
       ...addon,
-      status: hasUpdate ? 'update-available' : 'up-to-date',
+      status: hasUpdate ? 'update-available' : isComparable ? 'up-to-date' : 'unknown',
       latestVersion: matched.latestVersion,
       downloadUrl: matched.downloadUrl,
     };

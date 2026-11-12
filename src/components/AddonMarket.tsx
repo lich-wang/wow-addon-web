@@ -21,9 +21,15 @@ import {
   Flame,
   FolderOpen,
   Zap,
+  HelpCircle,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
-import { POPULAR_ADDONS, isUpdateAvailable, findMatchingCuratedAddon } from '../services/catalogService';
+import {
+  POPULAR_ADDONS,
+  isUpdateAvailable,
+  canCompareVersions,
+  findMatchingCuratedAddon,
+} from '../services/catalogService';
 import type { AddonInfo, CuratedAddon, GameFlavor } from '../types/addon';
 
 interface AddonMarketProps {
@@ -326,7 +332,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                             <span>立即更新</span>
                           </button>
                         </>
-                      ) : (
+                      ) : canCompareVersions(installed.version, addon.latestVersion) ? (
                         <>
                           <span className="inline-flex items-center space-x-1 text-xs text-emerald-400 font-medium bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-md">
                             <CheckCircle2 className="w-3 h-3" />
@@ -340,6 +346,25 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                             className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors cursor-pointer"
                           >
                             重新覆盖
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span
+                            className="inline-flex items-center space-x-1 text-xs text-slate-400 font-medium bg-slate-800/60 border border-slate-700/50 px-2 py-1 rounded-md"
+                            title={`本地版本: ${installed.version} (无法比较版本号)`}
+                          >
+                            <HelpCircle className="w-3 h-3 text-slate-400" />
+                            <span>版本未知</span>
+                          </span>
+                          <button
+                            onClick={() =>
+                              hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
+                            }
+                            title="版本未知，点击重新覆盖安装最新版"
+                            className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors cursor-pointer"
+                          >
+                            覆盖安装
                           </button>
                         </>
                       )}
