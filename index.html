@@ -4,12 +4,28 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="renderer" content="webkit" />
+    <meta name="force-rendering" content="webkit" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
     <meta name="description" content="魔兽世界本地插件在线智能管理器与精选汉化市场 - 支持免设置直接下载无限服(WoW Forever)/经典服/正式服汉化插件ZIP，或通过浏览器/Tauri桌面端连接本地目录一键安装管理" />
     <meta name="keywords" content="魔兽世界, 魔兽插件, 无限服, WoW Forever, SBF, 单键钓鱼, Blackthornes, IceHUD, Bagnon, Dungeonsforever, Lueur, WoW Addons, Web Addon Manager" />
     <title>WoW Addon Web - 魔兽世界本地插件在线管理器与汉化市场</title>
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen">
     <div id="root"></div>
+    <noscript>
+      <div style="padding: 24px; text-align: center; color: #f87171; background: #0f172a; font-family: sans-serif;">
+        <h2>请启用 JavaScript</h2>
+        <p>魔兽世界本地插件在线智能管理器需要 JavaScript 支持以运行文件解压与同步。</p>
+      </div>
+    </noscript>
+    <script nomodule>
+      document.getElementById('root').innerHTML =
+        '<div style="max-width:560px;margin:80px auto;padding:32px;background:#0f172a;color:#f1f5f9;border:1px solid #f59e0b;border-radius:16px;text-align:center;font-family:sans-serif;">' +
+        '<h2 style="color:#fbbf24;margin-bottom:12px;">⚠️ 当前浏览器版本过旧</h2>' +
+        '<p style="color:#94a3b8;font-size:14px;line-height:1.6;">本站基于现代现代浏览器底层技术构建。请使用最新版 <strong>Google Chrome</strong>、<strong>Microsoft Edge</strong> 访问，或若使用360/QQ浏览器请切换到「极速模式」。</p>' +
+        '</div>';
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

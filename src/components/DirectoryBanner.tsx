@@ -6,6 +6,7 @@ import {
   ChevronUp,
   Laptop,
   HelpCircle,
+  AlertTriangle,
 } from 'lucide-react';
 import { isFileSystemAccessSupported } from '../services/fsService';
 import type { AgentStatus, WowInstallation } from '../services/agentService';
@@ -18,6 +19,8 @@ interface DirectoryBannerProps {
   onSelectAgentInstallation: (inst: WowInstallation) => void;
   onPickAgentDirectory: () => void;
   onOpenClientModal?: () => void;
+  onOpenCompatModal?: () => void;
+  isCompatible?: boolean;
 }
 
 export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
@@ -27,9 +30,14 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
   onSelectAgentInstallation,
   onPickAgentDirectory,
   onOpenClientModal,
+  onOpenCompatModal,
+  isCompatible,
 }) => {
   const isTauri = isTauriEnv();
-  const isSupported = isFileSystemAccessSupported() || isTauri;
+  // If isCompatible is explicitly provided from comprehensive check, prioritize it
+  const isSupported = isCompatible !== undefined
+    ? isCompatible
+    : (isFileSystemAccessSupported() || isTauri);
   const isAgentConnected = !!agentStatus;
   const [showAllVersions, setShowAllVersions] = useState(false);
   const [showSandboxTip, setShowSandboxTip] = useState(false);
@@ -180,19 +188,39 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
               {/* Action Buttons */}
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                 <button
-                  onClick={onPickDirectory}
-                  disabled={!isSupported || isPicking}
+                  onClick={!isSupported && onOpenCompatModal ? onOpenCompatModal : onPickDirectory}
+                  disabled={isPicking}
                   className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-md transition-all ${
                     !isSupported
-                      ? 'bg-slate-900 border border-slate-800 text-slate-500 cursor-not-allowed'
+                      ? 'bg-slate-900/90 border border-amber-500/40 text-amber-300 hover:bg-slate-800 hover:border-amber-400 cursor-pointer'
                       : isPicking
                       ? 'bg-slate-800 text-slate-400 cursor-wait'
                       : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20 hover:scale-101 active:scale-99 cursor-pointer'
                   }`}
+                  title={!isSupported ? '当前浏览器不支持本地读写，点击查看说明' : undefined}
                 >
-                  <FolderOpen className="w-4 h-4" />
-                  <span>{isPicking ? '请在弹窗中选择文件夹...' : '选择魔兽 AddOns 目录'}</span>
+                  {!isSupported ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  ) : (
+                    <FolderOpen className="w-4 h-4" />
+                  )}
+                  <span>
+                    {!isSupported
+                      ? '浏览器不受支持 (点击查看)'
+                      : isPicking
+                      ? '请在弹窗中选择文件夹...'
+                      : '选择魔兽 AddOns 目录'}
+                  </span>
                 </button>
+
+                {onOpenCompatModal && !isSupported && (
+                  <button
+                    onClick={onOpenCompatModal}
+                    className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-all cursor-pointer"
+                  >
+                    <span>换 Chrome 打开</span>
+                  </button>
+                )}
 
                 {onOpenClientModal && (
                   <button
