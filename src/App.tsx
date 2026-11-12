@@ -10,6 +10,13 @@ import { ShareModal } from './components/ShareModal';
 import { DeployModal } from './components/DeployModal';
 import { ProgressModal } from './components/ProgressModal';
 import { ClientDownloadModal } from './components/ClientDownloadModal';
+import { BrowserCompatibilityModal } from './components/BrowserCompatibilityModal';
+import {
+  evaluateBrowserCompatibility,
+  isBrowserCheckDismissed,
+  dismissBrowserCheck,
+  type BrowserCompatibilityResult,
+} from './services/browserDetector';
 
 import {
   pickAddOnsDirectory,
@@ -68,6 +75,42 @@ export function App() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isCompatModalOpen, setIsCompatModalOpen] = useState(false);
+
+  // Browser Compatibility State
+  const [compatibility, setCompatibility] = useState<BrowserCompatibilityResult>({
+    isCompatible: true,
+    browserName: '',
+    isMobile: false,
+    isFsSupported: true,
+    isTauri: false,
+    hasTauriPermission: false,
+    isAgentConnected: false,
+  });
+
+  // Evaluate browser compatibility when page loads and when agentStatus changes
+  useEffect(() => {
+    let active = true;
+    const runCheck = async () => {
+      const res = await evaluateBrowserCompatibility(agentStatus);
+      if (!active) return;
+      setCompatibility(res);
+      // Auto-open modal on incompatible environment unless user already dismissed in this session
+      if (!res.isCompatible && !isBrowserCheckDismissed()) {
+        setIsCompatModalOpen(true);
+      }
+    };
+    runCheck();
+    return () => {
+      active = false;
+    };
+  }, [agentStatus]);
+
+  const handleContinueBrowsing = () => {
+    dismissBrowserCheck();
+    setIsCompatModalOpen(false);
+    handleBrowseMarket();
+  };
 
   // Install Progress State
   const [installProgress, setInstallProgress] = useState<InstallProgress>({
@@ -212,6 +255,12 @@ export function App() {
 
   // Request directory permission on user click (Browser Mode)
   const handlePickDirectory = async () => {
+    // If browser is incompatible and agent is not active, prompt user to switch browser or use client
+    if (!compatibility.isCompatible && !agentStatus) {
+      setIsCompatModalOpen(true);
+      return;
+    }
+
     // If agent is active, prefer agent folder picker to avoid Chromium Program Files block!
     if (agentStatus) {
       await handlePickAgentDirectory();
@@ -450,6 +499,8 @@ export function App() {
             onSelectAgentInstallation={handleSelectAgentInstallation}
             onPickAgentDirectory={handlePickAgentDirectory}
             onOpenClientModal={() => setIsClientModalOpen(true)}
+            onOpenCompatModal={() => setIsCompatModalOpen(true)}
+            isCompatible={compatibility.isCompatible}
           />
         )}
 
@@ -563,6 +614,14 @@ export function App() {
       <ClientDownloadModal
         isOpen={isClientModalOpen}
         onClose={() => setIsClientModalOpen(false)}
+      />
+
+      <BrowserCompatibilityModal
+        isOpen={isCompatModalOpen}
+        onClose={() => setIsCompatModalOpen(false)}
+        compatibility={compatibility}
+        onContinueBrowsing={handleContinueBrowsing}
+        onOpenClientModal={() => setIsClientModalOpen(true)}
       />
     </div>
   );
