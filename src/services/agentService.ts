@@ -75,7 +75,13 @@ export async function fetchClientReleaseInfo(forceRefresh = false): Promise<Clie
   }
 
   if (cachedClientRelease) {
-    return cachedClientRelease.data;
+    return {
+      ...cachedClientRelease.data,
+      winUrl: DEFAULT_CLIENT_RELEASE.winUrl,
+      winFileName: DEFAULT_CLIENT_RELEASE.winFileName,
+      macUrl: DEFAULT_CLIENT_RELEASE.macUrl,
+      macFileName: DEFAULT_CLIENT_RELEASE.macFileName,
+    };
   }
   return DEFAULT_CLIENT_RELEASE;
 }
