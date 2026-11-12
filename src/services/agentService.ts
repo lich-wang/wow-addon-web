@@ -18,9 +18,56 @@ export interface AgentStatus {
   installations: WowInstallation[];
 }
 
+export interface ClientReleaseInfo {
+  version: string;
+  tag: string;
+  winUrl: string;
+  winFileName: string;
+  winSize?: number;
+  macUrl: string;
+  macFileName: string;
+  macSize?: number;
+  releaseUrl: string;
+  publishedAt?: string;
+}
+
 export const GITHUB_RELEASES_URL = 'https://github.com/lich-wang/wow-addon-web/releases';
 export const WIN_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.exe';
 export const MAC_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.dmg';
+
+export const DEFAULT_CLIENT_RELEASE: ClientReleaseInfo = {
+  version: '1.0.7',
+  tag: 'v1.0.7',
+  winUrl: '/downloads/WoW-Addon-Manager-v1.0.7.exe',
+  winFileName: 'WoW-Addon-Manager-v1.0.7.exe',
+  winSize: 13196288,
+  macUrl: '/downloads/WoW-Addon-Manager-v1.0.7.dmg',
+  macFileName: 'WoW-Addon-Manager-v1.0.7.dmg',
+  macSize: 9091024,
+  releaseUrl: 'https://github.com/lich-wang/wow-addon-web/releases/tag/v1.0.7',
+};
+
+let cachedClientRelease: ClientReleaseInfo | null = null;
+
+/**
+ * Fetch latest desktop client release information with fallback
+ */
+export async function fetchClientReleaseInfo(): Promise<ClientReleaseInfo> {
+  if (cachedClientRelease) return cachedClientRelease;
+  try {
+    const res = await fetch('/downloads/client-version.json', { cache: 'no-cache' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.version && data.tag) {
+        cachedClientRelease = data as ClientReleaseInfo;
+        return cachedClientRelease;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to fetch client-version.json, using fallback:', e);
+  }
+  return DEFAULT_CLIENT_RELEASE;
+}
 
 /**
  * Check if running inside the Tauri native desktop app

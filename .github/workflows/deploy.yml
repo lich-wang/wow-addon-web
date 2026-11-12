@@ -29,6 +29,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Fetch Latest Desktop Client Release to public/downloads
+        run: node scripts/fetch-client.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Web Frontend
         run: npm run build
 

@@ -56,6 +56,8 @@ jobs:
           mkdir -p dist-bundles
           # Copy standalone executable directly (单文件绿色免安装版，双击直接运行)
           find src-tauri/target/release -maxdepth 1 -type f -name "*.exe" -exec cp {} dist-bundles/WoW-Addon-Manager.exe \;
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cp dist-bundles/WoW-Addon-Manager.exe dist-bundles/WoW-Addon-Manager-v${VERSION}.exe
           # Also package into zip for users who prefer zip download
           powershell -Command "Compress-Archive -Path dist-bundles/WoW-Addon-Manager.exe -DestinationPath dist-bundles/WoW-Addon-Manager-windows-x64.zip"
           ls -la dist-bundles/
@@ -66,6 +68,12 @@ jobs:
         run: |
           mkdir -p dist-bundles
           find src-tauri/target/universal-apple-darwin/release/bundle -type f -name "*.dmg" -exec cp {} dist-bundles/ \;
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          DMG_FILE=$(find dist-bundles -maxdepth 1 -name "*.dmg" | head -n 1)
+          if [ -n "$DMG_FILE" ]; then
+            cp "$DMG_FILE" dist-bundles/WoW-Addon-Manager-v${VERSION}.dmg
+            cp "$DMG_FILE" dist-bundles/WoW-Addon-Manager.dmg
+          fi
           if [ -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/WoW-Addon-Manager.app" ]; then
             tar -czf dist-bundles/WoW-Addon-Manager_universal.app.tar.gz -C src-tauri/target/universal-apple-darwin/release/bundle/macos WoW-Addon-Manager.app
           fi
@@ -137,3 +145,67 @@ jobs:
           files: release-assets/*
           draft: false
           prerelease: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch and Bundle Addons to public/addons
+        run: node scripts/fetch-addons.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare Latest Release Downloads for Web
+        shell: bash
+        run: |
+          mkdir -p public/downloads
+          TAG="${{ steps.get_tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+
+          # Copy Windows executable
+          find release-assets -maxdepth 1 -name "*.exe" | head -n 1 | while read -r f; do
+            cp "$f" public/downloads/WoW-Addon-Manager.exe
+            cp "$f" public/downloads/WoW-Addon-Manager-${TAG}.exe
+          done
+
+          # Copy macOS DMG
+          find release-assets -maxdepth 1 -name "*.dmg" | head -n 1 | while read -r f; do
+            cp "$f" public/downloads/WoW-Addon-Manager.dmg
+            cp "$f" public/downloads/WoW-Addon-Manager-${TAG}.dmg
+          done
+
+          WIN_FILE="WoW-Addon-Manager-${TAG}.exe"
+          MAC_FILE="WoW-Addon-Manager-${TAG}.dmg"
+          WIN_SIZE=0
+          MAC_SIZE=0
+          if [ -f "public/downloads/${WIN_FILE}" ]; then
+            WIN_SIZE=$(stat -c%s "public/downloads/${WIN_FILE}" 2>/dev/null || wc -c < "public/downloads/${WIN_FILE}")
+          fi
+          if [ -f "public/downloads/${MAC_FILE}" ]; then
+            MAC_SIZE=$(stat -c%s "public/downloads/${MAC_FILE}" 2>/dev/null || wc -c < "public/downloads/${MAC_FILE}")
+          fi
+
+          cat <<EOF > public/downloads/client-version.json
+          {
+            "version": "${VERSION}",
+            "tag": "${TAG}",
+            "winUrl": "/downloads/${WIN_FILE}",
+            "winFileName": "${WIN_FILE}",
+            "winSize": ${WIN_SIZE},
+            "macUrl": "/downloads/${MAC_FILE}",
+            "macFileName": "${MAC_FILE}",
+            "macSize": ${MAC_SIZE},
+            "releaseUrl": "https://github.com/lich-wang/wow-addon-web/releases/tag/${TAG}",
+            "publishedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat public/downloads/client-version.json
+
+      - name: Build Web Frontend
+        run: npm run build
+
+      - name: Deploy Updated Web Page to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name wow-addon-web --branch main --commit-dirty=true

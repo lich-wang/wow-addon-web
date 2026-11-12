@@ -17,6 +17,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "fetch:client": "node scripts/fetch-client.js",
+    "fetch:addons": "node scripts/fetch-addons.js",
     "tauri": "tauri",
     "lint": "oxlint",
     "preview": "vite preview",
