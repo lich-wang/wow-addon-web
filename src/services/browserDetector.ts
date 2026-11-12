@@ -87,10 +87,10 @@ export async function verifyTauriApiAccess(): Promise<boolean> {
   }
 
   try {
-    // Attempt to invoke the ping command with a short timeout
+    // Attempt to invoke the ping command with a 4s timeout (macOS disk/process scan may take >1s on cold start)
     const pingPromise = invoke<{ status: string }>('ping');
     const timeoutPromise = new Promise<{ status: string }>((_, reject) =>
-      setTimeout(() => reject(new Error('Tauri IPC timeout')), 1500)
+      setTimeout(() => reject(new Error('Tauri IPC timeout (4000ms)')), 4000)
     );
 
     const res = await Promise.race([pingPromise, timeoutPromise]);
@@ -99,7 +99,12 @@ export async function verifyTauriApiAccess(): Promise<boolean> {
     return valid;
   } catch (err) {
     console.warn('[BrowserDetector] Tauri detected but IPC call failed (lack of permissions or remote URL restricted):', err);
-    cachedTauriPermission = false;
+    // Do not permanently cache failure if it was a transient timeout, allowing subsequent retries
+    if (err instanceof Error && err.message.includes('timeout')) {
+      cachedTauriPermission = null;
+    } else {
+      cachedTauriPermission = false;
+    }
     return false;
   }
 }

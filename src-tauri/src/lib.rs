@@ -8,7 +8,7 @@ fn ping() -> Result<Value, String> {
     let installs = bridge::find_wow_installations();
     Ok(json!({
         "status": "ok",
-        "version": "1.0.4",
+        "version": "1.0.7",
         "platform": std::env::consts::OS,
         "installations": installs
     }))
