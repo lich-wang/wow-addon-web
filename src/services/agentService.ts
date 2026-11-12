@@ -51,15 +51,22 @@ const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 /**
  * Fetch latest desktop client release information with TTL cache and fallback
  * @param forceRefresh - If true, bypasses in-memory cache and re-fetches manifest
+ * @param timeoutMs - Maximum request time in milliseconds (defaults to 5000ms)
  */
-export async function fetchClientReleaseInfo(forceRefresh = false): Promise<ClientReleaseInfo> {
+export async function fetchClientReleaseInfo(forceRefresh = false, timeoutMs = 5000): Promise<ClientReleaseInfo> {
   const now = Date.now();
   if (!forceRefresh && cachedClientRelease && now - cachedClientRelease.timestamp < CACHE_TTL_MS) {
     return cachedClientRelease.data;
   }
 
   try {
-    const res = await fetch(`/downloads/client-version.json?_t=${now}`, { cache: 'no-cache' });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`/downloads/client-version.json?_t=${now}`, {
+      cache: 'no-cache',
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
       if (data && data.version && data.tag) {

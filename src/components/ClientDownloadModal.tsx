@@ -35,26 +35,36 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
   });
 
   useEffect(() => {
-    if (isOpen) {
-      let isMounted = true;
-      setIsLoading(true);
-      fetchClientReleaseInfo(true)
-        .then((info) => {
-          if (isMounted) {
-            setReleaseInfo(info);
-            setIsLoading(false);
-          }
-        })
-        .catch(() => {
-          if (isMounted) {
-            setReleaseInfo(DEFAULT_CLIENT_RELEASE);
-            setIsLoading(false);
-          }
-        });
-      return () => {
-        isMounted = false;
-      };
-    }
+    if (!isOpen) return;
+
+    let isMounted = true;
+    let timerId: ReturnType<typeof setTimeout>;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timerId = setTimeout(() => reject(new Error('Fetch client release timeout')), 5000);
+    });
+
+    Promise.race([fetchClientReleaseInfo(true, 5000), timeoutPromise])
+      .then((info) => {
+        if (isMounted) {
+          setReleaseInfo(info);
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setReleaseInfo((prev) => prev || DEFAULT_CLIENT_RELEASE);
+          setIsLoading(false);
+        }
+      })
+      .finally(() => {
+        clearTimeout(timerId);
+      });
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timerId);
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
