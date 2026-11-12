@@ -13,7 +13,7 @@ import zipfile
 import shutil
 import glob
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 PORT = 24642
 
@@ -203,6 +203,7 @@ class LocalBridgeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        params = parse_qs(parsed.query)
 
         if path == '/api/delete':
             content_length = int(self.headers.get('Content-Length', 0))
@@ -225,9 +226,12 @@ class LocalBridgeHandler(BaseHTTPRequestHandler):
             return
 
         if path == '/api/install-zip':
-            # Receive zip binary and target path
-            addons_path = self.headers.get('X-Addons-Path')
-            if not addons_path or not os.path.isdir(addons_path):
+            # Receive zip binary and target path (query param decoded or raw X-Addons-Path header)
+            target_path = params.get('path', [None])[0]
+            if not target_path:
+                target_path = self.headers.get('X-Addons-Path')
+
+            if not target_path or not os.path.isdir(target_path):
                 self.send_json({"error": "Invalid target path"}, status=400)
                 return
 
@@ -235,7 +239,7 @@ class LocalBridgeHandler(BaseHTTPRequestHandler):
             import io
             zip_bytes = self.rfile.read(content_length)
             zip_file = zipfile.ZipFile(io.BytesIO(zip_bytes))
-            zip_file.extractall(addons_path)
+            zip_file.extractall(target_path)
             self.send_json({"success": True, "count": len(zip_file.namelist())})
             return
 

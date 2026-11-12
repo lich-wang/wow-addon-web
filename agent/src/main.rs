@@ -57,6 +57,11 @@ struct AddonsQuery {
 }
 
 #[derive(Deserialize)]
+struct InstallZipQuery {
+    path: Option<String>,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeleteRequest {
     addons_path: String,
@@ -504,14 +509,20 @@ async fn main() {
         )
         .route(
             "/api/install-zip",
-            post(|headers: axum::http::HeaderMap, body: Bytes| async move {
-                let target_path_str = match headers.get("x-addons-path") {
-                    Some(val) => match val.to_str() {
-                        Ok(s) => s.to_string(),
-                        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid target path header" }))),
-                    },
-                    None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Missing x-addons-path header" }))),
-                };
+            post(|Query(q): Query<InstallZipQuery>, headers: axum::http::HeaderMap, body: Bytes| async move {
+                        let target_path_str = if let Some(p) = q.path.filter(|s| !s.trim().is_empty()) {
+                            p
+                        } else if let Some(val) = headers.get("x-addons-path") {
+                            match val.to_str() {
+                                Ok(s) => s.to_string(),
+                                Err(_) => match String::from_utf8(val.as_bytes().to_vec()) {
+                                    Ok(s) => s,
+                                    Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid target path header" }))),
+                                },
+                            }
+                        } else {
+                            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Missing path parameter or x-addons-path header" })));
+                        };
 
                 let target_dir = PathBuf::from(&target_path_str);
                 if !target_dir.is_dir() {

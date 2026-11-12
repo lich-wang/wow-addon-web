@@ -175,6 +175,11 @@ export function App() {
     try {
       const list = await agentScanAddons(addonsPath);
       if (seq !== scanSeqRef.current) return;
+      try {
+        localStorage.setItem('wow_addon_last_agent_path', addonsPath);
+      } catch (storageErr) {
+        console.warn('保存助手路径失败:', storageErr);
+      }
       const grouped = groupAddons(list);
       const enriched = enrichAddonsWithUpdateStatus(grouped);
       setAddons(enriched);

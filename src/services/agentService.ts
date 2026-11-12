@@ -102,38 +102,130 @@ export function isTauriEnv(): boolean {
   );
 }
 
+function inferFlavorAndLabel(pathStr: string): { flavor: string; label: string } {
+  const lower = pathStr.toLowerCase();
+  const flavors = [
+    { pattern: '_classic_era_', flavor: 'classic_era', label: '经典旧世 (Era)' },
+    { pattern: '_classic_titan_', flavor: 'classic_titan', label: '怀旧泰坦 (Titan)' },
+    { pattern: '_classic_', flavor: 'classic', label: '经典怀旧服 (Classic)' },
+    { pattern: '_forever_', flavor: 'forever', label: '无限服 (WoW Forever)' },
+    { pattern: '_ptr_', flavor: 'ptr', label: '测试服 (PTR)' },
+    { pattern: '_retail_', flavor: 'retail', label: '正式服 (The War Within)' },
+  ];
+  for (const item of flavors) {
+    if (lower.includes(item.pattern)) {
+      return { flavor: item.flavor, label: item.label };
+    }
+  }
+  return { flavor: 'retail', label: '魔兽客户端' };
+}
+
+let activeRecoveryPromise: Promise<AddonInfo[]> | null = null;
+let activeRecoveryPath: string | null = null;
+const verifiedPathCache = new Map<string, { addons: AddonInfo[]; timestamp: number }>();
+
 /**
  * Check if the native local bridge agent is running on 127.0.0.1:24642,
  * or connect directly via Tauri native IPC if inside desktop app.
  */
 export async function checkAgentStatus(): Promise<AgentStatus | null> {
+  let status: AgentStatus | null = null;
+
   if (isTauriEnv()) {
     try {
-      const res = await invoke<AgentStatus>('ping');
-      return res;
+      status = await invoke<AgentStatus>('ping');
     } catch (e) {
       console.warn('Tauri ping error:', e);
     }
-  }
+  } else {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1200);
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch(`${AGENT_BASE}/api/ping`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-    const res = await fetch(`${AGENT_BASE}/api/ping`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      return (await res.json()) as AgentStatus;
+      if (res.ok) {
+        status = (await res.json()) as AgentStatus;
+      }
+    } catch {
+      // Agent is not active or blocked by browser
     }
-  } catch {
-    // Agent is not active or blocked by browser
   }
-  return null;
+
+  // Restore and verify recently used custom path if available
+  if (status && typeof window !== 'undefined') {
+    let lastAgentPath: string | null = null;
+    try {
+      lastAgentPath = localStorage.getItem('wow_addon_last_agent_path');
+    } catch (storageErr) {
+      console.warn('读取助手路径失败:', storageErr);
+    }
+
+    if (lastAgentPath) {
+      const normalizedPath = lastAgentPath.toLowerCase();
+      const alreadyHas = status.installations.some(
+        (inst) => inst.addonsPath.toLowerCase() === normalizedPath
+      );
+      if (!alreadyHas) {
+        const cached = verifiedPathCache.get(normalizedPath);
+        if (cached && Date.now() - cached.timestamp < 60000 && Array.isArray(cached.addons)) {
+          const { flavor, label } = inferFlavorAndLabel(lastAgentPath);
+          status.installations.unshift({
+            name: `${label} (${flavor})`,
+            flavor,
+            addonsPath: lastAgentPath,
+            gameRoot: lastAgentPath.split(/_[a-z0-9_]+_/i)[0] || lastAgentPath,
+            isRunning: false,
+          });
+        } else {
+          try {
+            if (!activeRecoveryPromise || activeRecoveryPath !== lastAgentPath) {
+              activeRecoveryPath = lastAgentPath;
+              activeRecoveryPromise = agentScanAddons(lastAgentPath)
+                .then((scanned) => {
+                  if (Array.isArray(scanned)) {
+                    verifiedPathCache.set(normalizedPath, {
+                      addons: scanned,
+                      timestamp: Date.now(),
+                    });
+                  }
+                  return scanned;
+                })
+                .finally(() => {
+                  activeRecoveryPromise = null;
+                  activeRecoveryPath = null;
+                });
+            }
+
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('recovery scan timeout')), 1500)
+            );
+            const addons = await Promise.race([activeRecoveryPromise, timeoutPromise]);
+
+            if (Array.isArray(addons)) {
+              const { flavor, label } = inferFlavorAndLabel(lastAgentPath);
+              status.installations.unshift({
+                name: `${label} (${flavor})`,
+                flavor,
+                addonsPath: lastAgentPath,
+                gameRoot: lastAgentPath.split(/_[a-z0-9_]+_/i)[0] || lastAgentPath,
+                isRunning: false,
+              });
+            }
+          } catch {
+            // ignore scan error or timeout for obsolete saved path; keep successful ping status
+          }
+        }
+      }
+    }
+  }
+
+  return status;
 }
 
 /**
@@ -231,16 +323,31 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
     }
   }
 
-  const res = await fetch(`${AGENT_BASE}/api/install-zip`, {
+  const encodedPath = encodeURIComponent(addonsPath);
+  const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/zip',
+  };
+  // Send raw unencoded path in header only when ASCII-safe, ensuring backwards compatibility
+  // with older agents without triggering browser ISO-8859-1 header errors on Chinese paths
+  if (isAsciiOnly) {
+    headers['X-Addons-Path'] = addonsPath;
+  }
+
+  const res = await fetch(`${AGENT_BASE}/api/install-zip?path=${encodedPath}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/zip',
-      'X-Addons-Path': addonsPath,
-    },
+    headers,
     body: zipBlob,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (!isAsciiOnly && (res.status === 400 || res.status === 404)) {
+      throw new Error(
+        err.error
+          ? `${err.error} (如果使用中文等特殊游戏路径，请下载并升级至最新版客户端/助手)`
+          : '本地助手安装插件失败，如果游戏路径包含中文，请升级至最新版助手客户端'
+      );
+    }
     throw new Error(err.error || '本地助手安装插件失败');
   }
   const data = await res.json();
