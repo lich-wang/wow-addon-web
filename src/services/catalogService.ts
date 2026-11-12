@@ -272,7 +272,7 @@ function compareNumberParts(local: number[], remote: number[]): number {
  */
 function isTruePreRelease(tag: string | null): boolean {
   if (!tag) return false;
-  return /^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+)?$|^b\d+/i.test(tag.trim());
+  return /^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+)?(?:[.-][a-z0-9]+)*$|^b\d+/i.test(tag.trim());
 }
 
 /**
