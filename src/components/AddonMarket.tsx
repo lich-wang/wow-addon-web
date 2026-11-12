@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Download,
   CheckCircle2,
@@ -21,9 +21,15 @@ import {
   Flame,
   FolderOpen,
   Zap,
+  HelpCircle,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
-import { POPULAR_ADDONS } from '../services/catalogService';
+import {
+  POPULAR_ADDONS,
+  isUpdateAvailable,
+  canCompareVersions,
+  findMatchingCuratedAddon,
+} from '../services/catalogService';
 import type { AddonInfo, CuratedAddon, GameFlavor } from '../types/addon';
 
 interface AddonMarketProps {
@@ -64,37 +70,66 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
   );
   const [searchQuery, setSearchQuery] = useState('');
 
-  const categories = [
-    { id: 'forever', label: '🔥 无限服推荐', highlight: true },
-    { id: 'all', label: '全部插件' },
-    { id: 'Combat', label: '战斗统计' },
-    { id: 'Raid', label: '副本首领' },
-    { id: 'UI', label: '界面血条' },
-    { id: 'QoL', label: '便捷辅助' },
-    { id: 'Trade', label: '商业拍卖' },
-  ];
+  const getInstalledState = useCallback((curated: CuratedAddon) => {
+    // 查找所有匹配当前精选项目的本地已装插件
+    const matchedList = installedAddons.filter((installed) => {
+      const matched = findMatchingCuratedAddon(installed);
+      return matched?.id === curated.id;
+    });
+    if (matchedList.length === 0) return undefined;
+    // 优先返回存在可用更新的那一项，确保卡片与角标一致显示为“可更新”
+    const outdatedItem = matchedList.find((i) => isUpdateAvailable(i.version, curated.latestVersion));
+    return outdatedItem || matchedList[0];
+  }, [installedAddons]);
 
-  const getInstalledState = (curated: CuratedAddon) => {
-    const curFolder = curated.defaultFolderName.toLowerCase();
-    return installedAddons.find(
-      (installed) =>
-        installed.folderName.toLowerCase() === curFolder ||
-        installed.subFolders?.some((sf) => sf.toLowerCase() === curFolder) ||
-        installed.name.toLowerCase().includes(curated.id.toLowerCase())
-    );
-  };
+  const outdatedCount = useMemo(() => {
+    return POPULAR_ADDONS.filter((item) => {
+      const installed = getInstalledState(item);
+      if (!installed) return false;
+      return isUpdateAvailable(installed.version, item.latestVersion);
+    }).length;
+  }, [getInstalledState]);
+
+  // If outdated count becomes 0 while user is on 'outdated' tab, reset category
+  const activeCategory = selectedCategory === 'outdated' && outdatedCount === 0 ? 'all' : selectedCategory;
+
+  const categories = useMemo(() => {
+    const list = [
+      { id: 'forever', label: '🔥 无限服推荐', highlight: true },
+      { id: 'all', label: '全部插件', highlight: false },
+      { id: 'Combat', label: '战斗统计', highlight: false },
+      { id: 'Raid', label: '副本首领', highlight: false },
+      { id: 'UI', label: '界面血条', highlight: false },
+      { id: 'QoL', label: '便捷辅助', highlight: false },
+      { id: 'Trade', label: '商业拍卖', highlight: false },
+    ];
+    if (outdatedCount > 0) {
+      list.splice(1, 0, {
+        id: 'outdated',
+        label: `⚡ 待更新 (${outdatedCount})`,
+        highlight: true,
+      });
+    }
+    return list;
+  }, [outdatedCount]);
 
   const filteredCatalog = useMemo(() => {
     let list = POPULAR_ADDONS.filter((item) => {
-      // Forever specific filter
-      if (selectedCategory === 'forever') {
+      // Outdated filter
+      if (activeCategory === 'outdated') {
+        const installed = getInstalledState(item);
+        if (!installed) return false;
+        if (!isUpdateAvailable(installed.version, item.latestVersion)) return false;
+      } else if (activeCategory === 'forever') {
+        // Forever specific filter
         if (!item.isForeverRecommended && !item.gameFlavors?.includes('forever')) {
           return false;
         }
-      } else if (selectedCategory !== 'all' && item.category !== selectedCategory) {
+      } else if (activeCategory !== 'all' && item.category !== activeCategory) {
         return false;
       }
 
+      // Search filter applied to all categories including 'outdated'
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
       return (
@@ -105,7 +140,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
     });
 
     // Prioritize Forever addons when on 'all' tab if current connected flavor is forever
-    if (currentFlavor === 'forever' && selectedCategory === 'all') {
+    if (currentFlavor === 'forever' && activeCategory === 'all') {
       list = [...list].sort((a, b) => {
         const aFav = a.isForeverRecommended ? 1 : 0;
         const bFav = b.isForeverRecommended ? 1 : 0;
@@ -114,7 +149,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
     }
 
     return list;
-  }, [selectedCategory, searchQuery, currentFlavor]);
+  }, [activeCategory, searchQuery, currentFlavor, getInstalledState]);
 
   return (
     <div id="addon-market-section" className="space-y-6">
@@ -187,12 +222,17 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredCatalog.map((addon) => {
           const installed = getInstalledState(addon);
+          const hasUpdate = installed
+            ? isUpdateAvailable(installed.version, addon.latestVersion)
+            : false;
 
           return (
             <div
               key={addon.id}
               className={`p-5 rounded-xl bg-slate-900 border flex flex-col justify-between shadow-lg transition-all ${
-                addon.isForeverRecommended
+                hasUpdate
+                  ? 'border-amber-500/60 bg-gradient-to-b from-slate-900 via-slate-900 to-amber-950/20 shadow-amber-500/10'
+                  : addon.isForeverRecommended
                   ? 'border-amber-500/30 hover:border-amber-500/60 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950/80'
                   : 'border-slate-800/90 hover:border-slate-700'
               }`}
@@ -275,19 +315,59 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                         <Download className="w-3 h-3" />
                         <span>ZIP</span>
                       </a>
-                      <span className="inline-flex items-center space-x-1 text-xs text-emerald-400 font-medium bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-md">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>已安装</span>
-                      </span>
-                      <button
-                        onClick={() =>
-                          hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
-                        }
-                        title="覆盖更新"
-                        className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors cursor-pointer"
-                      >
-                        重新覆盖
-                      </button>
+                      {hasUpdate ? (
+                        <>
+                          <span className="inline-flex items-center space-x-1 text-xs text-amber-300 font-semibold bg-amber-950/60 border border-amber-500/40 px-2 py-1 rounded-md animate-pulse">
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>可更新</span>
+                          </span>
+                          <button
+                            onClick={() =>
+                              hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
+                            }
+                            title={`本地版本: ${installed.version}，点击更新至最新版: ${addon.latestVersion}`}
+                            className="flex items-center space-x-1 px-2.5 py-1 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition-all hover:scale-102 cursor-pointer"
+                          >
+                            <Zap className="w-3 h-3 fill-slate-950" />
+                            <span>立即更新</span>
+                          </button>
+                        </>
+                      ) : canCompareVersions(installed.version, addon.latestVersion) ? (
+                        <>
+                          <span className="inline-flex items-center space-x-1 text-xs text-emerald-400 font-medium bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-md">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>已是最新</span>
+                          </span>
+                          <button
+                            onClick={() =>
+                              hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
+                            }
+                            title="重新覆盖安装"
+                            className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors cursor-pointer"
+                          >
+                            重新覆盖
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span
+                            className="inline-flex items-center space-x-1 text-xs text-slate-400 font-medium bg-slate-800/60 border border-slate-700/50 px-2 py-1 rounded-md"
+                            title={`本地版本: ${installed.version} (无法比较版本号)`}
+                          >
+                            <HelpCircle className="w-3 h-3 text-slate-400" />
+                            <span>版本未知</span>
+                          </span>
+                          <button
+                            onClick={() =>
+                              hasDirectory ? onInstallAddon(addon) : onPromptPickDirectory()
+                            }
+                            title="版本未知，点击重新覆盖安装最新版"
+                            className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors cursor-pointer"
+                          >
+                            覆盖安装
+                          </button>
+                        </>
+                      )}
                     </div>
                   ) : hasDirectory ? (
                     <div className="flex items-center space-x-1.5">
