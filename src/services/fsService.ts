@@ -198,9 +198,21 @@ export async function pickAddOnsDirectory(): Promise<{
         startIn: 'desktop',
       });
     } catch (err: any) {
+      if (err.name === 'SecurityError' || (err.message && /sensitive|restricted|not allowed|security/i.test(err.message))) {
+        throw new Error(
+          '受浏览器系统安全保护限制，无法直接选择系统盘（如 C:\\Program Files）下的目录。\n\n' +
+          '💡 解决方案：\n' +
+          '1.【移动游戏】：将魔兽世界整体文件夹移动到非系统盘（如 D 盘或 E 盘），即可在网页端正常选择管理；\n' +
+          '2.【换用本地客户端】：下载并运行本站单文件绿色桌面端（免安装、可直接读写系统盘）。'
+        );
+      }
       if (err.name === 'AbortError') {
         throw new Error(
-          '未完成文件夹选择。提示：如果您的魔兽世界在系统盘 C:\\Program Files (x86)，由于系统安全限制，请在选择框中双击进入到 Interface 文件夹，直接选中【AddOns】文件夹。'
+          '未完成文件夹选择。\n\n' +
+          '⚠️ 若您的魔兽世界安装在系统盘（如 C:\\Program Files），受浏览器安全保护限制无法直接选择。\n' +
+          '💡 建议解决方案：\n' +
+          '1.【移动游戏】：将魔兽世界整体文件夹移动到非系统盘（如 D 盘或 E 盘），即可在网页端正常选择管理；\n' +
+          '2.【换用本地客户端】：下载并运行本站单文件绿色桌面端（免安装、可直接读写系统盘）。'
         );
       }
       if (err.message && err.message.includes('already active')) {
