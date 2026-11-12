@@ -59,14 +59,13 @@ export async function fetchClientReleaseInfo(forceRefresh = false, timeoutMs = 5
     return cachedClientRelease.data;
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const res = await fetch(`/downloads/client-version.json?_t=${now}`, {
       cache: 'no-cache',
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
       if (data && data.version && data.tag) {
@@ -77,6 +76,8 @@ export async function fetchClientReleaseInfo(forceRefresh = false, timeoutMs = 5
     }
   } catch (e) {
     console.warn('Failed to fetch client-version.json, using fallback:', e);
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (cachedClientRelease) {
