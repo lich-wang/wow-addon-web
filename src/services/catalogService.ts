@@ -265,12 +265,12 @@ function compareNumberParts(local: number[], remote: number[]): number {
 }
 
 /**
- * 剥离尾随的环境渠道标识 (例如 -classic, -forever, -vanilla, -retail, -era, -tbc 等)，
+ * 剥离尾随的环境渠道标识 (例如 -classic, -forever, -vanilla, -retail, -era, -tbc, -release 等)，
  * 完整保留多段预发布数字序列 (例如 rc.1.1, rc.1.2, beta1.3, alpha-2)，避免渠道字母序干扰更新判定
  */
 function extractCorePreRelease(tag: string | null): string | null {
   if (!tag) return null;
-  const stripped = tag.trim().replace(/(?:[-_](?:forever|classic|vanilla|retail|era|tbc|wotlk|titan))+$/i, '');
+  const stripped = tag.trim().replace(/(?:[-_](?:forever|classic|vanilla|retail|era|tbc|wotlk|titan|release))+$/i, '');
   return stripped ? stripped.toLowerCase() : null;
 }
 
@@ -284,7 +284,7 @@ function isTruePreRelease(tag: string | null): boolean {
   if (!tag) return false;
   const core = extractCorePreRelease(tag);
   if (!core) return false;
-  return /^(?:alpha|beta|rc|preview|dev|test|canary)(?:[.-]?\d+(?:\.\d+)*)?$|^b\d+/i.test(core);
+  return /^(?:alpha|beta|rc|preview|dev|test)(?:[.-]?\d+(?:\.\d+)*)?$|^b\d+/i.test(core);
 }
 
 /**
