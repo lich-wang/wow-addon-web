@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Download,
   CheckCircle2,
@@ -23,7 +23,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
-import { POPULAR_ADDONS, isUpdateAvailable } from '../services/catalogService';
+import { POPULAR_ADDONS, isUpdateAvailable, findMatchingCuratedAddon } from '../services/catalogService';
 import type { AddonInfo, CuratedAddon, GameFlavor } from '../types/addon';
 
 interface AddonMarketProps {
@@ -64,19 +64,23 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
   );
   const [searchQuery, setSearchQuery] = useState('');
 
+  const getInstalledState = useCallback((curated: CuratedAddon) => {
+    return installedAddons.find((installed) => {
+      const matched = findMatchingCuratedAddon(installed);
+      return matched?.id === curated.id;
+    });
+  }, [installedAddons]);
+
   const outdatedCount = useMemo(() => {
     return POPULAR_ADDONS.filter((item) => {
-      const curFolder = item.defaultFolderName.toLowerCase();
-      const installed = installedAddons.find(
-        (i) =>
-          i.folderName.toLowerCase() === curFolder ||
-          i.subFolders?.some((sf) => sf.toLowerCase() === curFolder) ||
-          i.name.toLowerCase().includes(item.id.toLowerCase())
-      );
+      const installed = getInstalledState(item);
       if (!installed) return false;
       return isUpdateAvailable(installed.version, item.latestVersion);
     }).length;
-  }, [installedAddons]);
+  }, [getInstalledState]);
+
+  // If outdated count becomes 0 while user is on 'outdated' tab, reset category
+  const activeCategory = selectedCategory === 'outdated' && outdatedCount === 0 ? 'all' : selectedCategory;
 
   const categories = useMemo(() => {
     const list = [
@@ -98,40 +102,23 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
     return list;
   }, [outdatedCount]);
 
-  const getInstalledState = (curated: CuratedAddon) => {
-    const curFolder = curated.defaultFolderName.toLowerCase();
-    return installedAddons.find(
-      (installed) =>
-        installed.folderName.toLowerCase() === curFolder ||
-        installed.subFolders?.some((sf) => sf.toLowerCase() === curFolder) ||
-        installed.name.toLowerCase().includes(curated.id.toLowerCase())
-    );
-  };
-
   const filteredCatalog = useMemo(() => {
     let list = POPULAR_ADDONS.filter((item) => {
       // Outdated filter
-      if (selectedCategory === 'outdated') {
-        const curFolder = item.defaultFolderName.toLowerCase();
-        const installed = installedAddons.find(
-          (i) =>
-            i.folderName.toLowerCase() === curFolder ||
-            i.subFolders?.some((sf) => sf.toLowerCase() === curFolder) ||
-            i.name.toLowerCase().includes(item.id.toLowerCase())
-        );
+      if (activeCategory === 'outdated') {
+        const installed = getInstalledState(item);
         if (!installed) return false;
-        return isUpdateAvailable(installed.version, item.latestVersion);
-      }
-
-      // Forever specific filter
-      if (selectedCategory === 'forever') {
+        if (!isUpdateAvailable(installed.version, item.latestVersion)) return false;
+      } else if (activeCategory === 'forever') {
+        // Forever specific filter
         if (!item.isForeverRecommended && !item.gameFlavors?.includes('forever')) {
           return false;
         }
-      } else if (selectedCategory !== 'all' && item.category !== selectedCategory) {
+      } else if (activeCategory !== 'all' && item.category !== activeCategory) {
         return false;
       }
 
+      // Search filter applied to all categories including 'outdated'
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
       return (
@@ -142,7 +129,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
     });
 
     // Prioritize Forever addons when on 'all' tab if current connected flavor is forever
-    if (currentFlavor === 'forever' && selectedCategory === 'all') {
+    if (currentFlavor === 'forever' && activeCategory === 'all') {
       list = [...list].sort((a, b) => {
         const aFav = a.isForeverRecommended ? 1 : 0;
         const bFav = b.isForeverRecommended ? 1 : 0;
@@ -151,7 +138,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
     }
 
     return list;
-  }, [selectedCategory, searchQuery, currentFlavor, installedAddons]);
+  }, [activeCategory, searchQuery, currentFlavor, getInstalledState]);
 
   return (
     <div id="addon-market-section" className="space-y-6">

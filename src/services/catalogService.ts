@@ -206,40 +206,42 @@ export function generateShareManifest(
 }
 
 /**
- * 从版本字符串中提取数字分段数组（例如 "v1.23.0 (Forever 中文版)" -> [1, 23, 0]）
+ * 从版本字符串中提取所有数字分段数组（例如 "v12.6.4 + DB v1.0.14" -> [12, 6, 4, 1, 0, 14]）
+ * 支持复合版本（包含主版本及 DB 数据库版本）的完整序列提取与比对
  * @param versionStr - 原始版本字符串
- * @returns 解析得到的版本数字段数组，若无法解析则返回 null
+ * @returns 解析得到的完整版本数字段数组，若无法解析则返回 null
  */
 export function extractVersionNumbers(versionStr: string): number[] | null {
   if (!versionStr || versionStr.includes('未知')) return null;
-  const match = versionStr.match(/\d+(?:\.\d+)+/);
-  if (match) {
-    return match[0].split('.').map((n) => parseInt(n, 10));
-  }
-  const single = versionStr.match(/\d+/);
-  if (single) {
-    return [parseInt(single[0], 10)];
+  const matches = versionStr.match(/\d+(?:\.\d+)*/g);
+  if (matches && matches.length > 0) {
+    const parts: number[] = [];
+    for (const m of matches) {
+      for (const seg of m.split('.')) {
+        parts.push(parseInt(seg, 10));
+      }
+    }
+    return parts;
   }
   return null;
 }
 
 /**
  * 校验本地已安装版本与远端精选市场最新版本是否存在可用更新
+ * 当本地版本未知或无法确认落后时，保守返回 false，避免误报更新
  * @param localVersion - 本地插件 TOC 解析出的版本号
  * @param remoteVersion - 市场最新版本号
- * @returns true 表示存在新版本可用，false 表示已是最新或无需更新
+ * @returns true 表示存在新版本可用，false 表示已是最新、无需更新或版本未知
  */
 export function isUpdateAvailable(localVersion: string, remoteVersion: string): boolean {
   if (!localVersion || localVersion === '未知' || localVersion === '未知版本') {
-    return true;
+    return false;
   }
   const localParts = extractVersionNumbers(localVersion);
   const remoteParts = extractVersionNumbers(remoteVersion);
 
   if (!localParts || !remoteParts) {
-    const cleanL = localVersion.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    const cleanR = remoteVersion.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    return cleanL !== cleanR;
+    return false;
   }
 
   const maxLen = Math.max(localParts.length, remoteParts.length);
@@ -255,6 +257,7 @@ export function isUpdateAvailable(localVersion: string, remoteVersion: string): 
 
 /**
  * 在精选插件库中查找与本地已装插件相匹配的项目
+ * 严格按照文件夹标识及精确名称/别名匹配，避免因通用子字符串误匹配无关插件
  * @param addon - 本地已扫描插件信息
  * @param curatedList - 待匹配的精选插件列表（默认使用 POPULAR_ADDONS）
  * @returns 匹配到的精选插件对象，未匹配时返回 undefined
@@ -265,14 +268,23 @@ export function findMatchingCuratedAddon(
 ): CuratedAddon | undefined {
   const folder = addon.folderName.toLowerCase();
   const subFolders = addon.subFolders?.map((f) => f.toLowerCase()) || [];
-  const name = addon.name.toLowerCase();
+  const name = addon.name.toLowerCase().trim();
 
   return curatedList.find((c) => {
     const defaultFolder = c.defaultFolderName.toLowerCase();
     const id = c.id.toLowerCase();
+    const cName = c.name.toLowerCase().trim();
+
+    // 1. 文件夹名或子文件夹名与精选 defaultFolderName 严格匹配
     if (folder === defaultFolder || subFolders.includes(defaultFolder)) return true;
+    // 2. 文件夹名与精选 id 严格匹配
     if (folder === id || subFolders.includes(id)) return true;
-    if (name.includes(c.name.toLowerCase()) || name.includes(id)) return true;
+    // 3. 插件名称全等，或去除括号说明后全等
+    if (name === cName) return true;
+    const cleanAddonName = name.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '').trim();
+    const cleanCuratedName = cName.replace(/\(.*?\)/g, '').replace(/（.*?）/g, '').trim();
+    if (cleanAddonName.length >= 3 && cleanAddonName === cleanCuratedName) return true;
+
     return false;
   });
 }

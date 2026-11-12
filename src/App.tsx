@@ -141,6 +141,7 @@ export function App() {
 
   // Select auto-discovered installation from agent
   const handleSelectAgentInstallation = async (inst: WowInstallation) => {
+    setAddons([]);
     setDirectoryState({
       handle: null,
       mode: 'agent',
@@ -160,6 +161,7 @@ export function App() {
     try {
       const picked = await agentPickFolder();
       if (picked) {
+        setAddons([]);
         setDirectoryState({
           handle: null,
           mode: 'agent',
@@ -229,6 +231,7 @@ export function App() {
     setIsPicking(true);
     try {
       const resolved = await pickAddOnsDirectory();
+      setAddons([]);
       setDirectoryState({
         handle: resolved.handle,
         mode: 'browser',
@@ -308,12 +311,16 @@ export function App() {
     }
   };
 
+  const [isUpdatingBusy, setIsUpdatingBusy] = useState(false);
+
   // Install Curated Addon from Market
   const handleInstallCuratedAddon = async (addon: CuratedAddon) => {
     if (!directoryState.isAuthorized) {
       handlePickDirectory();
       return;
     }
+    if (isUpdatingBusy) return;
+    setIsUpdatingBusy(true);
 
     try {
       if (directoryState.mode === 'agent' && directoryState.agentPath) {
@@ -361,6 +368,8 @@ export function App() {
         percent: 0,
         message: err.message || '安装过程中发生异常',
       });
+    } finally {
+      setIsUpdatingBusy(false);
     }
   };
 
@@ -378,12 +387,11 @@ export function App() {
     return list;
   }, [addons]);
 
-  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
-
   // Batch update all outdated addons
   const handleUpdateAllOutdated = async () => {
-    if (outdatedItems.length === 0 || isUpdatingAll) return;
-    setIsUpdatingAll(true);
+    if (outdatedItems.length === 0 || isUpdatingBusy) return;
+    setIsUpdatingBusy(true);
+    let updatedCount = 0;
     try {
       for (let i = 0; i < outdatedItems.length; i++) {
         const { curated } = outdatedItems[i];
@@ -410,6 +418,7 @@ export function App() {
             });
           });
         }
+        updatedCount++;
       }
 
       setInstallProgress({
@@ -418,12 +427,6 @@ export function App() {
         percent: 100,
         message: `成功完成 ${outdatedItems.length} 个插件的批量更新！`,
       });
-
-      if (directoryState.mode === 'agent' && directoryState.agentPath) {
-        await loadAgentAddons(directoryState.agentPath);
-      } else if (directoryState.handle) {
-        await loadBrowserAddons(directoryState.handle);
-      }
     } catch (err: any) {
       setInstallProgress({
         status: 'error',
@@ -432,7 +435,13 @@ export function App() {
         message: err.message || '批量更新时发生异常',
       });
     } finally {
-      setIsUpdatingAll(false);
+      // 无论成功或部分更新失败，只要有安装变动均刷新目录状态，确保已写入项不重复展示为待更新
+      if (directoryState.mode === 'agent' && directoryState.agentPath) {
+        await loadAgentAddons(directoryState.agentPath);
+      } else if (directoryState.handle) {
+        await loadBrowserAddons(directoryState.handle);
+      }
+      setIsUpdatingBusy(false);
     }
   };
 
@@ -524,11 +533,12 @@ export function App() {
         {/* Update Banner when outdated addons exist */}
         {directoryState.isAuthorized && outdatedItems.length > 0 && (
           <UpdateBanner
+            directoryKey={directoryState.agentPath || directoryState.folderName}
             outdatedItems={outdatedItems}
             onUpdateSingle={handleInstallCuratedAddon}
             onUpdateAll={handleUpdateAllOutdated}
             onViewInstalledTab={() => setActiveTab('installed')}
-            isUpdatingAll={isUpdatingAll}
+            isUpdatingAll={isUpdatingBusy}
           />
         )}
 

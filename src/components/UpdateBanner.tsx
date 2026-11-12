@@ -8,6 +8,7 @@ export interface OutdatedAddonItem {
 }
 
 interface UpdateBannerProps {
+  directoryKey?: string;
   outdatedItems: OutdatedAddonItem[];
   onUpdateAll: () => void;
   onUpdateSingle: (addon: CuratedAddon) => void;
@@ -20,6 +21,7 @@ interface UpdateBannerProps {
  * 当检测到已安装插件版本低于精选市场版本时展示
  */
 export const UpdateBanner: React.FC<UpdateBannerProps> = ({
+  directoryKey,
   outdatedItems,
   onUpdateAll,
   onUpdateSingle,
@@ -28,6 +30,13 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isDismissed, setIsDismissed] = useState(false);
+  const [prevKey, setPrevKey] = useState(directoryKey);
+
+  // 当连接的目录标识变更时，重置关闭状态，确保新目录的更新提示正常呈现
+  if (directoryKey !== prevKey) {
+    setPrevKey(directoryKey);
+    setIsDismissed(false);
+  }
 
   if (outdatedItems.length === 0 || isDismissed) {
     return null;
