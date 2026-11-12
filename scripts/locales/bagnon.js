@@ -22,4 +22,24 @@ export async function patchBagnon(zip) {
       zip.file('BagBrother/BagBrother.toc', content);
     }
   }
+
+  // Disable StaleCheck cross-player broadcast and update popups (prevents false-positive outdated warnings on private servers)
+  const staleFile = zip.file('BagBrother/libs/StaleCheck-1.0/StaleCheck-1.0.lua');
+  if (staleFile) {
+    let stale = await staleFile.async('string');
+    stale = stale
+      .replace(
+        'function Lib:CheckForUpdates(addon, sets, icon)',
+        'function Lib:CheckForUpdates(addon, sets, icon)\n\treturn -- Disabled for private servers to avoid false-positive update popups'
+      )
+      .replace(
+        'function Lib:CHAT_MSG_ADDON(prefix, message, channel, sender)',
+        'function Lib:CHAT_MSG_ADDON(prefix, message, channel, sender)\n\treturn -- Disabled'
+      )
+      .replace(
+        'function Lib:Broadcast()',
+        'function Lib:Broadcast()\n\treturn -- Disabled'
+      );
+    zip.file('BagBrother/libs/StaleCheck-1.0/StaleCheck-1.0.lua', stale);
+  }
 }
