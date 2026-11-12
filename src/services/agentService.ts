@@ -38,10 +38,10 @@ export const MAC_DOWNLOAD_URL = '/downloads/WoW-Addon-Manager.dmg';
 export const DEFAULT_CLIENT_RELEASE: ClientReleaseInfo = {
   version: '1.0.7',
   tag: 'v1.0.7',
-  winUrl: '/downloads/WoW-Addon-Manager-v1.0.7.exe',
+  winUrl: WIN_DOWNLOAD_URL,
   winFileName: 'WoW-Addon-Manager-v1.0.7.exe',
   winSize: 13196288,
-  macUrl: '/downloads/WoW-Addon-Manager-v1.0.7.dmg',
+  macUrl: MAC_DOWNLOAD_URL,
   macFileName: 'WoW-Addon-Manager-v1.0.7.dmg',
   macSize: 9091024,
   releaseUrl: 'https://github.com/lich-wang/wow-addon-web/releases/tag/v1.0.7',

@@ -105,18 +105,12 @@ async function main() {
     }
   }
 
-  // If download failed or skipped, check existing files
-  if (fs.existsSync(winGenericPath) && !winSize) {
-    winSize = fs.statSync(winGenericPath).size;
-    if (!fs.existsSync(winPath)) {
-      fs.copyFileSync(winGenericPath, winPath);
-    }
+  // If download failed or was skipped, check if versioned file already exists
+  if (fs.existsSync(winPath) && !winSize) {
+    winSize = fs.statSync(winPath).size;
   }
-  if (fs.existsSync(macGenericPath) && !macSize) {
-    macSize = fs.statSync(macGenericPath).size;
-    if (!fs.existsSync(macPath)) {
-      fs.copyFileSync(macGenericPath, macPath);
-    }
+  if (fs.existsSync(macPath) && !macSize) {
+    macSize = fs.statSync(macPath).size;
   }
 
   // Verify that required client binary files exist and are not empty
