@@ -128,7 +128,45 @@ export async function checkAgentStatus(): Promise<AgentStatus | null> {
     clearTimeout(timeoutId);
 
     if (res.ok) {
-      return (await res.json()) as AgentStatus;
+      const status = (await res.json()) as AgentStatus;
+      
+      // Auto-discover known custom paths or last used path if not present in default candidates
+      if (typeof window !== 'undefined') {
+        const candidatePaths = [
+          localStorage.getItem('wow_addon_last_agent_path'),
+          'C:\\Users\\lich\\games\\网络游戏\\World of Warcraft\\_forever_\\Interface\\AddOns',
+        ].filter(Boolean) as string[];
+
+        for (const cPath of candidatePaths) {
+          const alreadyHas = status.installations.some(
+            (inst) => inst.addonsPath.toLowerCase() === cPath.toLowerCase()
+          );
+          if (!alreadyHas) {
+            try {
+              const testRes = await fetch(`${AGENT_BASE}/api/addons?path=${encodeURIComponent(cPath)}`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(1000),
+              });
+              if (testRes.ok) {
+                const flavor = cPath.includes('_forever_') ? 'forever' : 'retail';
+                const label = flavor === 'forever' ? '无限服 (WoW Forever)' : '魔兽客户端';
+                status.installations.unshift({
+                  name: `${label} (${flavor})`,
+                  flavor,
+                  addonsPath: cPath,
+                  gameRoot: cPath.split(/_[a-z0-9_]+_/i)[0] || cPath,
+                  isRunning: false,
+                });
+                break;
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+
+      return status;
     }
   } catch {
     // Agent is not active or blocked by browser
@@ -231,11 +269,12 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
     }
   }
 
-  const res = await fetch(`${AGENT_BASE}/api/install-zip`, {
+  const encodedPath = encodeURIComponent(addonsPath);
+  const res = await fetch(`${AGENT_BASE}/api/install-zip?path=${encodedPath}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/zip',
-      'X-Addons-Path': addonsPath,
+      'X-Addons-Path': encodedPath,
     },
     body: zipBlob,
   });
