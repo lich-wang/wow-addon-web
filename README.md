@@ -133,7 +133,7 @@ npm run tauri build
 4. 点击 **保存并部署** 即可上线。
 
 > [!NOTE]
-> 本仓库的线上站点由 GitHub Actions 工作流 `.github/workflows/deploy.yml` 自动部署：推送到 `main` 或桌面端发布完成后触发，也可在 Actions 页面手动运行（`workflow_dispatch`）。该流程会先执行 `scripts/fetch-addons.js` 与 `scripts/fetch-client.js` 打包插件与客户端，再构建并发布。所需凭据通过仓库 Secrets `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 配置。
+> 本仓库的线上站点由 GitHub Actions 工作流 `.github/workflows/deploy.yml` 自动部署：推送到 `main` 或 `master` 分支时触发；桌面端工作流「Release Tauri Desktop App」**成功**完成后也会触发（失败或取消时不会部署）；也可在 Actions 页面手动运行（`workflow_dispatch`）。无论由哪种方式触发，均发布到 Cloudflare Pages 的 `main` 分支。该流程会先执行 `scripts/fetch-addons.js` 与 `scripts/fetch-client.js` 打包插件与客户端，再构建并发布。所需凭据通过仓库 Secrets `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 配置。
 
 ---
 
