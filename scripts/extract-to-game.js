@@ -21,7 +21,6 @@ async function main() {
   await extractZip('public/addons/sbf.zip', gameAddonDir);
   await extractZip('public/addons/blackthornes-tradeskills.zip', gameAddonDir);
   await extractZip('public/addons/questie-forever.zip', gameAddonDir);
-  await extractZip('public/addons/btwquests.zip', gameAddonDir);
   await extractZip('public/addons/forever-mouse-tooltip.zip', gameAddonDir);
   console.log('=== All addons updated in game directory! ===');
 }

@@ -7,10 +7,6 @@
     "version": "v1.26.0",
     "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.26.0/Blackthornes_TS-v1.26.0-forever.zip"
   },
-  "btwquests": {
-    "version": "v2.70.0-forever",
-    "source": "https://edge.forgecdn.net/files/9547/866/BtWQuests-v2.70.0-forever.zip"
-  },
   "dungeonsforever": {
     "version": "v2.1.88",
     "source": "https://edge.forgecdn.net/files/9567/641/DungeonsForever2.1.88.zip"

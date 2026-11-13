@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 import { patchIceHUDZhCN } from './locales/icehud.js';
 import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
-import { patchBtWQuests, patchQuestie, patchQuestieDB } from './locales/quests.js';
+import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import { patchMapzeroth } from './locales/mapzeroth.js';
 
@@ -550,28 +550,7 @@ async function processQuestieForever() {
 }
 
 // ---------------------------------------------------------------------------
-// 8. BtWQuests
-// ---------------------------------------------------------------------------
-async function processBtWQuests() {
-  let url = 'https://edge.forgecdn.net/files/9498/296/BtWQuests-v2.69.1-forever.zip';
-  const latest = await getLatestCurseForgeFile(280369, name => /-forever\.zip$/i.test(name));
-  if (latest?.url) url = latest.url;
-
-  const outPath = path.join(OUTPUT_DIR, 'btwquests.zip');
-  const buf = await downloadBuffer(url, 'btwquests.zip');
-  const zip = await JSZip.loadAsync(buf);
-
-  console.log('Completing zhCN localization & TOC metadata for BtWQuests Forever...');
-  await patchBtWQuests(zip);
-
-  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  fs.writeFileSync(outPath, outBuf);
-  recordBundledVersion('btwquests', await readTocVersion(zip, 'BtWQuests/BtWQuests.toc'), url);
-  console.log(`[✓] btwquests.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
-}
-
-// ---------------------------------------------------------------------------
-// 9. Forever Mouse Tooltip
+// 8. Forever Mouse Tooltip
 // ---------------------------------------------------------------------------
 async function processForeverMouseTooltip() {
   const fallbackTag = 'v0.2.0';
@@ -599,7 +578,7 @@ async function processForeverMouseTooltip() {
 }
 
 // ---------------------------------------------------------------------------
-// 10. Mapzeroth (Forever GPS Navigation)
+// 9. Mapzeroth (Forever GPS Navigation)
 // ---------------------------------------------------------------------------
 async function processMapzeroth() {
   const url = 'https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip';
@@ -675,11 +654,10 @@ async function main() {
   await processBagnon();
   await processLueur();
   await processQuestieForever();
-  await processBtWQuests();
   await processForeverMouseTooltip();
   await processMapzeroth();
   writeBundledVersions();
-  console.log('=== All 10 Addons successfully bundled & localized into public/addons/ ===');
+  console.log('=== All 9 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {
