@@ -298,8 +298,10 @@ export function patchMapzerothToc(originalToc) {
     return `## Version: ${upstream && !upstream.includes('@') ? upstream : 'v1.0.0'} (Forever 全汉化版)`;
   });
 
-  // 修复图标路径
-  toc = toc.replace('Mapzeroth-Rebuild\\Media\\Logo', 'Mapzeroth\\Media\\Logo');
+  // 修复图标路径（打包后文件夹统一为 Mapzeroth）
+  toc = toc
+    .replace('Mapzeroth-Rebuild\\Media\\Logo', 'Mapzeroth\\Media\\Logo')
+    .replace('Mapzeroth-Dev\\Media\\Logo', 'Mapzeroth\\Media\\Logo');
 
   // 确保 SavedVariables 正确
   if (!toc.includes('## SavedVariables:')) {
@@ -324,15 +326,21 @@ export function patchMapzerothToc(originalToc) {
  * 针对 Mapzeroth 解压 ZIP 包注入深度中文汉化与结构适配
  */
 export async function patchMapzeroth(zip) {
-  // 1. 处理 TOC 文件
-  let tocFile = zip.file('Mapzeroth/Mapzeroth.toc') || zip.file('Mapzeroth/Mapzeroth-Rebuild.toc');
-  if (tocFile) {
-    const tocText = await tocFile.async('string');
+  // 1. 处理 TOC 文件（上游 main 分支先后使用过 Mapzeroth.toc / Mapzeroth-Rebuild.toc / Mapzeroth-Dev.toc）
+  const tocCandidates = ['Mapzeroth/Mapzeroth.toc', 'Mapzeroth/Mapzeroth-Rebuild.toc', 'Mapzeroth/Mapzeroth-Dev.toc'];
+  const tocPath = tocCandidates.find((p) => zip.file(p));
+  if (tocPath) {
+    const tocText = await zip.file(tocPath).async('string');
     const patchedToc = patchMapzerothToc(tocText);
     zip.file('Mapzeroth/Mapzeroth.toc', patchedToc);
-    if (zip.file('Mapzeroth/Mapzeroth-Rebuild.toc')) {
-      zip.remove('Mapzeroth/Mapzeroth-Rebuild.toc');
+    // WoW 只加载与文件夹同名的 TOC，移除其它变体避免混淆
+    for (const p of tocCandidates) {
+      if (p !== 'Mapzeroth/Mapzeroth.toc' && zip.file(p)) {
+        zip.remove(p);
+      }
     }
+  } else {
+    console.warn('[Warn] Mapzeroth upstream TOC not found, the bundled addon may fail to load.');
   }
 
   // 2. 注入精校的 Locales/zhCN.lua

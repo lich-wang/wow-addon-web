@@ -23,9 +23,13 @@
     "version": "v1.7.0",
     "source": "https://edge.forgecdn.net/files/9547/99/Lueur-1.7.0.zip"
   },
+  "mapzeroth": {
+    "version": "v2.0.0-dev",
+    "source": "https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip"
+  },
   "questie-forever": {
-    "version": "v12.8.0 + DB v1.0.16",
-    "source": "https://edge.forgecdn.net/files/9576/443/Questie-v12.8.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.0.16/QuestieDB-1.0.16-Forever.zip"
+    "version": "v12.8.0 + DB v1.1.0",
+    "source": "https://edge.forgecdn.net/files/9576/443/Questie-v12.8.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.0/QuestieDB-1.1.0-Forever.zip"
   },
   "sbf": {
     "version": "2026.11.05.1",

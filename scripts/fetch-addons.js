@@ -127,7 +127,8 @@ async function readTocVersion(zip, tocPath) {
  * @returns {string} 规范化后的版本号
  */
 function normalizeVersion(version) {
-  const v = version.trim();
+  // 去掉 TOC 中追加的中文说明后缀（如 "(Forever 全汉化版)"），说明文字由前端 catalog 统一拼接
+  const v = version.replace(/\s*[(（].*?[)）]\s*$/, '').trim();
   if (/^\d{4}\.\d{1,2}\.\d{1,2}/.test(v)) return v;
   return /^\d/.test(v) ? `v${v}` : v;
 }
