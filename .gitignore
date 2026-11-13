@@ -15,6 +15,10 @@ public/addons/*.zip
 public/downloads/*.exe
 public/downloads/*.dmg
 
+# 本地助手编译产物（由 build-agent.yml 构建并发布到 GitHub Release，不入库）
+/wow-agent.exe
+agent/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
