@@ -49,13 +49,16 @@ function getHeadersForUrl(url) {
 const UPSTREAM_CACHE_DIR = path.resolve('.cache/upstream-addons');
 
 /**
- * 安全下载远程二进制 Buffer，成功时缓存原始上游包，失败时回退到原始上游包缓存
+ * 安全下载远程二进制 Buffer，成功时缓存原始上游包（及可选的 Release 标签），失败时回退到原始上游包缓存
  * @param {string} url - 远程文件下载地址
  * @param {string} [cacheName] - 原始上游包缓存文件名（如 bagnon.zip），不传则不缓存/不回退
- * @returns {Promise<Buffer>} 下载完成或读取回退的二进制数据
+ * @param {string} [releaseTag] - 与本次下载对应的 Release 标签，成功时随缓存一并保存，回退时挂在返回 Buffer 的 releaseTag 属性上
+ * @returns {Promise<Buffer & { releaseTag?: string }>} 下载完成或读取回退的二进制数据
  */
-async function downloadBuffer(url, cacheName) {
-  const cachePath = cacheName ? path.join(UPSTREAM_CACHE_DIR, cacheName) : null;
+async function downloadBuffer(url, cacheName, releaseTag) {
+  const SafeName = cacheName ? path.basename(cacheName) : null;
+  const cachePath = SafeName ? path.join(UPSTREAM_CACHE_DIR, SafeName) : null;
+  const tagPath = cachePath ? `${cachePath}.tag` : null;
   try {
     console.log(`Downloading: ${url}...`);
     const res = await fetch(url, { headers: getHeadersForUrl(url) });
@@ -66,39 +69,53 @@ async function downloadBuffer(url, cacheName) {
     if (cachePath) {
       fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
       fs.writeFileSync(cachePath, buf);
+      if (tagPath && releaseTag) {
+        fs.writeFileSync(tagPath, releaseTag, 'utf-8');
+      }
     }
+    if (releaseTag) buf.releaseTag = releaseTag;
     return buf;
   } catch (e) {
     if (cachePath && fs.existsSync(cachePath)) {
       console.log(`[Cache Fallback] Download failed (${e.message}), using cached upstream: ${cachePath}`);
-      return fs.readFileSync(cachePath);
+      const buf = fs.readFileSync(cachePath);
+      if (tagPath && fs.existsSync(tagPath)) {
+        buf.releaseTag = fs.readFileSync(tagPath, 'utf-8').trim();
+      }
+      return buf;
     }
     throw e;
   }
 }
 
 /**
- * 查询 CurseForge 项目最新的正式版 (Release) 文件并拼出 CDN 下载地址
+ * 按页查询 CurseForge 项目最新的正式版 (Release) 文件并拼出 CDN 下载地址
  * 使用 CurseForge 网站公开的文件列表接口（无需 API Key），失败时返回 null 由调用方使用兜底地址
  * @param {number} projectId - CurseForge 项目 ID（见插件 TOC 的 X-Curse-Project-ID）
  * @param {(fileName: string) => boolean} [fileMatch] - 文件名匹配断言（如仅匹配 -forever.zip 变体）
  * @returns {Promise<{ tag: string, fileName: string, url: string } | null>} 最新正式版信息
  */
 async function getLatestCurseForgeFile(projectId, fileMatch = () => true) {
+  const pageSize = 30;
+  const maxPages = 5;
   try {
-    const apiUrl =
-      `https://www.curseforge.com/api/v1/mods/${projectId}/files` +
-      '?pageIndex=0&pageSize=30&sort=dateCreated&sortDescending=true&removeAlphas=true';
-    const res = await fetch(apiUrl, { headers: BASE_HEADERS });
-    if (!res.ok) throw new Error(`CurseForge API HTTP ${res.status}`);
-    const data = await res.json();
-    // releaseType: 1 = Release, 2 = Beta, 3 = Alpha；只分发正式版
-    const file = data.data?.find(
-      f => f.releaseType === 1 && typeof f.fileName === 'string' && f.fileName.endsWith('.zip') && fileMatch(f.fileName)
-    );
-    if (file?.id) {
-      const url = `https://edge.forgecdn.net/files/${Math.floor(file.id / 1000)}/${file.id % 1000}/${encodeURIComponent(file.fileName)}`;
-      return { tag: file.displayName || file.fileName, fileName: file.fileName, url };
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
+      const apiUrl =
+        `https://www.curseforge.com/api/v1/mods/${projectId}/files` +
+        `?pageIndex=${pageIndex}&pageSize=${pageSize}&sort=dateCreated&sortDescending=true&removeAlphas=true`;
+      const res = await fetch(apiUrl, { headers: BASE_HEADERS });
+      if (!res.ok) throw new Error(`CurseForge API HTTP ${res.status}`);
+      const data = await res.json();
+      const files = Array.isArray(data.data) ? data.data : [];
+      // releaseType: 1 = Release, 2 = Beta, 3 = Alpha；只分发正式版
+      const file = files.find(
+        f => f.releaseType === 1 && typeof f.fileName === 'string' && f.fileName.endsWith('.zip') && fileMatch(f.fileName)
+      );
+      if (file?.id) {
+        const url = `https://edge.forgecdn.net/files/${Math.floor(file.id / 1000)}/${file.id % 1000}/${encodeURIComponent(file.fileName)}`;
+        return { tag: file.displayName || file.fileName, fileName: file.fileName, url };
+      }
+      if (files.length < pageSize) break;
     }
     throw new Error('no matching release file');
   } catch (err) {
@@ -211,7 +228,8 @@ async function processSBF() {
   if (fs.existsSync(cleanDir)) {
     for (const f of fs.readdirSync(cleanDir)) {
       const fullPath = path.join(cleanDir, f);
-      if (fs.statSync(fullPath).isFile()) {
+      // 保留上游包内的 SBF/SBF.toc，避免本地旧版 TOC 覆盖上游真实版本号
+      if (f !== 'SBF.toc' && fs.statSync(fullPath).isFile()) {
         zip.file(`SBF/${f}`, fs.readFileSync(fullPath, 'utf-8'));
       }
     }
@@ -548,6 +566,7 @@ async function processBtWQuests() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('btwquests', await readTocVersion(zip, 'BtWQuests/BtWQuests.toc'), url);
   console.log(`[✓] btwquests.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -555,8 +574,9 @@ async function processBtWQuests() {
 // 9. Forever Mouse Tooltip
 // ---------------------------------------------------------------------------
 async function processForeverMouseTooltip() {
+  const fallbackTag = 'v0.2.0';
   let url = 'https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip';
-  let tag = 'v0.2.0';
+  let tag = fallbackTag;
   const latest = await getLatestGitHubRelease('Ninjaskurk/forever-mouse-tooltip', name => name.endsWith('.zip'));
   if (latest?.url) {
     url = latest.url;
@@ -564,11 +584,13 @@ async function processForeverMouseTooltip() {
   }
 
   const outPath = path.join(OUTPUT_DIR, 'forever-mouse-tooltip.zip');
-  const buf = await downloadBuffer(url, 'forever-mouse-tooltip.zip');
+  const buf = await downloadBuffer(url, 'forever-mouse-tooltip.zip', tag);
+  // 若下载失败回退到缓存包，使用缓存包保存时的标签（或兜底标签），避免将新标签写入旧缓存包的 TOC
+  const effectiveTag = buf.releaseTag || fallbackTag;
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Injecting full zhCN localization for Forever Mouse Tooltip...');
-  await patchForeverMouseTooltip(zip, tag);
+  await patchForeverMouseTooltip(zip, effectiveTag);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
