@@ -29,6 +29,15 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      # 缓存未打补丁的原始上游插件包，供 scripts/fetch-addons.js 在上游下载失败时回退（不会回退到已打补丁产物）
+      - name: Restore Raw Upstream Addon Cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/upstream-addons
+          key: upstream-addons-${{ github.run_id }}
+          restore-keys: |
+            upstream-addons-
+
       - name: Fetch Latest Upstream Addons & Apply Localizations
         run: node scripts/fetch-addons.js
         env:
@@ -39,8 +48,9 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Check if public/addons or scripts/locales has changes
-          git add public/addons scripts/locales
+          # Check if public/addons, scripts/locales or the bundled version manifest has changes
+          # (upstream releases update src/generated/addon-versions.json, which triggers a redeploy)
+          git add public/addons scripts/locales src/generated/addon-versions.json
           if git diff --staged --quiet; then
             echo "No upstream addon updates detected."
           else

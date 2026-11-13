@@ -1,5 +1,20 @@
 import type { AddonInfo, CuratedAddon, InstallProgress } from '../types/addon';
 import { installAddonFromZip } from './fsService';
+import bundledAddonVersions from '../generated/addon-versions.json';
+
+type BundledVersionManifest = Record<string, { version?: string; source?: string } | undefined>;
+
+/**
+ * 读取打包脚本 (scripts/fetch-addons.js) 从实际分发产物 TOC 中解析出的版本号，拼接展示用后缀。
+ * 版本号不再在此手工维护：每次部署/自动同步时脚本会拉取上游最新正式版并重写版本清单。
+ * @param id - 精选插件 id
+ * @param label - 版本后缀说明（如 "官方中文版"）
+ * @returns 用于展示与更新比对的最新版本字符串
+ */
+function bundledVersion(id: string, label: string): string {
+  const version = (bundledAddonVersions as BundledVersionManifest)[id]?.version;
+  return version ? `${version} (${label})` : `未知版本 (${label})`;
+}
 
 export const POPULAR_ADDONS: CuratedAddon[] = [
   {
@@ -10,7 +25,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'Compass',
     defaultFolderName: 'SBF',
-    latestVersion: '2026.11.05.1 (中文版)',
+    latestVersion: bundledVersion('sbf', '中文版'),
     downloadUrl: '/addons/sbf.zip',
     githubRepo: 'Goblin-Engineering-Company/SBF',
     homeUrl: 'https://goblineng.co',
@@ -25,7 +40,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Trade',
     icon: 'Coins',
     defaultFolderName: 'Blackthornes_TS',
-    latestVersion: 'v1.23.0 (Forever 中文版)',
+    latestVersion: bundledVersion('blackthornes-tradeskills', 'Forever 中文版'),
     downloadUrl: '/addons/blackthornes-tradeskills.zip',
     githubRepo: 'Blackthornes/Blackthornes_Tradeskills',
     homeUrl: 'https://www.curseforge.com/wow/addons/blackthornes-tradeskills',
@@ -40,7 +55,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'Eye',
     defaultFolderName: 'IceHUD',
-    latestVersion: 'v1.17.29 (全汉化版)',
+    latestVersion: bundledVersion('icehud', '全汉化版'),
     downloadUrl: '/addons/icehud.zip',
     githubRepo: 'parnic/ice-hud',
     homeUrl: 'https://www.curseforge.com/wow/addons/ice-hud',
@@ -55,7 +70,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'Raid',
     icon: 'LayoutGrid',
     defaultFolderName: 'DungeonsForever',
-    latestVersion: 'v2.1.31 (原生中文)',
+    latestVersion: bundledVersion('dungeonsforever', '原生中文'),
     downloadUrl: '/addons/dungeonsforever.zip',
     homeUrl: 'https://www.curseforge.com/wow/addons/dungeonsforever',
     gameFlavors: ['forever', 'classic', 'retail', 'vanilla'],
@@ -69,7 +84,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'Package',
     defaultFolderName: 'Bagnon',
-    latestVersion: 'v12.1.8 (官方中文版)',
+    latestVersion: bundledVersion('bagnon', '官方中文版'),
     downloadUrl: '/addons/bagnon.zip',
     homeUrl: 'https://www.curseforge.com/wow/addons/bagnon',
     gameFlavors: ['forever', 'classic', 'retail', 'vanilla'],
@@ -83,7 +98,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'Sparkles',
     defaultFolderName: 'Lueur',
-    latestVersion: 'v1.4.0 (汉化增强版)',
+    latestVersion: bundledVersion('lueur', '汉化增强版'),
     downloadUrl: '/addons/lueur.zip',
     homeUrl: 'https://www.curseforge.com/wow/addons/lueur',
     gameFlavors: ['forever', 'classic', 'vanilla'],
@@ -97,7 +112,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'MapPin',
     defaultFolderName: 'Questie',
-    latestVersion: 'v12.6.4 + DB v1.0.14 (中文版)',
+    latestVersion: bundledVersion('questie-forever', '中文版'),
     downloadUrl: '/addons/questie-forever.zip',
     githubRepo: 'Questie/Questie',
     homeUrl: 'https://www.curseforge.com/wow/addons/questie',
@@ -112,7 +127,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'UI',
     icon: 'Eye',
     defaultFolderName: 'ForeverMouseTooltip',
-    latestVersion: 'v0.2.0 (100%全汉化版)',
+    latestVersion: bundledVersion('forever-mouse-tooltip', '100%全汉化版'),
     downloadUrl: '/addons/forever-mouse-tooltip.zip',
     githubRepo: 'Ninjaskurk/forever-mouse-tooltip',
     homeUrl: 'https://www.curseforge.com/wow/addons/forever-mouse-tooltip',
@@ -127,7 +142,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     category: 'QoL',
     icon: 'Compass',
     defaultFolderName: 'Mapzeroth',
-    latestVersion: 'v1.0.0 (Forever 全汉化版)',
+    latestVersion: bundledVersion('mapzeroth', 'Forever 全汉化版'),
     downloadUrl: '/addons/mapzeroth.zip',
     githubRepo: 'tr0tsky0/Mapzeroth',
     homeUrl: 'https://www.curseforge.com/wow/addons/mapzeroth',

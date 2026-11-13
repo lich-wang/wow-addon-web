@@ -1,9 +1,13 @@
-export async function patchForeverMouseTooltip(zip) {
+/**
+ * @param {import('jszip')} zip - Forever Mouse Tooltip 插件压缩包
+ * @param {string} [releaseTag] - 上游 Release 标签，用于替换未展开的 @project-version@ 占位符
+ */
+export async function patchForeverMouseTooltip(zip, releaseTag = 'v0.2.0') {
   // 1. Patch ForeverMouseTooltip/ForeverMouseTooltip.toc with zhCN metadata and version
   const tocFile = zip.file('ForeverMouseTooltip/ForeverMouseTooltip.toc');
   if (tocFile) {
     let toc = await tocFile.async('string');
-    toc = toc.replace('## Version: @project-version@', '## Version: v0.2.0');
+    toc = toc.replace('## Version: @project-version@', `## Version: ${releaseTag}`);
     if (!toc.includes('Title-zhCN')) {
       toc = toc
         .replace(

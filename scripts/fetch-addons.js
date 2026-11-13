@@ -44,27 +44,148 @@ function getHeadersForUrl(url) {
   return BASE_HEADERS;
 }
 
+// 原始上游包缓存目录：下载失败时只回退到「未打补丁」的上游原包，
+// 避免把 public/addons 下已打过补丁的产物再次打补丁（补丁重复注入）
+const UPSTREAM_CACHE_DIR = path.resolve('.cache/upstream-addons');
+
 /**
- * 安全下载远程二进制 Buffer，若下载失败则尝试使用本地缓存回退
+ * 安全下载远程二进制 Buffer，成功时缓存原始上游包（及可选的 Release 标签），失败时回退到原始上游包缓存
  * @param {string} url - 远程文件下载地址
- * @param {string} [fallbackPath] - 本地可用作回退的文件路径
- * @returns {Promise<Buffer>} 下载完成或读取回退的二进制数据
+ * @param {string} [cacheName] - 原始上游包缓存文件名（如 bagnon.zip），不传则不缓存/不回退
+ * @param {string} [releaseTag] - 与本次下载对应的 Release 标签，成功时随缓存一并保存，回退时挂在返回 Buffer 的 releaseTag 属性上
+ * @returns {Promise<Buffer & { releaseTag?: string }>} 下载完成或读取回退的二进制数据
  */
-async function downloadBuffer(url, fallbackPath) {
+async function downloadBuffer(url, cacheName, releaseTag) {
+  const SafeName = cacheName ? path.basename(cacheName) : null;
+  const cachePath = SafeName ? path.join(UPSTREAM_CACHE_DIR, SafeName) : null;
+  const tagPath = cachePath ? `${cachePath}.tag` : null;
   try {
     console.log(`Downloading: ${url}...`);
     const res = await fetch(url, { headers: getHeadersForUrl(url) });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
-    return Buffer.from(await res.arrayBuffer());
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (cachePath) {
+      fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
+      fs.writeFileSync(cachePath, buf);
+      if (tagPath && releaseTag) {
+        fs.writeFileSync(tagPath, releaseTag, 'utf-8');
+      }
+    }
+    if (releaseTag) buf.releaseTag = releaseTag;
+    return buf;
   } catch (e) {
-    if (fallbackPath && fs.existsSync(fallbackPath)) {
-      console.log(`[Cache Fallback] Download failed (${e.message}), using existing: ${fallbackPath}`);
-      return fs.readFileSync(fallbackPath);
+    if (cachePath && fs.existsSync(cachePath)) {
+      console.log(`[Cache Fallback] Download failed (${e.message}), using cached upstream: ${cachePath}`);
+      const buf = fs.readFileSync(cachePath);
+      if (tagPath && fs.existsSync(tagPath)) {
+        buf.releaseTag = fs.readFileSync(tagPath, 'utf-8').trim();
+      }
+      return buf;
     }
     throw e;
   }
+}
+
+/**
+ * 按页查询 CurseForge 项目最新的正式版 (Release) 文件并拼出 CDN 下载地址
+ * 使用 CurseForge 网站公开的文件列表接口（无需 API Key），失败时返回 null 由调用方使用兜底地址
+ * @param {number} projectId - CurseForge 项目 ID（见插件 TOC 的 X-Curse-Project-ID）
+ * @param {(fileName: string) => boolean} [fileMatch] - 文件名匹配断言（如仅匹配 -forever.zip 变体）
+ * @returns {Promise<{ tag: string, fileName: string, url: string } | null>} 最新正式版信息
+ */
+async function getLatestCurseForgeFile(projectId, fileMatch = () => true) {
+  const pageSize = 30;
+  const maxPages = 5;
+  try {
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
+      const apiUrl =
+        `https://www.curseforge.com/api/v1/mods/${projectId}/files` +
+        `?pageIndex=${pageIndex}&pageSize=${pageSize}&sort=dateCreated&sortDescending=true&removeAlphas=true`;
+      const res = await fetch(apiUrl, { headers: BASE_HEADERS });
+      if (!res.ok) throw new Error(`CurseForge API HTTP ${res.status}`);
+      const data = await res.json();
+      const files = Array.isArray(data.data) ? data.data : [];
+      // releaseType: 1 = Release, 2 = Beta, 3 = Alpha；只分发正式版
+      const file = files.find(
+        f => f.releaseType === 1 && typeof f.fileName === 'string' && f.fileName.endsWith('.zip') && fileMatch(f.fileName)
+      );
+      if (file?.id) {
+        const url = `https://edge.forgecdn.net/files/${Math.floor(file.id / 1000)}/${file.id % 1000}/${encodeURIComponent(file.fileName)}`;
+        return { tag: file.displayName || file.fileName, fileName: file.fileName, url };
+      }
+      if (files.length < pageSize) break;
+    }
+    throw new Error('no matching release file');
+  } catch (err) {
+    console.warn(`[Warn] Failed to query latest CurseForge file for project ${projectId}: ${err.message}`);
+  }
+  return null;
+}
+
+/**
+ * 从 zip 中的 TOC 文件读取 `## Version:` 字段（取第一个出现的值）
+ * @param {JSZip} zip - 插件压缩包
+ * @param {string} tocPath - TOC 文件路径
+ * @returns {Promise<string | null>} 版本号字符串，未找到时返回 null
+ */
+async function readTocVersion(zip, tocPath) {
+  const f = zip.file(tocPath);
+  if (!f) return null;
+  const toc = await f.async('string');
+  const m = toc.match(/^##\s*Version:\s*(.+?)\s*$/m);
+  return m ? m[1] : null;
+}
+
+/**
+ * 统一版本展示格式：纯数字语义版本补 v 前缀，日期型版本 (如 2026.11.05.1) 与已带前缀的保持原样
+ * @param {string} version - 原始版本号
+ * @returns {string} 规范化后的版本号
+ */
+function normalizeVersion(version) {
+  // 去掉 TOC 中追加的中文说明后缀（如 "(Forever 全汉化版)"），说明文字由前端 catalog 统一拼接
+  const v = version.replace(/\s*[(（].*?[)）]\s*$/, '').trim();
+  if (/^\d{4}\.\d{1,2}\.\d{1,2}/.test(v)) return v;
+  return /^\d/.test(v) ? `v${v}` : v;
+}
+
+// 本次打包得到的真实插件版本（从产物 TOC 读取），最终写入前端版本清单
+const BUNDLED_VERSIONS_PATH = path.resolve('src/generated/addon-versions.json');
+const bundledVersions = {};
+
+/**
+ * 记录某个精选插件本次打包的真实版本
+ * @param {string} id - 精选插件 id（与 catalogService 中 POPULAR_ADDONS 的 id 对应）
+ * @param {string | null} version - 产物中的版本号
+ * @param {string} source - 上游来源（下载地址）
+ */
+function recordBundledVersion(id, version, source) {
+  if (!version) {
+    console.warn(`[Warn] Could not determine bundled version for ${id}, keeping previous manifest entry.`);
+    return;
+  }
+  bundledVersions[id] = { version: normalizeVersion(version), source };
+  console.log(`[Version] ${id} => ${bundledVersions[id].version}`);
+}
+
+/**
+ * 将本次打包的版本合并写入前端版本清单（未成功解析的条目保留旧值）
+ */
+function writeBundledVersions() {
+  let previous = {};
+  if (fs.existsSync(BUNDLED_VERSIONS_PATH)) {
+    try {
+      previous = JSON.parse(fs.readFileSync(BUNDLED_VERSIONS_PATH, 'utf-8'));
+    } catch {
+      previous = {};
+    }
+  }
+  const merged = { ...previous, ...bundledVersions };
+  const sorted = Object.fromEntries(Object.keys(merged).sort().map(k => [k, merged[k]]));
+  fs.mkdirSync(path.dirname(BUNDLED_VERSIONS_PATH), { recursive: true });
+  fs.writeFileSync(BUNDLED_VERSIONS_PATH, JSON.stringify(sorted, null, 2) + '\n', 'utf-8');
+  console.log(`[✓] Bundled addon versions written to ${path.relative(process.cwd(), BUNDLED_VERSIONS_PATH)}`);
 }
 
 /**
@@ -99,7 +220,7 @@ async function processSBF() {
   if (latest?.url) url = latest.url;
 
   const outPath = path.join(OUTPUT_DIR, 'sbf.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'sbf.zip');
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Injecting clean 100% zhCN localization for Single-Button Fishing...');
@@ -107,7 +228,8 @@ async function processSBF() {
   if (fs.existsSync(cleanDir)) {
     for (const f of fs.readdirSync(cleanDir)) {
       const fullPath = path.join(cleanDir, f);
-      if (fs.statSync(fullPath).isFile()) {
+      // 保留上游包内的 SBF/SBF.toc，避免本地旧版 TOC 覆盖上游真实版本号
+      if (f !== 'SBF.toc' && fs.statSync(fullPath).isFile()) {
         zip.file(`SBF/${f}`, fs.readFileSync(fullPath, 'utf-8'));
       }
     }
@@ -119,6 +241,7 @@ async function processSBF() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('sbf', await readTocVersion(zip, 'SBF/SBF.toc'), url);
   console.log(`[✓] sbf.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -135,7 +258,7 @@ async function processBlackthornes() {
   }
 
   const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'blackthornes-tradeskills.zip');
   const zip = await JSZip.loadAsync(buf);
 
   console.log(`Injecting clean 100% complete zhCN for Blackthornes Tradeskills ${tag}...`);
@@ -285,6 +408,7 @@ async function processBlackthornes() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('blackthornes-tradeskills', await readTocVersion(zip, 'Blackthornes_TS/Blackthornes_TS.toc') || tag, url);
   console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -297,7 +421,7 @@ async function processIceHUD() {
   if (latest?.url) url = latest.url;
 
   const outPath = path.join(OUTPUT_DIR, 'icehud.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'icehud.zip');
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Completing zhCN localization for IceHUD...');
@@ -321,6 +445,7 @@ async function processIceHUD() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('icehud', await readTocVersion(zip, 'IceHUD/IceHUD.toc'), url);
   console.log(`[✓] icehud.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -328,10 +453,16 @@ async function processIceHUD() {
 // 4. DungeonsForever
 // ---------------------------------------------------------------------------
 async function processDungeonsForever() {
-  const url = 'https://edge.forgecdn.net/files/9506/425/DungeonsForever2.1.31.zip';
+  // 兜底地址仅在 CurseForge 接口不可用时使用；正常情况下始终分发上游最新正式版
+  let url = 'https://edge.forgecdn.net/files/9506/425/DungeonsForever2.1.31.zip';
+  const latest = await getLatestCurseForgeFile(1709577, name => /^DungeonsForever[\d.]+\.zip$/i.test(name));
+  if (latest?.url) url = latest.url;
+
   const outPath = path.join(OUTPUT_DIR, 'dungeonsforever.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'dungeonsforever.zip');
   fs.writeFileSync(outPath, buf);
+  const zip = await JSZip.loadAsync(buf);
+  recordBundledVersion('dungeonsforever', await readTocVersion(zip, 'DungeonsForever/DungeonsForever.toc'), url);
   console.log(`[✓] dungeonsforever.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -339,9 +470,14 @@ async function processDungeonsForever() {
 // 5. Bagnon
 // ---------------------------------------------------------------------------
 async function processBagnon() {
-  const url = 'https://edge.forgecdn.net/files/9456/775/Bagnon-12.1.8.zip';
+  // Bagnon 内置 StaleCheck 会与同队/同公会玩家互相广播版本，分发旧版就会在游戏内被提示"版本可能已过期"，
+  // 因此必须始终跟随上游最新正式版，而不是屏蔽该检测
+  let url = 'https://edge.forgecdn.net/files/9456/775/Bagnon-12.1.8.zip';
+  const latest = await getLatestCurseForgeFile(1592, name => /Bagnon-\d+(?:\.\d+)*\.zip$/i.test(name));
+  if (latest?.url) url = latest.url;
+
   const outPath = path.join(OUTPUT_DIR, 'bagnon.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'bagnon.zip');
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Patching Bagnon TOC metadata...');
@@ -349,6 +485,7 @@ async function processBagnon() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('bagnon', await readTocVersion(zip, 'Bagnon/Bagnon.toc'), url);
   console.log(`[✓] bagnon.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -356,9 +493,12 @@ async function processBagnon() {
 // 6. Lueur
 // ---------------------------------------------------------------------------
 async function processLueur() {
-  const url = 'https://edge.forgecdn.net/files/9281/32/Lueur-1.4.0.zip';
+  let url = 'https://edge.forgecdn.net/files/9281/32/Lueur-1.4.0.zip';
+  const latest = await getLatestCurseForgeFile(1732324, name => /^Lueur-[\d.]+\.zip$/i.test(name));
+  if (latest?.url) url = latest.url;
+
   const outPath = path.join(OUTPUT_DIR, 'lueur.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'lueur.zip');
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Injecting full zhCN localization for Lueur...');
@@ -366,6 +506,7 @@ async function processLueur() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('lueur', await readTocVersion(zip, 'Lueur/Lueur.toc'), url);
   console.log(`[✓] lueur.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -373,7 +514,11 @@ async function processLueur() {
 // 7. Questie Forever
 // ---------------------------------------------------------------------------
 async function processQuestieForever() {
-  const coreUrl = 'https://edge.forgecdn.net/files/9502/146/Questie-v12.6.4.zip';
+  // Questie 同样会在队伍/公会内广播版本并提示 "You have an outdated version of Questie!"，需跟随上游
+  let coreUrl = 'https://edge.forgecdn.net/files/9502/146/Questie-v12.6.4.zip';
+  const latestCore = await getLatestCurseForgeFile(334372, name => /^Questie-v[\d.]+\.zip$/i.test(name));
+  if (latestCore?.url) coreUrl = latestCore.url;
+
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
   const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
   if (latestDB?.url) dbUrl = latestDB.url;
@@ -381,8 +526,8 @@ async function processQuestieForever() {
   const outPath = path.join(OUTPUT_DIR, 'questie-forever.zip');
 
   console.log('Fetching Questie Core + QuestieDB Forever...');
-  const coreBuf = await downloadBuffer(coreUrl);
-  const dbBuf = await downloadBuffer(dbUrl);
+  const coreBuf = await downloadBuffer(coreUrl, 'questie-core.zip');
+  const dbBuf = await downloadBuffer(dbUrl, 'questie-db-forever.zip');
 
   const zip = await JSZip.loadAsync(coreBuf);
   await patchQuestie(zip);
@@ -391,6 +536,16 @@ async function processQuestieForever() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+
+  const coreVersion = await readTocVersion(zip, 'Questie/Questie_Forever.toc');
+  const dbVersion = await readTocVersion(zip, 'QuestieDB/QuestieDB_Forever.toc');
+  recordBundledVersion(
+    'questie-forever',
+    coreVersion && dbVersion
+      ? `${normalizeVersion(coreVersion)} + DB ${normalizeVersion(dbVersion.replace(/-forever$/i, ''))}`
+      : coreVersion,
+    `${coreUrl} + ${dbUrl}`
+  );
   console.log(`[✓] questie-forever.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -398,9 +553,12 @@ async function processQuestieForever() {
 // 8. BtWQuests
 // ---------------------------------------------------------------------------
 async function processBtWQuests() {
-  const url = 'https://edge.forgecdn.net/files/9498/296/BtWQuests-v2.69.1-forever.zip';
+  let url = 'https://edge.forgecdn.net/files/9498/296/BtWQuests-v2.69.1-forever.zip';
+  const latest = await getLatestCurseForgeFile(280369, name => /-forever\.zip$/i.test(name));
+  if (latest?.url) url = latest.url;
+
   const outPath = path.join(OUTPUT_DIR, 'btwquests.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'btwquests.zip');
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Completing zhCN localization & TOC metadata for BtWQuests Forever...');
@@ -408,6 +566,7 @@ async function processBtWQuests() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('btwquests', await readTocVersion(zip, 'BtWQuests/BtWQuests.toc'), url);
   console.log(`[✓] btwquests.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -415,19 +574,27 @@ async function processBtWQuests() {
 // 9. Forever Mouse Tooltip
 // ---------------------------------------------------------------------------
 async function processForeverMouseTooltip() {
+  const fallbackTag = 'v0.2.0';
   let url = 'https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip';
+  let tag = fallbackTag;
   const latest = await getLatestGitHubRelease('Ninjaskurk/forever-mouse-tooltip', name => name.endsWith('.zip'));
-  if (latest?.url) url = latest.url;
+  if (latest?.url) {
+    url = latest.url;
+    tag = latest.tag;
+  }
 
   const outPath = path.join(OUTPUT_DIR, 'forever-mouse-tooltip.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'forever-mouse-tooltip.zip', tag);
+  // 若下载失败回退到缓存包，使用缓存包保存时的标签（或兜底标签），避免将新标签写入旧缓存包的 TOC
+  const effectiveTag = buf.releaseTag || fallbackTag;
   const zip = await JSZip.loadAsync(buf);
 
   console.log('Injecting full zhCN localization for Forever Mouse Tooltip...');
-  await patchForeverMouseTooltip(zip);
+  await patchForeverMouseTooltip(zip, effectiveTag);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('forever-mouse-tooltip', await readTocVersion(zip, 'ForeverMouseTooltip/ForeverMouseTooltip.toc'), url);
   console.log(`[✓] forever-mouse-tooltip.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -437,7 +604,7 @@ async function processForeverMouseTooltip() {
 async function processMapzeroth() {
   const url = 'https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip';
   const outPath = path.join(OUTPUT_DIR, 'mapzeroth.zip');
-  const buf = await downloadBuffer(url, outPath);
+  const buf = await downloadBuffer(url, 'mapzeroth.zip');
   const srcZip = await JSZip.loadAsync(buf);
 
   const zip = new JSZip();
@@ -458,6 +625,7 @@ async function processMapzeroth() {
     compressionOptions: { level: 9 },
   });
   fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('mapzeroth', await readTocVersion(zip, 'Mapzeroth/Mapzeroth.toc'), url);
   console.log(`[✓] mapzeroth.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
@@ -510,6 +678,7 @@ async function main() {
   await processBtWQuests();
   await processForeverMouseTooltip();
   await processMapzeroth();
+  writeBundledVersions();
   console.log('=== All 10 Addons successfully bundled & localized into public/addons/ ===');
 }
 

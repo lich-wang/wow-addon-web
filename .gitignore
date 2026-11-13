@@ -25,3 +25,6 @@ public/downloads/*.dmg
 *.njsproj
 *.sln
 *.sw?
+
+# Raw upstream addon cache used by scripts/fetch-addons.js
+.cache/
