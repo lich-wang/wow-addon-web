@@ -292,7 +292,11 @@ export function patchMapzerothToc(originalToc) {
   }
 
   // 替换 Version
-  toc = toc.replace(/## Version: .*/, '## Version: v1.0.0 (Forever 全汉化版)');
+  // 保留上游真实版本号，仅追加汉化版标识（不再手工写死版本号）
+  toc = toc.replace(/## Version: *([^\r\n]*)/, (_, v) => {
+    const upstream = v.replace(/\s*\(.*?\)\s*$/, '').trim();
+    return `## Version: ${upstream && !upstream.includes('@') ? upstream : 'v1.0.0'} (Forever 全汉化版)`;
+  });
 
   // 修复图标路径
   toc = toc.replace('Mapzeroth-Rebuild\\Media\\Logo', 'Mapzeroth\\Media\\Logo');

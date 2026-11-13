@@ -39,8 +39,9 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Check if public/addons or scripts/locales has changes
-          git add public/addons scripts/locales
+          # Check if public/addons, scripts/locales or the bundled version manifest has changes
+          # (upstream releases update src/generated/addon-versions.json, which triggers a redeploy)
+          git add public/addons scripts/locales src/generated/addon-versions.json
           if git diff --staged --quiet; then
             echo "No upstream addon updates detected."
           else
