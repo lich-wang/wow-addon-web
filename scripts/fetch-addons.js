@@ -618,9 +618,13 @@ async function processSpellActivationOverlay() {
 
   const outPath = path.join(OUTPUT_DIR, 'spellactivationoverlay.zip');
   const buf = await downloadBuffer(url, 'spellactivationoverlay.zip');
-  fs.writeFileSync(outPath, buf);
   const zip = await JSZip.loadAsync(buf);
-  recordBundledVersion('spellactivationoverlay', await readTocVersion(zip, 'SpellActivationOverlay/SpellActivationOverlay_Forever.toc'), url);
+  const foreverVersion = await readTocVersion(zip, 'SpellActivationOverlay/SpellActivationOverlay_Forever.toc');
+  if (!foreverVersion) {
+    throw new Error(`SpellActivationOverlay ZIP 缺少 SpellActivationOverlay_Forever.toc: ${url}`);
+  }
+  fs.writeFileSync(outPath, buf);
+  recordBundledVersion('spellactivationoverlay', foreverVersion, url);
   console.log(`[✓] spellactivationoverlay.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
