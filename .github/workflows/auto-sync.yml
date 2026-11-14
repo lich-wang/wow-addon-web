@@ -8,6 +8,12 @@ on:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: auto-sync-addons
+  cancel-in-progress: false
 
 jobs:
   check-and-update:
@@ -17,6 +23,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.AUTO_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -43,18 +50,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.AUTO_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Commit and Push if Updated
+      - name: Create or Update Auto-Sync PR if Updated
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Check if scripts/locales or the bundled version manifest has changes
           # (upstream releases update src/generated/addon-versions.json, which triggers a redeploy)
           git add scripts/locales src/generated/addon-versions.json
           if git diff --staged --quiet; then
             echo "No upstream addon updates detected."
           else
-            echo "Updates detected! Committing and pushing..."
+            echo "Updates detected! Pushing to chore/auto-sync-addons..."
+            SYNC_BRANCH="chore/auto-sync-addons"
             git commit -m "chore(auto-sync): update addons from upstream with zhCN patches"
-            git push origin main
+            git push --force origin "HEAD:${SYNC_BRANCH}"
+
+            EXISTING_PR=$(gh pr list --head "${SYNC_BRANCH}" --state open --json number --jq '.[0].number // empty')
+            if [ -n "${EXISTING_PR}" ]; then
+              echo "Updated existing auto-sync PR #${EXISTING_PR}."
+            else
+              ISSUE_URL=$(gh issue create \
+                --title "chore(auto-sync): 上游插件自动同步更新" \
+                --body "由 \`auto-sync.yml\` 定时任务检测到上游插件更新并自动创建，用于关联自动同步 PR。")
+              ISSUE_NUM="${ISSUE_URL##*/}"
+              PR_URL=$(gh pr create \
+                --head "${SYNC_BRANCH}" \
+                --base main \
+                --title "chore(auto-sync): update addons from upstream with zhCN patches" \
+                --body "$(printf 'Fixes #%s\n\n由 `auto-sync.yml` 自动拉取上游最新插件并同步本地化补丁与版本清单。' "${ISSUE_NUM}")")
+              echo "Created auto-sync PR: ${PR_URL}"
+            fi
           fi
