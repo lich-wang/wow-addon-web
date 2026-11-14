@@ -149,6 +149,21 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     gameFlavors: ['forever'],
     isForeverRecommended: true,
   },
+  {
+    id: 'foreverauras',
+    name: 'ForeverAuras (无限服 WA 监控框架)',
+    description: '专为《魔兽世界：无限服》打造的 WeakAuras2 适配分支！支持法术触发闪烁、技能冷却、增益/减益监控与自定义提示音，内置完整简体中文并支持导入 WA 字符串。',
+    author: 'Neroxrw & WeakAuras Contributors',
+    category: 'Combat',
+    icon: 'Sparkles',
+    defaultFolderName: 'ForeverAuras',
+    latestVersion: bundledVersion('foreverauras', '官方中文版'),
+    downloadUrl: '/addons/foreverauras.zip',
+    githubRepo: 'neroxrw/foreverauras',
+    homeUrl: 'https://www.curseforge.com/wow/addons/foreverauras',
+    gameFlavors: ['forever'],
+    isForeverRecommended: true,
+  },
 ];
 
 /**

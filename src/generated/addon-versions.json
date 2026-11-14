@@ -15,6 +15,10 @@
     "version": "v0.2.0",
     "source": "https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip"
   },
+  "foreverauras": {
+    "version": "v1.4.0",
+    "source": "https://github.com/neroxrw/foreverauras/releases/download/1.4.0/ForeverAuras-1.4.0.zip"
+  },
   "icehud": {
     "version": "v1.17.29",
     "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.29/IceHUD-v1.17.29.zip"
