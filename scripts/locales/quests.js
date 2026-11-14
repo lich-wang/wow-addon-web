@@ -57,8 +57,27 @@ export async function patchQuestieDB(zip) {
   }
   // Also create QuestieDB/QuestieDB.toc metadata copy so scanners immediately find exact match
   const foreverToc = zip.file('QuestieDB/QuestieDB_Forever.toc');
-  if (foreverToc && !zip.file('QuestieDB/QuestieDB.toc')) {
+  if (foreverToc) {
     const content = await foreverToc.async('string');
-    zip.file('QuestieDB/QuestieDB.toc', content);
+    if (!zip.file('QuestieDB/QuestieDB.toc')) {
+      zip.file('QuestieDB/QuestieDB.toc', content);
+    }
+    // 将 QuestieDB 版本同步写入 Questie/Questie.toc 的 ## Version，确保本地扫描与版本清单一致
+    const dbMatch = content.match(/^##\s*Version:\s*(.+?)\s*$/m);
+    if (dbMatch) {
+      const rawDbVer = dbMatch[1].replace(/-forever$/i, '').trim();
+      const dbVer = rawDbVer.startsWith('v') ? rawDbVer : `v${rawDbVer}`;
+      const mainTocFile = zip.file('Questie/Questie.toc');
+      if (mainTocFile) {
+        let mainToc = await mainTocFile.async('string');
+        if (!/\bDB\s*v?\d+/i.test(mainToc)) {
+          mainToc = mainToc.replace(
+            /^(##\s*Version:\s*[^\r\n]+?)(\s*\(Forever 专版\))?\s*$/m,
+            (_, prefix, suffix = '') => `${prefix} + DB ${dbVer}${suffix}`
+          );
+          zip.file('Questie/Questie.toc', mainToc);
+        }
+      }
+    }
   }
 }
