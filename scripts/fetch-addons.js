@@ -608,6 +608,35 @@ async function processMapzeroth() {
   console.log(`[✓] mapzeroth.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 10. ForeverAuras (WoW Forever WeakAuras Fork)
+// ---------------------------------------------------------------------------
+async function processForeverAuras() {
+  let url = 'https://github.com/neroxrw/foreverauras/releases/download/1.4.0/ForeverAuras-1.4.0.zip';
+  const latest = await getLatestGitHubRelease('neroxrw/foreverauras', name => name.endsWith('.zip'));
+  if (latest?.url) url = latest.url;
+
+  const outPath = path.join(OUTPUT_DIR, 'foreverauras.zip');
+  const buf = await downloadBuffer(url, 'foreverauras.zip');
+  const zip = await JSZip.loadAsync(buf);
+
+  const tocFile = zip.file('ForeverAuras/ForeverAuras.toc');
+  if (tocFile) {
+    let toc = await tocFile.async('string');
+    if (!toc.includes('Title-zhCN')) {
+      toc = toc
+        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[战斗]|r ForeverAuras (无限服 WA)')
+        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 专为无限服打造的 WeakAuras2 适配框架，支持增益/减益/触发与冷却图形化监控。');
+      zip.file('ForeverAuras/ForeverAuras.toc', toc);
+    }
+  }
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('foreverauras', await readTocVersion(zip, 'ForeverAuras/ForeverAuras.toc'), url);
+  console.log(`[✓] foreverauras.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+}
+
 async function ensureClientBinaries() {
   const downloadsDir = path.resolve('public/downloads');
   if (!fs.existsSync(downloadsDir)) {
@@ -656,8 +685,9 @@ async function main() {
   await processQuestieForever();
   await processForeverMouseTooltip();
   await processMapzeroth();
+  await processForeverAuras();
   writeBundledVersions();
-  console.log('=== All 9 Addons successfully bundled & localized into public/addons/ ===');
+  console.log('=== All 10 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {
