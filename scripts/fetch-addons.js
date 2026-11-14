@@ -609,32 +609,23 @@ async function processMapzeroth() {
 }
 
 // ---------------------------------------------------------------------------
-// 10. ForeverAuras (WoW Forever WeakAuras Fork)
+// 10. SpellActivationOverlay (WoW Forever & Classic Proc Alerts)
 // ---------------------------------------------------------------------------
-async function processForeverAuras() {
-  let url = 'https://github.com/neroxrw/foreverauras/releases/download/1.4.0/ForeverAuras-1.4.0.zip';
-  const latest = await getLatestGitHubRelease('neroxrw/foreverauras', name => name.endsWith('.zip'));
+async function processSpellActivationOverlay() {
+  let url = 'https://github.com/ennvina/spellactivationoverlay/releases/download/v2.9.1/SpellActivationOverlay-2.9.1-universal.zip';
+  const latest = await getLatestGitHubRelease('ennvina/spellactivationoverlay', name => name.endsWith('-universal.zip'));
   if (latest?.url) url = latest.url;
 
-  const outPath = path.join(OUTPUT_DIR, 'foreverauras.zip');
-  const buf = await downloadBuffer(url, 'foreverauras.zip');
+  const outPath = path.join(OUTPUT_DIR, 'spellactivationoverlay.zip');
+  const buf = await downloadBuffer(url, 'spellactivationoverlay.zip');
   const zip = await JSZip.loadAsync(buf);
-
-  const tocFile = zip.file('ForeverAuras/ForeverAuras.toc');
-  if (tocFile) {
-    let toc = await tocFile.async('string');
-    if (!toc.includes('Title-zhCN')) {
-      toc = toc
-        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[战斗]|r ForeverAuras (无限服 WA)')
-        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 专为无限服打造的 WeakAuras2 适配框架，支持增益/减益/触发与冷却图形化监控。');
-      zip.file('ForeverAuras/ForeverAuras.toc', toc);
-    }
+  const foreverVersion = await readTocVersion(zip, 'SpellActivationOverlay/SpellActivationOverlay_Forever.toc');
+  if (!foreverVersion) {
+    throw new Error(`SpellActivationOverlay ZIP 缺少 SpellActivationOverlay_Forever.toc: ${url}`);
   }
-
-  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  fs.writeFileSync(outPath, outBuf);
-  recordBundledVersion('foreverauras', await readTocVersion(zip, 'ForeverAuras/ForeverAuras.toc'), url);
-  console.log(`[✓] foreverauras.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  fs.writeFileSync(outPath, buf);
+  recordBundledVersion('spellactivationoverlay', foreverVersion, url);
+  console.log(`[✓] spellactivationoverlay.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 async function ensureClientBinaries() {
@@ -685,7 +676,7 @@ async function main() {
   await processQuestieForever();
   await processForeverMouseTooltip();
   await processMapzeroth();
-  await processForeverAuras();
+  await processSpellActivationOverlay();
   writeBundledVersions();
   console.log('=== All 10 Addons successfully bundled & localized into public/addons/ ===');
 }

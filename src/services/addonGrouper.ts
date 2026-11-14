@@ -70,12 +70,6 @@ const KNOWN_BUNDLES: BundleRule[] = [
       f.toLowerCase().startsWith('weakauras') && f.toLowerCase() !== 'weakauras',
   },
   {
-    id: 'foreverauras',
-    mainFolder: 'ForeverAuras',
-    matcher: (f) =>
-      f.toLowerCase().startsWith('foreverauras') && f.toLowerCase() !== 'foreverauras',
-  },
-  {
     id: 'tradeskillmaster',
     mainFolder: 'TradeSkillMaster',
     matcher: (f) =>

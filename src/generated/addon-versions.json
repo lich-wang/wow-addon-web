@@ -15,10 +15,6 @@
     "version": "v0.2.0",
     "source": "https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip"
   },
-  "foreverauras": {
-    "version": "v1.4.0",
-    "source": "https://github.com/neroxrw/foreverauras/releases/download/1.4.0/ForeverAuras-1.4.0.zip"
-  },
   "icehud": {
     "version": "v1.17.29",
     "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.29/IceHUD-v1.17.29.zip"
@@ -38,5 +34,9 @@
   "sbf": {
     "version": "2026.11.11.1",
     "source": "https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.11.1/SBF-2026.11.11.1.zip"
+  },
+  "spellactivationoverlay": {
+    "version": "v2.9.1",
+    "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v2.9.1/SpellActivationOverlay-2.9.1-universal.zip"
   }
 }
