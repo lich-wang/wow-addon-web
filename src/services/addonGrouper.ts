@@ -10,9 +10,13 @@ const KNOWN_BUNDLES: BundleRule[] = [
   {
     id: 'dungeonsforever',
     mainFolder: 'DungeonsForever',
-    matcher: (f) =>
-      f.toLowerCase().startsWith('dungeonsforever') &&
-      f.toLowerCase() !== 'dungeonsforever',
+    matcher: (f) => {
+      const lower = f.toLowerCase();
+      return (
+        lower === 'df_cnlocale' ||
+        (lower.startsWith('dungeonsforever') && lower !== 'dungeonsforever')
+      );
+    },
   },
   {
     id: 'bagnon',
