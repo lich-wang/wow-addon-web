@@ -7,6 +7,7 @@ import { patchBagnon } from './locales/bagnon.js';
 import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import { patchMapzeroth } from './locales/mapzeroth.js';
+import { buildWoWFAddon } from './locales/wowf.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -628,6 +629,14 @@ async function processSpellActivationOverlay() {
   console.log(`[✓] spellactivationoverlay.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
+// ---------------------------------------------------------------------------
+// 11. WoWF Companion (wowf.io In-Game Dynamic Guide for WoW Forever)
+// ---------------------------------------------------------------------------
+async function processWoWF() {
+  const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl);
+  recordBundledVersion('wowf', await readTocVersion(zip, 'WoWF/WoWF.toc'), source);
+}
+
 async function ensureClientBinaries() {
   const downloadsDir = path.resolve('public/downloads');
   if (!fs.existsSync(downloadsDir)) {
@@ -665,6 +674,13 @@ async function ensureClientBinaries() {
 }
 
 async function main() {
+  const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
+  if (onlyArg === 'wowf') {
+    await processWoWF();
+    writeBundledVersions();
+    return;
+  }
+
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await ensureClientBinaries();
   await processSBF();
@@ -677,8 +693,9 @@ async function main() {
   await processForeverMouseTooltip();
   await processMapzeroth();
   await processSpellActivationOverlay();
+  await processWoWF();
   writeBundledVersions();
-  console.log('=== All 10 Addons successfully bundled & localized into public/addons/ ===');
+  console.log('=== All 11 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {

@@ -1,5 +1,6 @@
 import type { AddonInfo, CuratedAddon, InstallProgress } from '../types/addon';
 import { installAddonFromZip } from './fsService';
+import { syncWoWFZipWithLiveWebsite } from './wowfSyncService';
 import bundledAddonVersions from '../generated/addon-versions.json';
 
 type BundledVersionManifest = Record<string, { version?: string; source?: string } | undefined>;
@@ -164,7 +165,69 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     gameFlavors: ['forever', 'classic', 'vanilla', 'cata'],
     isForeverRecommended: true,
   },
+  {
+    id: 'wowf',
+    name: 'WoWF Companion (wowf.io 无限服智能百科)',
+    description: '《魔兽世界：无限服》专属游戏内动态百科！实时同步 wowf.io 网站最新数据，根据当前角色的等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键生成职业宏、35大副本（含9大无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱全攻略与最新热修公告。',
+    author: 'lich.tech & wowf.io',
+    category: 'QoL',
+    icon: 'Compass',
+    defaultFolderName: 'WoWF',
+    latestVersion: bundledVersion('wowf', 'Forever 动态百科'),
+    downloadUrl: '/addons/wowf.zip',
+    homeUrl: 'https://wowf.io/zh',
+    gameFlavors: ['forever'],
+    isForeverRecommended: true,
+  },
 ];
+
+/**
+ * 下载精选插件压缩包并在安装前执行必要的动态同步（如 WoWF Companion 实时同步 wowf.io 数据）
+ */
+export async function fetchCuratedAddonZip(
+  addon: CuratedAddon,
+  onProgress?: (p: InstallProgress) => void
+): Promise<ArrayBuffer> {
+  const candidates: string[] = [];
+  if (addon.downloadUrl.startsWith('http')) {
+    candidates.push(addon.downloadUrl);
+  } else {
+    if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+      candidates.push(addon.downloadUrl);
+    }
+    candidates.push(`https://wow.lich.tech${addon.downloadUrl}`);
+  }
+
+  let arrayBuffer: ArrayBuffer | null = null;
+  let lastStatus = 0;
+
+  for (const url of candidates) {
+    try {
+      const response = await fetch(url);
+      lastStatus = response.status;
+      if (!response.ok) continue;
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) continue;
+      const buf = await response.arrayBuffer();
+      if (buf.byteLength > 200) {
+        arrayBuffer = buf;
+        break;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  if (!arrayBuffer) {
+    throw new Error(`下载失败 (HTTP ${lastStatus || 'Network Error'})`);
+  }
+
+  if (addon.id === 'wowf') {
+    arrayBuffer = await syncWoWFZipWithLiveWebsite(arrayBuffer, onProgress);
+  }
+
+  return arrayBuffer;
+}
 
 /**
  * Fetch and install addon by download URL with progress tracking
@@ -181,15 +244,7 @@ export async function downloadAndInstallAddon(
     message: `正在从 wow.lich.tech 下载 ${addon.name}...`,
   });
 
-  const url = addon.downloadUrl.startsWith('http')
-    ? addon.downloadUrl
-    : `https://wow.lich.tech${addon.downloadUrl}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`下载失败 (HTTP ${response.status})`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
+  const arrayBuffer = await fetchCuratedAddonZip(addon, onProgress);
 
   await installAddonFromZip(targetDirHandle, arrayBuffer, (progress) => {
     onProgress({

@@ -26,6 +26,8 @@ export async function onRequestGet(context: { request: Request }): Promise<Respo
       'wago.io',
       'addons.wago.io',
       'api.curseforge.com',
+      'wowf.io',
+      'assets.wowf.io',
     ];
 
     const isAllowed = allowedHosts.some((h) => parsedTarget.hostname.endsWith(h));
@@ -37,6 +39,7 @@ export async function onRequestGet(context: { request: Request }): Promise<Respo
       headers: {
         'User-Agent': 'WoW-Web-Addon-Manager/1.0',
         Accept: '*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
       },
     });
 
