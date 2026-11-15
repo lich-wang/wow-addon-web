@@ -625,6 +625,130 @@ const FALLBACK_NEWS = [
   },
 ];
 
+const PROFESSION_GUIDES_META = [
+  {
+    id: 'alchemy',
+    name: '炼金术',
+    type: 'crafting',
+    pairs: ['草药学'],
+    makes: ['治疗药水和法力药水', '属性药剂和合剂', '转化奥金与功能药水', '点金石'],
+    brackets: '1-60 初级治疗药水 → 60-110 次级治疗药水 → 110-155 治疗药水 → 155-210 强效治疗药水 → 210-265 超强治疗药水 → 265-300 特效治疗药水/合剂',
+    trainers: '初级/中级：各大主城炼金师 | 高级(125+)：铁炉堡苏雷·浆泡 / 幽暗城赫伯特·哈尔希医生 | 大师(200+)：羽月要塞凯尔希·杨斯 / 斯通纳德罗格瓦尔',
+    foreverNote: '无限服练级药剂与抗性药水需求极高，275 级可转化奥金锭稳定赚取金币。',
+  },
+  {
+    id: 'blacksmithing',
+    name: '锻造',
+    type: 'crafting',
+    pairs: ['采矿'],
+    makes: ['板甲和锁甲', '近战武器', '磨刀石和平衡石', '装备强化与盾刺'],
+    brackets: '1-75 劣质磨刀石/铜质链甲 → 75-125 粗制磨刀石/青铜护腿 → 125-200 重磨刀石/绿铁护腕/金鳞护腕 → 200-250 秘银套/致密磨刀石 → 250-300 瑟银护甲与帝国板甲',
+    trainers: '初级/中级：主城熔炉区 | 高级(125+)：铁炉堡本古斯·深炉 / 奥格瑞玛萨鲁·钢怒 | 大师(200+)：藏宝海湾布里克·基克拉夫',
+    foreverNote: '无限服物资箱经常需要绿铁/秘银锻造件，磨刀石可显著提升物理职业野外效率。',
+  },
+  {
+    id: 'enchanting',
+    name: '附魔',
+    type: 'crafting',
+    pairs: ['裁缝'],
+    makes: ['武器和护甲永久附魔', '初级/次级魔法杖', '分解绿装获取魔尘与精华'],
+    brackets: '1-75 附魔护腕-初级生命/初级魔法杖 → 75-135 初级耐力/次级魔法杖 → 135-200 附魔护腕-耐力/力量 → 200-250 附魔披风-强效防御 → 250-300 十字军/强效属性',
+    trainers: '初级/中级：主城附魔训练师 | 高级(125+)：艾尔文森林基塔·费温德 / 石爪山脉赫加斯 | 大师(200+)：奥达曼副本内安诺拉',
+    foreverNote: '5 级做出的【初级魔法杖】（DPS 11.3）与 13 级【次级魔法杖】是牧师、法师、术士前期的最强神器！',
+  },
+  {
+    id: 'engineering',
+    name: '工程学',
+    type: 'crafting',
+    pairs: ['采矿'],
+    makes: ['炸弹和手雷', '工程护目镜', '靶假人与起搏器', '无限服实用装置与坐骑'],
+    brackets: '1-75 劣质火药/一把螺栓/弧光扳手 → 75-150 粗制炸药/青铜管/活动假人 → 150-200 铁皮手雷/发条式同步陀螺仪 → 200-260 实心炸药/秘银外壳 → 260-300 瑟银零件/奥术炸弹',
+    trainers: '初级/中级：主城工程区 | 高级(125+)：铁炉堡斯普琳科 / 奥格瑞玛罗克希克 | 大师(200+)：加基森巴兹克·布拉斯温',
+    foreverNote: '铁皮手雷提供珍贵的远程范围昏迷控制，高级假人在单刷精英任务和无限服新副本救场中极为强力。',
+  },
+  {
+    id: 'leatherworking',
+    name: '制皮',
+    type: 'crafting',
+    pairs: ['剥皮'],
+    makes: ['皮甲和锁甲', '护甲片', '箭袋和弹药袋', '★无限服专属：营地帐篷'],
+    brackets: '1-75 轻皮护甲片/雕花皮靴 → 75-150 中皮护甲片/黑皮战靴 → 150-205 重皮/野人护肩 → 205-250 厚皮/夜色头带 → 250-300 硬甲皮护腕/邪恶皮甲',
+    trainers: '初级/中级：主城制皮师 | 高级(125+)：达纳苏斯塔尔丹 / 雷霆崖乌娜·小林 | 大师(200+)：鹰巢山彼得·加林 / 菲拉斯哈拉纳尔',
+    foreverNote: '★无限服核心生活专业：制皮师可制作一次性【营地帐篷】，在野外篝火旁支起帐篷可让附近所有玩家极速恢复至 150% 双倍休息经验！',
+  },
+  {
+    id: 'tailoring',
+    name: '裁缝',
+    type: 'crafting',
+    pairs: ['附魔'],
+    makes: ['布甲装备', '6至16格背包', '用于附魔分解的绿装', '月布与法术强度套装'],
+    brackets: '1-75 亚麻布卷/强化亚麻斗篷 → 75-125 毛料卷/灰布护肩 → 125-205 丝绸卷/碧蓝丝质头巾/深红丝质外衣 → 205-250 魔纹布卷/黑色魔纹套 → 250-300 符文布卷/符文布包',
+    trainers: '初级/中级：主城裁缝店 | 高级(125+)：暴风城乔吉奥·波利罗 / 幽暗城乔瑟夫·格里高利 | 大师(200+)：塔伦米尔达瑞尔·斯塔克 / 塞拉摩提莫斯·沃森特',
+    foreverNote: '无需采集专业即可靠人形怪掉落布匹冲级，制作的背包与物资箱紧俏布甲在无限服拍卖行常年畅销。',
+  },
+  {
+    id: 'herbalism',
+    name: '草药学',
+    type: 'gathering',
+    pairs: ['炼金术'],
+    makes: ['炼金术全阶段草药', '无限服物资箱所需草药', '拍卖行高价值合剂原料'],
+    brackets: '1-70 宁神花/银叶草/地根草 → 70-150 魔皇草/石南草/跌打草 → 150-230 皇血草/枯叶草/金棘草 → 230-300 太阳草/阿尔萨斯之泪/梦叶草/黑莲花',
+    trainers: '各大主城及新手镇草药学训练师均可直接传授至大师级 (1-300)',
+    foreverNote: '搭配 GatherMate2 采集助手可在地图标记无限服新增区域（泽风岛、河林）的密集草药刷新点。',
+  },
+  {
+    id: 'mining',
+    name: '采矿',
+    type: 'gathering',
+    pairs: ['锻造', '工程学'],
+    makes: ['铜/锡/铁/秘银/瑟银矿石与锭', '奥术水晶与宝石原石'],
+    brackets: '1-65 铜矿 → 65-125 锡矿/银矿(熔炼青铜) → 125-175 铁矿/金矿 → 175-245 秘银矿/真银矿 → 245-300 瑟银矿/富瑟银矿',
+    trainers: '各大主城及城镇采矿训练师均可直接传授至大师级 (1-300)',
+    foreverNote: '前中期熔炼银锭、金锭即可跨过枯燥采集段；无限服新增副本【挖掘场：湿地】内含有丰富矿脉。',
+  },
+  {
+    id: 'skinning',
+    name: '剥皮',
+    type: 'gathering',
+    pairs: ['制皮'],
+    makes: ['轻皮/中皮/重皮/厚皮/硬甲皮', '毛皮与龙鳞'],
+    brackets: '1-75 新手区野兽(1-15级) → 75-150 贫瘠之地/洛克莫丹/赤脊山(15-30级) → 150-225 荆棘谷/河林/凄凉之地(30-45级) → 225-300 塔纳利斯/安戈洛环形山(45-60级)',
+    trainers: '各大主城制皮店旁的剥皮训练师均可直接传授至大师级 (1-300)，记得购买【剥皮小刀】放在背包内。',
+    foreverNote: '练级途中零成本顺手剥皮，直接卖店即可稳定攒齐 40 级小马金币，或供制皮制作无限服帐篷。',
+  },
+  {
+    id: 'cooking',
+    name: '烹饪',
+    type: 'secondary',
+    pairs: ['钓鱼'],
+    makes: ['耐力与精神属性食物', '★无限服特色：提供经验值加成的料理', '营火料理'],
+    brackets: '1-50 香料面包/烤野猪肉 → 50-130 烟熏熊肉/美味煎蛋卷 → 130-225 烤奇美拉肉片/烤狮肉/巨型煎蛋卷 → 225-300 嫩狼肉排/夜鳞鱼汤/沙漠肉丸子',
+    trainers: '初级/中级：主城旅店与烹饪师 | 高级(125+)：灰谷/凄凉之地购买《中级烹饪教材》 | 大师(225+)：加基森迪尔格·超肉完成烹饪任务',
+    foreverNote: '无限服新增提供经验值加成与额外主属性的特色食谱，配合钓鱼可完全零成本冲满 300。',
+  },
+  {
+    id: 'first-aid',
+    name: '急救',
+    type: 'secondary',
+    pairs: [],
+    makes: ['亚麻/毛料/丝质/魔纹/符文布绷带', '抗毒药剂'],
+    brackets: '1-80 亚麻绷带/厚亚麻绷带 → 80-150 绒线绷带/厚绒线绷带 → 150-210 丝质绷带/厚丝质绷带 → 210-260 魔纹绷带/厚魔纹绷带 → 260-300 符文布绷带/厚符文布绷带',
+    trainers: '初级/中级：主城急救师 | 高级(150+)：激流堡丹eb·沃克 / 尘泥沼泽巴莱·洛克维购买《高级急救教材》 | 大师(225+)：塞拉摩古斯塔夫医生 / 落锤镇格里高利医生完成救死扶伤任务',
+    foreverNote: '战士、潜行者、猎人、术士等全职业必满副业，战斗间隙 8 秒回满生命值大幅减少坐地板时间。',
+  },
+  {
+    id: 'fishing',
+    name: '钓鱼',
+    type: 'secondary',
+    pairs: ['烹饪'],
+    makes: ['黑口鱼/火鳞鳝鱼/石鳞鳗（炼金原料）', '夜鳞鲷鱼/斑点黄尾鱼（高级烹饪）', '水中漂浮残骸宝箱'],
+    brackets: '1-75 主城及新手村水域 → 75-150 贫瘠之地绿洲/洛克莫丹 → 150-225 荆棘谷/河林/凄凉之地 → 225-300 菲拉斯/塔纳利斯热砂港/艾萨拉',
+    trainers: '初级/中级：主城钓鱼师 | 高级(125+)：藏宝海湾老人海明威购买《中级钓鱼教材：鲈鱼与你》 | 大师(225+)：尘泥沼泽纳特·帕格完成钓鱼大师任务',
+    foreverNote: '无限服河林（Riverwood）与海岸线鱼群收益极高，钓出的箱子可开出高级布匹、药水与蓝绿装备。',
+  },
+];
+
+
 /**
  * 将 wowf.io API 的富文本片段数组转换为魔兽世界原生颜色转义字符串
  * @param {Array<string | object> | string | undefined} segments
@@ -1123,10 +1247,19 @@ function toLuaValue(val, indent = 0) {
 }
 
 /**
- * 构建完整数据集：优先从 wowf.io 实时抓取并缓存，断网时回退到缓存
+ * 构建完整数据集：优先从 wowf.io 实时抓取并缓存，断网或局部请求失败时按粒度回退到已有缓存
  */
 async function buildWoWFDataset(cacheDir, getHeaders) {
   const cacheFile = path.join(cacheDir, 'wowf-dataset.json');
+  let cachedDataset = null;
+  if (fs.existsSync(cacheFile)) {
+    try {
+      cachedDataset = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+    } catch {
+      cachedDataset = null;
+    }
+  }
+
   const deployId = await discoverDeployId(getHeaders);
   console.log(`[WoWF] Using wowf.io deployId: ${deployId}`);
 
@@ -1134,6 +1267,20 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   const routesData = {};
   const dungeonMap = new Map();
   const notableItemsMap = new Map();
+  const professionsMap = new Map();
+
+  // 先预填 12 大专业冲级与无限服特色指南元数据
+  for (const prof of PROFESSION_GUIDES_META) {
+    professionsMap.set(prof.id, { ...prof });
+  }
+  if (Array.isArray(cachedDataset?.professions)) {
+    for (const cp of cachedDataset.professions) {
+      if (cp?.id) {
+        const prev = professionsMap.get(cp.id) || {};
+        professionsMap.set(cp.id, { ...prev, ...cp });
+      }
+    }
+  }
 
   // 先预填 11 个无限服新增地下城与团本元数据，确保任何情况下都完整收录
   for (const meta of FOREVER_NEW_DUNGEONS_META) {
@@ -1151,9 +1298,37 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     });
   }
 
-  let liveFetchCount = 0;
+  // 从已有缓存预载地下城与精选掉落，避免局部路线请求失败时丢失其它阵营副本任务或装备
+  if (Array.isArray(cachedDataset?.dungeons)) {
+    for (const cd of cachedDataset.dungeons) {
+      if (!cd?.id) continue;
+      if (!dungeonMap.has(cd.id)) {
+        dungeonMap.set(cd.id, { ...cd, quests: Array.isArray(cd.quests) ? [...cd.quests] : [] });
+      } else {
+        const existing = dungeonMap.get(cd.id);
+        const seen = new Set(existing.quests.map(q => `${q.name}:${q.npc}`));
+        for (const q of cd.quests || []) {
+          const key = `${q.name}:${q.npc}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            existing.quests.push(q);
+          }
+        }
+      }
+    }
+  }
+  if (Array.isArray(cachedDataset?.items)) {
+    for (const ci of cachedDataset.items) {
+      if (ci?.id && !notableItemsMap.has(String(ci.id)) && notableItemsMap.size < 180) {
+        notableItemsMap.set(String(ci.id), ci);
+      }
+    }
+  }
 
-  // 1. 抓取 10 条种族升级路线 (bands + dungeons)
+  let liveFetchCount = 0;
+  let hasPartialFailure = false;
+
+  // 1. 抓取 10 条种族升级路线 (bands + dungeons + professions)
   for (const route of RACE_ROUTES) {
     let payload = null;
     let lastErr = null;
@@ -1168,31 +1343,44 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     if (!payload) {
       // 为无限服新种族【天裔 (Skyborne)】合成 1-12 泽风岛 + 12-60 阵营主干 + 30-45 河林路线
       if (route.id === 'skyborne-alliance' || route.id === 'skyborne-horde') {
-        const baseRoute = routesData[route.faction === 'horde' ? 'orc' : 'human'];
-        const tailBands = Array.isArray(baseRoute?.bands) ? baseRoute.bands.filter(b => b.from >= 12) : [];
-        routesData[route.id] = {
-          id: route.id,
-          name: route.name,
-          faction: route.faction,
-          wowRaceKeys: route.wowRaceKeys,
-          bands: [
-            {
-              from: 1,
-              to: 12,
-              zone: '泽风岛 (Zephras Isle)',
-              hub: { name: '泽风庇护所 / 天裔前哨', zone: '泽风岛', x: 48.5, y: 52.0 },
-              trainer: { name: '天裔导师', title: '全职业训练师', place: '泽风岛主营地', x: 49.2, y: 51.4 },
-              professions: [
-                { id: 'first-aid', name: '急救', trainer: '天裔医师', place: '泽风岛', x: 48.0, y: 53.0 },
-              ],
-              dungeonQuests: [],
-            },
-            ...tailBands,
-          ],
-        };
+        const baseKey = route.faction === 'horde' ? 'orc' : 'human';
+        const baseRoute = routesData[baseKey] || cachedDataset?.routes?.[baseKey];
+        const tailBands = Array.isArray(baseRoute?.bands)
+          ? baseRoute.bands
+              .filter(b => (b.to ?? b.from ?? 0) >= 12)
+              .map(b => ((b.from ?? 1) < 12 ? { ...b, from: 12 } : b))
+          : [];
+        if (tailBands.length > 0) {
+          routesData[route.id] = {
+            id: route.id,
+            name: route.name,
+            faction: route.faction,
+            wowRaceKeys: route.wowRaceKeys,
+            bands: [
+              {
+                from: 1,
+                to: 12,
+                zone: '泽风岛 (Zephras Isle)',
+                hub: { name: '泽风庇护所 / 天裔前哨', zone: '泽风岛', x: 48.5, y: 52.0 },
+                trainer: { name: '天裔导师', title: '全职业训练师', place: '泽风岛主营地', x: 49.2, y: 51.4 },
+                professions: [
+                  { id: 'first-aid', name: '急救', trainer: '天裔医师', place: '泽风岛', x: 48.0, y: 53.0 },
+                ],
+                dungeonQuests: [],
+              },
+              ...tailBands,
+            ],
+          };
+        } else if (cachedDataset?.routes?.[route.id]) {
+          routesData[route.id] = cachedDataset.routes[route.id];
+        }
         continue;
       }
+      hasPartialFailure = true;
       console.warn(`[WoWF] Route fetch failed for ${route.id}: ${lastErr?.message}`);
+      if (cachedDataset?.routes?.[route.id]) {
+        routesData[route.id] = cachedDataset.routes[route.id];
+      }
       continue;
     }
     liveFetchCount++;
@@ -1206,6 +1394,22 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     if (Array.isArray(payload.dungeons)) {
       for (const d of payload.dungeons) {
         mergeDungeonIntoMap(dungeonMap, d, route.faction);
+      }
+    }
+    if (Array.isArray(payload.professions)) {
+      for (const p of payload.professions) {
+        if (!p || !p.id) continue;
+        const meta = professionsMap.get(p.id) || {};
+        professionsMap.set(p.id, {
+          id: p.id,
+          name: p.name || meta.name || PROF_NAMES_ZH[p.id] || p.id,
+          type: p.type || meta.type || 'crafting',
+          pairs: Array.isArray(p.pairs) && p.pairs.length > 0 ? p.pairs : (meta.pairs || []),
+          makes: Array.isArray(p.makes) && p.makes.length > 0 ? p.makes : (meta.makes || []),
+          brackets: meta.brackets || '1–75 初级 → 75–150 中级 → 150–225 高级 → 225–300 大师级',
+          trainers: meta.trainers || '各大主城及对应等级营地专业训练师',
+          foreverNote: meta.foreverNote || '',
+        });
       }
     }
     if (payload.items && typeof payload.items === 'object') {
@@ -1229,32 +1433,52 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
 
   // 2. 抓取 9 大职业的专精循环、10-60 天赋加点、双阵营职业任务与宏命令
   for (const cls of CLASS_CONFIGS) {
+    const cachedClass = cachedDataset?.classes?.[cls.key];
     let specs = [];
     const classRuns = [];
+    const primaryFaction = cls.hordeRace && !cls.allianceRace ? 'horde' : (cls.key === 'DRUID' ? 'horde' : 'alliance');
+    const primaryRace = primaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
+    const secondaryFaction = primaryFaction === 'alliance' ? 'horde' : 'alliance';
+    const secondaryRace = secondaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
+
     try {
-      const primaryFaction = cls.hordeRace && !cls.allianceRace ? 'horde' : (cls.key === 'DRUID' ? 'horde' : 'alliance');
-      const primaryRace = primaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
       const primaryPayload = await fetchLevelUpPayload(cls.slug, primaryRace, primaryFaction, deployId, getHeaders);
       liveFetchCount++;
       specs = transformTalentBuilds(primaryPayload.talentBuilds);
       classRuns.push(...transformClassRuns(primaryPayload.classRuns, primaryFaction));
 
       // 如果该职业双阵营都有，额外拉取另一阵营的专属职业任务链
-      const secondaryFaction = primaryFaction === 'alliance' ? 'horde' : 'alliance';
-      const secondaryRace = secondaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
       if (secondaryRace) {
         try {
           const secondaryPayload = await fetchLevelUpPayload(cls.slug, secondaryRace, secondaryFaction, deployId, getHeaders);
           classRuns.push(...transformClassRuns(secondaryPayload.classRuns, secondaryFaction));
-        } catch {
-          // ignore secondary faction error
+        } catch (secErr) {
+          hasPartialFailure = true;
+          console.warn(`[WoWF] Secondary faction classRuns fetch failed for ${cls.key} (${secondaryFaction}): ${secErr.message}`);
+          if (Array.isArray(cachedClass?.classRuns)) {
+            classRuns.push(...cachedClass.classRuns.filter(cr => cr.faction === secondaryFaction));
+          }
         }
       }
     } catch (err) {
+      hasPartialFailure = true;
       console.warn(`[WoWF] Class fetch failed for ${cls.key}: ${err.message}`);
+      if (Array.isArray(cachedClass?.specs) && cachedClass.specs.length > 0) {
+        specs = cachedClass.specs;
+      }
+      if (Array.isArray(cachedClass?.classRuns) && cachedClass.classRuns.length > 0) {
+        classRuns.push(...cachedClass.classRuns);
+      }
     }
 
     const macros = await fetchLiveClassMacros(cls.slug, cls.key, getHeaders);
+    if (Array.isArray(cachedClass?.macros)) {
+      for (const cm of cachedClass.macros) {
+        if (cm?.title && !macros.some(m => m.title === cm.title)) {
+          macros.push(cm);
+        }
+      }
+    }
 
     classesData[cls.key] = {
       key: cls.key,
@@ -1270,14 +1494,15 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   // 3. 抓取最新热修新闻
   const news = await fetchLiveNews(getHeaders);
 
-  // 如果完全断网导致没有抓到实时路由数据，尝试读取本地缓存
-  if (liveFetchCount === 0 && fs.existsSync(cacheFile)) {
+  // 如果完全断网导致没有抓到实时路由数据，直接返回已有完整缓存
+  if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
-    return JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+    return cachedDataset;
   }
 
   const dungeonsList = [...dungeonMap.values()].sort((a, b) => a.minLevel - b.minLevel || a.visit - b.visit);
   const itemsList = [...notableItemsMap.values()].sort((a, b) => a.reqLevel - b.reqLevel);
+  const professionsList = [...professionsMap.values()];
 
   // 从最新热修公告提取日期作为动态数据库版本号 (如 2026.11.15)
   let dbVersion = '2026.11.15';
@@ -1304,15 +1529,23 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     classes: classesData,
     dungeons: dungeonsList,
     items: itemsList,
+    professions: professionsList,
     foreverSystems: FOREVER_SYSTEMS_DATA,
     news,
   };
 
-  try {
-    fs.mkdirSync(cacheDir, { recursive: true });
-    fs.writeFileSync(cacheFile, JSON.stringify(dataset, null, 2), 'utf-8');
-  } catch {
-    // ignore cache write error
+  // 仅当本次抓取完整（或尚无本地缓存快照）时才写入缓存文件，防止局部网络波动覆盖完整缓存
+  const hasCompleteRoutes = Object.keys(routesData).length >= RACE_ROUTES.length;
+  const hasCompleteClasses = CLASS_CONFIGS.every(c => Array.isArray(classesData[c.key]?.specs) && classesData[c.key].specs.length > 0);
+  if ((!hasPartialFailure && hasCompleteRoutes && hasCompleteClasses) || !cachedDataset) {
+    try {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      fs.writeFileSync(cacheFile, JSON.stringify(dataset, null, 2), 'utf-8');
+    } catch {
+      // ignore cache write error
+    }
+  } else {
+    console.warn('[WoWF] Partial fetch failure occurred; preserved existing cache snapshot and merged missing entries.');
   }
 
   return dataset;
@@ -1351,7 +1584,7 @@ WoWF_Data = ${toLuaValue(dataset, 0)}
  * 生成 WoWF/WoWF.lua 核心游戏内界面与智能匹配逻辑
  */
 function generateWoWFLua() {
-  return `-- ============================================================================
+  return String.raw`-- ============================================================================
 -- WoWF Companion (wowf.io 无限服游戏内动态智能指南)
 -- 专为《魔兽世界：无限服》(Interface: 16001) 打造
 -- 支持根据当前角色等级、职业、专精、种族与阵营自动匹配升级路线、输出循环、天赋、宏与副本
@@ -1495,8 +1728,8 @@ local function ShowCopyMacroDialog(macroTitle, macroCode)
     copyDialog:SetScript("OnDragStop", copyDialog.StopMovingOrSizing)
     if copyDialog.SetBackdrop then
       copyDialog:SetBackdrop({
-        bgFile = "Interface\\\\Buttons\\\\WHITE8x8",
-        edgeFile = "Interface\\\\Tooltips\\\\UI-Tooltip-Border",
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true, tileSize = 16, edgeSize = 14,
         insets = { left = 3, right = 3, top = 3, bottom = 3 },
       })
@@ -1516,8 +1749,8 @@ local function ShowCopyMacroDialog(macroTitle, macroCode)
     editBg:SetPoint("BOTTOMRIGHT", -14, 44)
     if editBg.SetBackdrop then
       editBg:SetBackdrop({
-        bgFile = "Interface\\\\Buttons\\\\WHITE8x8",
-        edgeFile = "Interface\\\\Tooltips\\\\UI-Tooltip-Border",
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true, tileSize = 8, edgeSize = 10,
         insets = { left = 2, right = 2, top = 2, bottom = 2 },
       })
@@ -1588,7 +1821,14 @@ end
 
 local function GetCurrentRoute()
   local routes = Data.routes or {}
-  return routes[state.routeId] or routes["human"] or next(routes)
+  if routes[state.routeId] then
+    return routes[state.routeId]
+  end
+  if routes["human"] then
+    return routes["human"]
+  end
+  local _, fallbackRoute = next(routes)
+  return fallbackRoute
 end
 
 local function GetCurrentClassData()
@@ -1677,8 +1917,8 @@ local function AcquireCard(index)
     local card = CreateFrame("Frame", nil, contentChild, template)
     if card.SetBackdrop then
       card:SetBackdrop({
-        bgFile = "Interface\\\\Buttons\\\\WHITE8x8",
-        edgeFile = "Interface\\\\Tooltips\\\\UI-Tooltip-Border",
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true, tileSize = 16, edgeSize = 12,
         insets = { left = 3, right = 3, top = 3, bottom = 3 },
       })
@@ -2245,8 +2485,10 @@ end
 local function RenderTabForeverAndNews()
   local cardIdx = 1
   local y = 6
+  local spec = GetCurrentSpecData()
+  local recProfs = (spec and spec.recommendedProfs) or ""
 
-  -- 1. 无限服专属玩法攻略
+  -- 1. 无限服专属玩法攻略（露营、睡袋、经典旧世之树、物资箱等）
   for _, sys in ipairs(Data.foreverSystems or {}) do
     if MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
       local lines = { sys.summary or "" }
@@ -2274,7 +2516,45 @@ local function RenderTabForeverAndNews()
     end
   end
 
-  -- 2. wowf.io 最新热修公告
+  -- 2. 12 大专业 1-300 冲级与无限服特色指南 (同步自 wowf.io/zh/professions)
+  if Data.professions and #Data.professions > 0 then
+    for _, prof in ipairs(Data.professions) do
+      local searchText = (prof.name or "") .. " " .. (prof.brackets or "") .. " " .. (prof.foreverNote or "")
+      if MatchesSearch(searchText) then
+        local isRec = (recProfs ~= "" and string.find(recProfs, prof.name or "", 1, true) ~= nil)
+        local pLines = {}
+        if prof.pairs and #prof.pairs > 0 then
+          table.insert(pLines, "|cff00ff96最佳搭配专业:|r " .. table.concat(prof.pairs, " / "))
+        end
+        if prof.makes and #prof.makes > 0 then
+          table.insert(pLines, "|cffffd100核心产出:|r " .. table.concat(prof.makes, " · "))
+        end
+        if prof.brackets and prof.brackets ~= "" then
+          table.insert(pLines, "|cff71d5ff1–300 冲级路线:|r " .. prof.brackets)
+        end
+        if prof.trainers and prof.trainers ~= "" then
+          table.insert(pLines, "|cffffa500关键训练师与突破:|r " .. prof.trainers)
+        end
+        if prof.foreverNote and prof.foreverNote ~= "" then
+          table.insert(pLines, "|cff00ffcc★ 无限服指南:|r " .. prof.foreverNote)
+        end
+
+        local typeLabel = prof.type == "gathering" and "采集专业" or (prof.type == "secondary" and "生活副业" or "制造专业")
+        local recTag = isRec and " |cff00ff00[★当前专精推荐]|r" or ""
+        local cProf = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+        y = LayoutCard(
+          cProf, y,
+          string.format("|cff00ff96🛠️ 专业指南：%s (1–300)|r%s", prof.name or prof.id, recTag),
+          table.concat(pLines, "\n"),
+          isRec and { 0.1, 0.9, 0.5, 0.95 } or { 0.25, 0.55, 0.45, 0.85 },
+          isRec and { 0.05, 0.15, 0.10, 0.94 } or { 0.06, 0.11, 0.10, 0.92 },
+          typeLabel
+        )
+      end
+    end
+  end
+
+  -- 3. wowf.io 最新热修公告
   local newsLines = {}
   for _, n in ipairs(Data.news or {}) do
     table.insert(newsLines, string.format("• |cffffd100[%s] %s|r\n  %s", n.date or "", n.title or "", n.summary or ""))
@@ -2369,8 +2649,8 @@ local function CreateMainWindow()
 
   if mainFrame.SetBackdrop then
     mainFrame:SetBackdrop({
-      bgFile = "Interface\\\\Buttons\\\\WHITE8x8",
-      edgeFile = "Interface\\\\Tooltips\\\\UI-Tooltip-Border",
+      bgFile = "Interface\\Buttons\\WHITE8x8",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
       tile = true, tileSize = 16, edgeSize = 16,
       insets = { left = 4, right = 4, top = 4, bottom = 4 },
     })
@@ -2395,8 +2675,8 @@ local function CreateMainWindow()
   ctrlBar:SetHeight(36)
   if ctrlBar.SetBackdrop then
     ctrlBar:SetBackdrop({
-      bgFile = "Interface\\\\Buttons\\\\WHITE8x8",
-      edgeFile = "Interface\\\\Tooltips\\\\UI-Tooltip-Border",
+      bgFile = "Interface\\Buttons\\WHITE8x8",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
       tile = true, tileSize = 8, edgeSize = 10,
       insets = { left = 2, right = 2, top = 2, bottom = 2 },
     })
@@ -2530,7 +2810,7 @@ local function CreateMainWindow()
     { id = 3, label = "⚔️ 职业与天赋" },
     { id = 4, label = "📜 一键宏库" },
     { id = 5, label = "🏰 地下城百科" },
-    { id = 6, label = "🌟 无限特色&热修" },
+    { id = 6, label = "🌟 专业&无限特色" },
   }
 
   for i, def in ipairs(TAB_DEFS) do
@@ -2598,17 +2878,17 @@ local function CreateMinimapButton()
   minimapBtn:SetFrameLevel(8)
   minimapBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   minimapBtn:RegisterForDrag("LeftButton")
-  minimapBtn:SetHighlightTexture("Interface\\\\Minimap\\\\UI-Minimap-ZoomButton-Highlight")
+  minimapBtn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
   local icon = minimapBtn:CreateTexture(nil, "BACKGROUND")
   icon:SetSize(20, 20)
   icon:SetPoint("CENTER", 0, 0)
-  icon:SetTexture("Interface\\\\Icons\\\\INV_Misc_Book_11")
+  icon:SetTexture("Interface\\Icons\\INV_Misc_Book_11")
 
   local border = minimapBtn:CreateTexture(nil, "OVERLAY")
   border:SetSize(52, 52)
   border:SetPoint("TOPLEFT", 0, 0)
-  border:SetTexture("Interface\\\\Minimap\\\\MiniMap-TrackingBorder")
+  border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
 
   minimapBtn:SetScript("OnDragStart", function(self)
     self:SetScript("OnUpdate", function()
@@ -2669,15 +2949,26 @@ end
 -- ============================================================================
 
 local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
+local hasPrintedWelcome = false
+
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
-  if event == "PLAYER_ENTERING_WORLD" then
+  if event == "PLAYER_LOGIN" then
     CreateMinimapButton()
     SyncPlayerCharacter()
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 已加载 |cffffd100wowf.io|r 动态数据库！输入 |cffffd100/wowf|r 或点击小地图图标查看当前角色智能指南。")
+    RefreshUI()
+  elseif event == "PLAYER_ENTERING_WORLD" then
+    CreateMinimapButton()
+    SyncPlayerCharacter()
+    RefreshUI()
+    if not hasPrintedWelcome then
+      hasPrintedWelcome = true
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 已加载 |cffffd100wowf.io|r 动态数据库！输入 |cffffd100/wowf|r 或点击小地图图标查看当前角色智能指南。")
+    end
   elseif event == "PLAYER_LEVEL_UP" then
     local newLevel = tonumber(arg1) or ((UnitLevel and UnitLevel("player")) or state.level)
     SyncPlayerCharacter(newLevel)
@@ -2712,7 +3003,7 @@ SlashCmdList["WOWF"] = function(msg)
     ToggleMainWindow(2)
   elseif cmd == "class" or cmd == "talent" then
     ToggleMainWindow(3)
-  elseif cmd == "news" or cmd == "forever" then
+  elseif cmd == "news" or cmd == "forever" or cmd == "prof" or cmd == "professions" then
     ToggleMainWindow(6)
   else
     state.autoFollow = true
