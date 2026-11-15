@@ -1385,13 +1385,19 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
     ? d.quests.map(q => {
         const g = Array.isArray(q.givers) && q.givers[0] ? q.givers[0] : null;
         const lastStep = Array.isArray(q.steps) && q.steps.length > 0 ? q.steps[q.steps.length - 1] : null;
+        const explicitSide =
+          q.side === 'alliance' || q.side === 'horde'
+            ? q.side
+            : g?.side === 'alliance' || g?.side === 'horde'
+              ? g.side
+              : null;
         return {
           id: extractQuestId(q),
           name: q.name || '',
           level: q.level || q.minLevel || minLevel,
           minLevel: q.minLevel || minLevel,
           inside: Boolean(q.inside),
-          faction: g?.side || q.side || faction || 'both',
+          faction: explicitSide || faction || 'both',
           npc: g?.name || '',
           zone: g?.zone || q.zone || ent?.zone || zone,
           place: g?.place || '',
