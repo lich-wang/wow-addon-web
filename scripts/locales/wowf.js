@@ -1091,11 +1091,16 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
       quests: incomingQuests,
     });
   } else {
-    const seenQuests = new Set(existing.quests.map(q => `${q.name}:${q.npc}`));
+    existing.minLevel = minLevel;
+    existing.maxLevel = maxLevel;
+    if (d.visit) existing.visit = d.visit;
+    const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
     for (const q of incomingQuests) {
       const key = `${q.name}:${q.npc}`;
-      if (!seenQuests.has(key)) {
-        seenQuests.add(key);
+      if (questIndexByKey.has(key)) {
+        existing.quests[questIndexByKey.get(key)] = q;
+      } else {
+        questIndexByKey.set(key, existing.quests.length);
         existing.quests.push(q);
       }
     }
@@ -1298,7 +1303,8 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     });
   }
 
-  // 从已有缓存预载地下城与精选掉落，避免局部路线请求失败时丢失其它阵营副本任务或装备
+  // 从已有缓存预载地下城与精选掉落，避免局部路线请求失败时丢失其它阵营副本任务或装备；
+  // 后续实时请求返回的同名任务与装备会覆盖此处预载的旧缓存值
   if (Array.isArray(cachedDataset?.dungeons)) {
     for (const cd of cachedDataset.dungeons) {
       if (!cd?.id) continue;
@@ -1306,11 +1312,11 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
         dungeonMap.set(cd.id, { ...cd, quests: Array.isArray(cd.quests) ? [...cd.quests] : [] });
       } else {
         const existing = dungeonMap.get(cd.id);
-        const seen = new Set(existing.quests.map(q => `${q.name}:${q.npc}`));
+        const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
         for (const q of cd.quests || []) {
           const key = `${q.name}:${q.npc}`;
-          if (!seen.has(key)) {
-            seen.add(key);
+          if (!questIndexByKey.has(key)) {
+            questIndexByKey.set(key, existing.quests.length);
             existing.quests.push(q);
           }
         }
@@ -1341,7 +1347,12 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
       }
     }
     if (!payload) {
-      // 为无限服新种族【天裔 (Skyborne)】合成 1-12 泽风岛 + 12-60 阵营主干 + 30-45 河林路线
+      hasPartialFailure = true;
+      // 优先复用已有的天裔或其它种族路线缓存；仅当不存在天裔缓存时才基于阵营主干合成天裔路线
+      if (Array.isArray(cachedDataset?.routes?.[route.id]?.bands) && cachedDataset.routes[route.id].bands.length > 0) {
+        routesData[route.id] = cachedDataset.routes[route.id];
+        continue;
+      }
       if (route.id === 'skyborne-alliance' || route.id === 'skyborne-horde') {
         const baseKey = route.faction === 'horde' ? 'orc' : 'human';
         const baseRoute = routesData[baseKey] || cachedDataset?.routes?.[baseKey];
@@ -1371,16 +1382,10 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
               ...tailBands,
             ],
           };
-        } else if (cachedDataset?.routes?.[route.id]) {
-          routesData[route.id] = cachedDataset.routes[route.id];
         }
         continue;
       }
-      hasPartialFailure = true;
       console.warn(`[WoWF] Route fetch failed for ${route.id}: ${lastErr?.message}`);
-      if (cachedDataset?.routes?.[route.id]) {
-        routesData[route.id] = cachedDataset.routes[route.id];
-      }
       continue;
     }
     liveFetchCount++;
@@ -1414,7 +1419,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     }
     if (payload.items && typeof payload.items === 'object') {
       for (const [id, item] of Object.entries(payload.items)) {
-        if (item && item.quality >= 3 && !notableItemsMap.has(id) && notableItemsMap.size < 180) {
+        if (item && item.quality >= 3 && (notableItemsMap.has(id) || notableItemsMap.size < 180)) {
           notableItemsMap.set(id, {
             id: Number(id),
             name: item.name || '',
@@ -1494,15 +1499,20 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   // 3. 抓取最新热修新闻
   const news = await fetchLiveNews(getHeaders);
 
-  // 如果完全断网导致没有抓到实时路由数据，直接返回已有完整缓存
+  const professionsList = [...professionsMap.values()];
+
+  // 如果完全断网导致没有抓到实时路由数据，返回已有完整缓存并补齐新增的内置专业与无限服特色指南字段
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
-    return cachedDataset;
+    return {
+      ...cachedDataset,
+      professions: professionsList,
+      foreverSystems: cachedDataset.foreverSystems || FOREVER_SYSTEMS_DATA,
+    };
   }
 
   const dungeonsList = [...dungeonMap.values()].sort((a, b) => a.minLevel - b.minLevel || a.visit - b.visit);
   const itemsList = [...notableItemsMap.values()].sort((a, b) => a.reqLevel - b.reqLevel);
-  const professionsList = [...professionsMap.values()];
 
   // 从最新热修公告提取日期作为动态数据库版本号 (如 2026.11.15)
   let dbVersion = '2026.11.15';
