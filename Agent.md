@@ -196,10 +196,14 @@ git push origin feat/add-addon-search
 3. **推送分支并创建 PR**：
    - 推送分支并执行 `gh pr create`，**必须在 PR 描述（Description）中包含 `Fixes #<Issue编号>`**（写在标题中无效），以通过 `检查是否关联 Issue` 门禁。
 4. **持续跟踪 CI 与 CodeRabbit 审核**：
-   - 使用 `gh pr checks <PR编号> --watch --interval 5` 跟踪 `检查是否关联 Issue`；该命令退出后需再次执行 `gh pr checks <PR编号>`，确认 `CodeRabbit` 检查已出现且状态为 `pass`（若尚未出现或仍为 `pending` 则继续等待），确认全部通过且评审状态为 `APPROVED` 后才能合并。
+   - 使用 `gh pr checks <PR编号> --watch --interval 5` 跟踪 `检查是否关联 Issue`；该命令退出后需再次执行 `gh pr checks <PR编号>`，确认 `CodeRabbit` 检查已出现且状态为 `pass`（若尚未出现或仍为 `pending` 则继续等待），确认全部通过、评审状态为 `APPROVED` 后，记录已检查的 PR head SHA（`gh pr view <PR编号> --json headRefOid -q .headRefOid`）再执行合并。
    - 若存在失败项或审核意见，使用 `gh pr view <PR编号> --json state,mergeStateStatus,reviewDecision,comments,reviews` 查看 PR 评论与评审摘要；若需排查行内评审对话的解决状态，请前往 PR 的 **Files changed** 页面查看或通过 GitHub GraphQL 查询 `reviewThreads.isResolved`。若 CodeRabbit 发起 `CHANGES_REQUESTED` 或存在未解决对话，须逐项修复并解决对应评审对话，等待重新审查通过。
 5. **合并与部署确认**：
-   - 所有检查通过且评审无阻塞后，执行 `gh pr merge <PR编号> --squash --delete-branch` 完成合并并清理远程分支。
+   - 所有检查通过且评审无阻塞后，执行 `gh pr merge <PR编号> --squash --delete-branch --match-head-commit <已检查的SHA>` 完成合并并清理远程分支，确保合并的是已通过检查的提交。
    - 切回本地主干并同步：`git checkout main && git pull`。
-   - 涉及网页或静态资源发布时，先获取 PR 的合并提交 SHA（`gh pr view <PR编号> --json mergeCommit -q .mergeCommit.oid`），再按该 SHA 筛选部署记录：`gh run list --workflow=deploy.yml --commit <MERGE_SHA>`，确认对应本次合并的 `Build & Deploy to Cloudflare Pages` 运行状态。
+   - 涉及网页或静态资源发布时，先获取 PR 的合并提交 SHA（`gh pr view <PR编号> --json mergeCommit -q .mergeCommit.oid`），再按该 SHA 筛选部署记录：`gh run list --workflow=deploy.yml --commit <MERGE_SHA>`，确认对应本次合并的 `Build & Deploy to Cloudflare Pages` 运行状态：
+     - 若状态为 `queued`、`in_progress` 或 `waiting`，执行 `gh run watch <RUN_ID> --exit-status` 等待运行结束。
+     - 仅当运行结论为 `success` 时，判定部署完成。
+     - 若结论为 `failure`、`cancelled` 或 `timed_out`，执行 `gh run view <RUN_ID> --log-failed` 查看失败日志并报告，不得判定部署完成。
+     - 若暂未查询到对应运行，等待片刻后重新查询；仍无结果时向操作者报告，不得判定部署完成。
 
