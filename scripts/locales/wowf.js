@@ -1329,13 +1329,13 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
       }
     }
     if (!payload) {
+      hasPartialFailure = true;
+      hasRouteFailure = true;
       const cachedRoute = cachedDataset?.routes?.[route.id];
       const isSkyborne = route.id === 'skyborne-alliance' || route.id === 'skyborne-horde';
 
       // 若已有非合成的专属路线缓存，优先复用该缓存并标记局部失败
       if (Array.isArray(cachedRoute?.bands) && cachedRoute.bands.length > 0 && (!isSkyborne || !cachedRoute.synthesized)) {
-        hasPartialFailure = true;
-        hasRouteFailure = true;
         routesData[route.id] = cachedRoute;
         continue;
       }
@@ -1344,10 +1344,6 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
         const baseKey = route.faction === 'horde' ? 'orc' : 'human';
         const liveBaseRoute = routesData[baseKey];
         const baseRoute = liveBaseRoute || cachedDataset?.routes?.[baseKey];
-        if (!liveBaseRoute) {
-          hasPartialFailure = true;
-          hasRouteFailure = true;
-        }
         const tailBands = Array.isArray(baseRoute?.bands)
           ? baseRoute.bands
               .filter(b => (b.to ?? b.from ?? 0) >= 12)
@@ -1376,15 +1372,11 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
             ],
           };
         } else if (cachedRoute) {
-          hasPartialFailure = true;
-          hasRouteFailure = true;
           routesData[route.id] = cachedRoute;
         }
         continue;
       }
 
-      hasPartialFailure = true;
-      hasRouteFailure = true;
       console.warn(`[WoWF] Route fetch failed for ${route.id}: ${lastErr?.message}`);
       continue;
     }
