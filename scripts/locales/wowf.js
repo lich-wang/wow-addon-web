@@ -1311,36 +1311,9 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     });
   }
 
-  // 从已有缓存预载地下城与精选掉落，避免局部路线请求失败时丢失其它阵营副本任务或装备；
-  // 后续实时请求返回的同名任务与装备会覆盖此处预载的旧缓存值
-  if (Array.isArray(cachedDataset?.dungeons)) {
-    for (const cd of cachedDataset.dungeons) {
-      if (!cd?.id) continue;
-      if (!dungeonMap.has(cd.id)) {
-        dungeonMap.set(cd.id, { ...cd, quests: Array.isArray(cd.quests) ? [...cd.quests] : [] });
-      } else {
-        const existing = dungeonMap.get(cd.id);
-        const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
-        for (const q of cd.quests || []) {
-          const key = `${q.name}:${q.npc}`;
-          if (!questIndexByKey.has(key)) {
-            questIndexByKey.set(key, existing.quests.length);
-            existing.quests.push(q);
-          }
-        }
-      }
-    }
-  }
-  if (Array.isArray(cachedDataset?.items)) {
-    for (const ci of cachedDataset.items) {
-      if (ci?.id && !notableItemsMap.has(String(ci.id)) && notableItemsMap.size < 180) {
-        notableItemsMap.set(String(ci.id), ci);
-      }
-    }
-  }
-
   let liveFetchCount = 0;
   let hasPartialFailure = false;
+  let hasRouteFailure = false;
 
   // 1. 抓取 10 条种族升级路线 (bands + dungeons + professions)
   for (const route of RACE_ROUTES) {
@@ -1355,15 +1328,25 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
       }
     }
     if (!payload) {
-      hasPartialFailure = true;
-      // 优先复用已有的天裔或其它种族路线缓存；仅当不存在天裔缓存时才基于阵营主干合成天裔路线
-      if (Array.isArray(cachedDataset?.routes?.[route.id]?.bands) && cachedDataset.routes[route.id].bands.length > 0) {
-        routesData[route.id] = cachedDataset.routes[route.id];
+      const cachedRoute = cachedDataset?.routes?.[route.id];
+      const isSkyborne = route.id === 'skyborne-alliance' || route.id === 'skyborne-horde';
+
+      // 若已有非合成的专属路线缓存，优先复用该缓存并标记局部失败
+      if (Array.isArray(cachedRoute?.bands) && cachedRoute.bands.length > 0 && (!isSkyborne || !cachedRoute.synthesized)) {
+        hasPartialFailure = true;
+        hasRouteFailure = true;
+        routesData[route.id] = cachedRoute;
         continue;
       }
-      if (route.id === 'skyborne-alliance' || route.id === 'skyborne-horde') {
+
+      if (isSkyborne) {
         const baseKey = route.faction === 'horde' ? 'orc' : 'human';
-        const baseRoute = routesData[baseKey] || cachedDataset?.routes?.[baseKey];
+        const liveBaseRoute = routesData[baseKey];
+        const baseRoute = liveBaseRoute || cachedDataset?.routes?.[baseKey];
+        if (!liveBaseRoute) {
+          hasPartialFailure = true;
+          hasRouteFailure = true;
+        }
         const tailBands = Array.isArray(baseRoute?.bands)
           ? baseRoute.bands
               .filter(b => (b.to ?? b.from ?? 0) >= 12)
@@ -1375,6 +1358,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
             name: route.name,
             faction: route.faction,
             wowRaceKeys: route.wowRaceKeys,
+            synthesized: true,
             bands: [
               {
                 from: 1,
@@ -1390,9 +1374,16 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
               ...tailBands,
             ],
           };
+        } else if (cachedRoute) {
+          hasPartialFailure = true;
+          hasRouteFailure = true;
+          routesData[route.id] = cachedRoute;
         }
         continue;
       }
+
+      hasPartialFailure = true;
+      hasRouteFailure = true;
       console.warn(`[WoWF] Route fetch failed for ${route.id}: ${lastErr?.message}`);
       continue;
     }
@@ -1440,6 +1431,43 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
             effect: Array.isArray(item.effects) && item.effects[0]?.text ? item.effects[0].text : '',
           });
         }
+      }
+    }
+  }
+
+  // 当存在路线请求失败时，用本地缓存补齐缺失的地下城、副本任务（保留双阵营属性）与精选掉落；
+  // 当所有路线请求均成功时，本轮实时阵营合并结果即为完整权威数据，不受旧缓存阵营干扰
+  if (hasRouteFailure && Array.isArray(cachedDataset?.dungeons)) {
+    for (const cd of cachedDataset.dungeons) {
+      if (!cd?.id) continue;
+      if (!dungeonMap.has(cd.id)) {
+        dungeonMap.set(cd.id, { ...cd, quests: Array.isArray(cd.quests) ? [...cd.quests] : [] });
+      } else {
+        const existing = dungeonMap.get(cd.id);
+        const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
+        for (const cq of cd.quests || []) {
+          const key = `${cq.name}:${cq.npc}`;
+          if (!questIndexByKey.has(key)) {
+            questIndexByKey.set(key, existing.quests.length);
+            existing.quests.push(cq);
+          } else {
+            const idx = questIndexByKey.get(key);
+            const liveQuest = existing.quests[idx];
+            if (
+              cq.faction === 'both' ||
+              (cq.faction && liveQuest?.faction && cq.faction !== liveQuest.faction)
+            ) {
+              existing.quests[idx] = { ...liveQuest, faction: 'both' };
+            }
+          }
+        }
+      }
+    }
+  }
+  if (hasRouteFailure && Array.isArray(cachedDataset?.items)) {
+    for (const ci of cachedDataset.items) {
+      if (ci?.id && !notableItemsMap.has(String(ci.id)) && notableItemsMap.size < 180) {
+        notableItemsMap.set(String(ci.id), ci);
       }
     }
   }
