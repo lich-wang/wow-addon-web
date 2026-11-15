@@ -2976,8 +2976,20 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
         y = st.y or (isPrimary and q.y or nil),
       }
       if isPrimary then
-        if st.x and st.y then
-          RegisterQuestMeta(stepObj, fallbackLevel, stZone)
+        local hasStepCoords = (st.x ~= nil and st.y ~= nil)
+        local hasStepInfo = (st.npc and st.npc ~= "") or (st.place and st.place ~= "") or (st.zone and st.zone ~= "")
+        if hasStepCoords or hasStepInfo then
+          local primaryZone = (st.zone and st.zone ~= "") and st.zone or ((q.zone and q.zone ~= "") and q.zone or parentZone)
+          RegisterQuestMeta({
+            id = sid,
+            name = st.name or q.name,
+            level = st.level or q.level or q.minLevel or fallbackLevel,
+            npc = (st.npc and st.npc ~= "") and st.npc or q.npc,
+            zone = primaryZone,
+            place = (st.place and st.place ~= "") and st.place or q.place,
+            x = hasStepCoords and st.x or q.x,
+            y = hasStepCoords and st.y or q.y,
+          }, fallbackLevel, primaryZone)
         end
       else
         table.insert(chainLinks, FormatQuestLink(stepObj, fallbackLevel, stZone))
