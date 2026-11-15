@@ -1064,7 +1064,7 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
           level: q.level || q.minLevel || minLevel,
           minLevel: q.minLevel || minLevel,
           inside: Boolean(q.inside),
-          faction: g?.side && g.side !== 'both' ? g.side : faction || 'both',
+          faction: g?.side || q.side || faction || 'both',
           npc: g?.name || '',
           zone: g?.zone || q.zone || zone,
           place: g?.place || '',
@@ -1098,7 +1098,15 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
     for (const q of incomingQuests) {
       const key = `${q.name}:${q.npc}`;
       if (questIndexByKey.has(key)) {
-        existing.quests[questIndexByKey.get(key)] = q;
+        const idx = questIndexByKey.get(key);
+        const prevQuest = existing.quests[idx];
+        const mergedFaction =
+          prevQuest?.faction === 'both' ||
+          q.faction === 'both' ||
+          (prevQuest?.faction && q.faction && prevQuest.faction !== q.faction)
+            ? 'both'
+            : q.faction || prevQuest?.faction || 'both';
+        existing.quests[idx] = { ...q, faction: mergedFaction };
       } else {
         questIndexByKey.set(key, existing.quests.length);
         existing.quests.push(q);
