@@ -2223,6 +2223,7 @@ local state = {
   zone = "",
   activeTab = 1,
   routeFilter = "MATCH", -- "MATCH" | "ALL"
+  talentFilter = "MATCH", -- "MATCH" | "ALL"
   dungeonFilter = "MATCH", -- "MATCH" | "NEW" | "ALL"
   searchQuery = "",
 }
@@ -3585,7 +3586,7 @@ local function RenderTabSmartMatch()
     table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs .. "   |cffaaaaaa(上方控制栏可自由切换等级、职业、专精与种族路线)|r")
   end
   table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿坐标|r 直接打开世界地图标记点 (Shift+点击发到聊天)；|cffffff00点击黄色任务链接|r 直接插入聊天框发送 (右键标记接取点)。")
-  if lvl >= 14 then
+  if lvl >= 14 and lvl < 60 then
     table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r，并在野外利用制皮【营地帐篷】快速攒双倍经验！")
   end
 
@@ -3751,14 +3752,16 @@ local function RenderTabSmartMatch()
   local milestoneLines = {}
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
-      if math.abs((m.level or 1) - lvl) <= 8 or (m.level <= lvl and m.level >= lvl - 10) then
-        local tag = (m.level == lvl) and "|cff00ff00[当前等级必做]|r " or string.format("|cffffd100[Lv.%d 专精要点]|r ", m.level)
+      local mLvl = m.level or 1
+      if mLvl >= lvl - 2 and mLvl <= lvl + 10 then
+        local tag = (mLvl == lvl) and "|cff00ff00[当前等级必做]|r " or string.format("|cffffd100[Lv.%d 专精要点]|r ", mLvl)
         table.insert(milestoneLines, "  - " .. tag .. LinkifyInlineCoords(m.text or "", band and band.zone or "", spec.name or "要点"))
       end
     end
   end
   for _, cr in ipairs(matchedClassRuns) do
-    if lvl >= (cr.level - 4) and lvl <= (cr.to + 10) then
+    local crTo = cr.to or cr.level or 60
+    if lvl >= (cr.level - 4) and crTo >= lvl - 2 then
       local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 奖励技能: |cff71d5ff[" .. cr.teaches .. "]|r") or ""
       local firstStep = cr.steps and cr.steps[1]
       local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or (band and band.zone or "")
@@ -3882,13 +3885,14 @@ local function RenderTabRoutes()
   end
   if #matchedClassRuns > 0 then
     for _, cr in ipairs(matchedClassRuns) do
-      if not isMatchMode or (cr.level <= lvl + 15 and cr.to >= lvl - 10) then
+      local crTo = cr.to or cr.level or 60
+      if not isMatchMode or (cr.level <= lvl + 15 and crTo >= lvl - 2) then
         local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
         local firstStep = cr.steps and cr.steps[1]
         local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or ""
         local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
         local stepSummary = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-        local activeTag = (lvl >= cr.level and lvl <= cr.to + 4) and "|cff00ff00★[当前可做]|r " or ""
+        local activeTag = (lvl >= cr.level and lvl <= crTo + 2) and "|cff00ff00★[当前可做]|r " or ""
         local crLink = FormatQuestWithSteps(cr, cr.level, stepZone)
         table.insert(charGuideLines, string.format("  - %s|cff00ffcc[Lv.%d %s·%s职业任务]|r %s%s%s", activeTag, cr.level, route.name, cls and cls.name or "", crLink, teachStr, stepSummary))
       end
@@ -3896,9 +3900,10 @@ local function RenderTabRoutes()
   end
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
-      if not isMatchMode or (m.level >= lvl - 6 and m.level <= lvl + 15) then
-        local activeTag = (m.level == lvl) and "|cff00ff00★[本级必做]|r " or ""
-        table.insert(charGuideLines, string.format("  - %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, m.level, spec.name or "专精", LinkifyInlineCoords(m.text or "", "", spec.name or "要点")))
+      local mLvl = m.level or 1
+      if not isMatchMode or (mLvl >= lvl - 2 and mLvl <= lvl + 15) then
+        local activeTag = (mLvl == lvl) and "|cff00ff00★[本级必做]|r " or ""
+        table.insert(charGuideLines, string.format("  - %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, mLvl, spec.name or "专精", LinkifyInlineCoords(m.text or "", "", spec.name or "要点")))
       end
     end
   end
@@ -3914,24 +3919,20 @@ local function RenderTabRoutes()
     )
   end
 
-  -- 整理要渲染的阶段列表：在 MATCH 模式下将当前等级所在阶段置顶，并展示前后衔接阶段
+  -- 整理要渲染的阶段列表：在 MATCH 模式下将当前等级所在阶段置顶，并展示后续衔接阶段（过滤已过时的低级阶段）
   local orderedBands = {}
   if isMatchMode then
     local currentBands = {}
     local upcomingBands = {}
-    local recentBands = {}
     for idx, b in ipairs(route.bands) do
       if lvl >= b.from and lvl <= b.to then
         table.insert(currentBands, { idx = idx, band = b })
       elseif b.from > lvl and b.from <= lvl + 16 then
         table.insert(upcomingBands, { idx = idx, band = b })
-      elseif b.to < lvl and b.to >= lvl - 4 then
-        table.insert(recentBands, { idx = idx, band = b })
       end
     end
     for _, item in ipairs(currentBands) do table.insert(orderedBands, item) end
     for _, item in ipairs(upcomingBands) do table.insert(orderedBands, item) end
-    for _, item in ipairs(recentBands) do table.insert(orderedBands, item) end
     if #orderedBands == 0 then
       for idx, b in ipairs(route.bands) do
         table.insert(orderedBands, { idx = idx, band = b })
@@ -3995,7 +3996,8 @@ local function RenderTabRoutes()
 
       -- 穿插属于本阶段等级区间的种族+职业专属任务链
       for _, cr in ipairs(matchedClassRuns) do
-        if cr.level >= b.from and cr.level <= b.to then
+        local crTo = cr.to or cr.level or 60
+        if cr.level >= b.from and cr.level <= b.to and (not isMatchMode or crTo >= lvl - 2) then
           local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
           local firstStep = cr.steps and cr.steps[1]
           local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or b.zone
@@ -4009,8 +4011,9 @@ local function RenderTabRoutes()
       -- 穿插属于本阶段等级区间的专精关键里程碑
       if spec and spec.musts then
         for _, m in ipairs(spec.musts) do
-          if m.level >= b.from and m.level <= b.to then
-            table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", m.level, spec.name or "", LinkifyInlineCoords(m.text or "", b.zone, spec.name or "要点")))
+          local mLvl = m.level or 1
+          if mLvl >= b.from and mLvl <= b.to and (not isMatchMode or mLvl >= lvl - 2) then
+            table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", mLvl, spec.name or "", LinkifyInlineCoords(m.text or "", b.zone, spec.name or "要点")))
           end
         end
       end
@@ -4107,6 +4110,7 @@ end
 local function RenderTabClassAndTalents()
   local cardIdx = 1
   local y = 6
+  local lvl = state.level
   local route = GetCurrentRoute()
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
@@ -4115,11 +4119,37 @@ local function RenderTabClassAndTalents()
     return
   end
 
+  local isMatchMode = (state.talentFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
+  local toggleBtnLabel = state.talentFilter == "MATCH" and "查看 1-60 全程" or "仅看当前匹配"
+  local modeDesc = isMatchMode
+    and string.format("已自动过滤 |cffffd100Lv.%d|r 以下已过时的循环阶段、已点天赋及低级职业任务（点击右上角按钮可展开 1–60 全部）", lvl)
+    or "当前显示 1–60 级完整循环阶段、逐级天赋加点表与全部职业任务链（点击右上角按钮可聚焦当前等级）"
+
+  local headerCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    headerCard, y,
+    string.format("|cff00ffcc[职业] %s · %s 战斗循环、天赋与职业任务 (当前 Lv.%d)|r", cls.name, spec.name, lvl),
+    modeDesc,
+    { 0.0, 0.85, 0.7, 0.95 },
+    { 0.05, 0.14, 0.16, 0.95 },
+    nil,
+    toggleBtnLabel,
+    function()
+      if state.talentFilter == "MATCH" then
+        state.talentFilter = "ALL"
+      else
+        state.talentFilter = "MATCH"
+      end
+      RefreshUI()
+    end
+  )
+
   -- 1. 专精循环各阶段
   for _, p in ipairs(spec.phases or {}) do
-    local isCurrent = (state.level >= p.from and state.level <= p.to)
+    local isCurrent = (lvl >= p.from and lvl <= p.to)
+    local passLevel = (not isMatchMode) or ((p.to or 60) >= lvl)
     local textBlob = (p.keep or "") .. " " .. (p.cycle or "") .. " " .. (p.note or "")
-    if MatchesSearch(textBlob) then
+    if passLevel and MatchesSearch(textBlob) then
       local lines = {
         "|cff00ff96【常驻保持】|r " .. (p.keep or "无"),
         "|cffffa500【起手技能】|r " .. (p.open or "无"),
@@ -4144,18 +4174,25 @@ local function RenderTabClassAndTalents()
   if spec.steps and #spec.steps > 0 then
     local stepLines = {}
     for _, s in ipairs(spec.steps) do
-      local mark = (s.level == state.level) and "|cff00ff00★ [当前等级]|r " or (s.level < state.level and "|cff888888[已点]|r " or "   ")
-      table.insert(stepLines, string.format("%s|cffffd100Lv.%2d:|r [%s] |cff00ffcc%s|r (%d/%d)", mark, s.level, s.tree, s.name, s.rank, s.max))
+      if not isMatchMode or (s.level or 1) >= lvl then
+        local mark = (s.level == lvl) and "|cff00ff00★ [当前等级]|r " or (s.level < lvl and "|cff888888[已点]|r " or "   ")
+        table.insert(stepLines, string.format("%s|cffffd100Lv.%2d:|r [%s] |cff00ffcc%s|r (%d/%d)", mark, s.level, s.tree, s.name, s.rank, s.max))
+      end
     end
-    local cSteps = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cSteps, y,
-      string.format("|cffffd100★ %s·%s 10–60 级逐级天赋加点顺序 (共 %d 点)|r", cls.name, spec.name, #spec.steps),
-      table.concat(stepLines, "\n"),
-      { 0.9, 0.75, 0.2, 0.9 },
-      { 0.11, 0.10, 0.06, 0.92 },
-      "Lv.10-60 完整路径"
-    )
+    if #stepLines > 0 then
+      local cSteps = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+      local titleStr = isMatchMode
+        and string.format("|cffffd100★ %s·%s Lv.%d–60 后续天赋加点顺序 (剩余 %d 点)|r", cls.name, spec.name, math.max(10, lvl), #stepLines)
+        or string.format("|cffffd100★ %s·%s 10–60 级逐级天赋加点顺序 (共 %d 点)|r", cls.name, spec.name, #spec.steps)
+      y = LayoutCard(
+        cSteps, y,
+        titleStr,
+        table.concat(stepLines, "\n"),
+        { 0.9, 0.75, 0.2, 0.9 },
+        { 0.11, 0.10, 0.06, 0.92 },
+        isMatchMode and string.format("Lv.%d-60", math.max(10, lvl)) or "Lv.10-60 完整路径"
+      )
+    end
   end
 
   -- 3. 职业专属任务链（优先展示当前种族专属职业任务链）
@@ -4164,27 +4201,32 @@ local function RenderTabClassAndTalents()
   if #runsToRender > 0 then
     local crLines = {}
     for _, cr in ipairs(runsToRender) do
-      local fTag = cr.faction == "horde" and "|cffff5555[部落]|r" or (cr.faction == "alliance" and "|cff44aaff[联盟]|r" or "|cff00ffcc[通用]|r")
-      local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
-      local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-      local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
-      local crLink = FormatQuestLink(cr, cr.level, firstZone)
-      table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
-      for idx, st in ipairs(cr.steps or {}) do
-        local stZone = (st.zone and st.zone ~= "") and st.zone or st.place
-        local sc = (st.x and st.y) and FormatCoordLink(stZone, st.npc or st.name, st.x, st.y) or ""
-        local stLink = FormatQuestLink(st, cr.level, stZone)
-        table.insert(crLines, string.format("    %d. %s — %s %s |cff99e6ff%s|r%s", idx, stLink, st.zone or "", st.place or "", st.npc or "", sc))
+      local crTo = cr.to or cr.level or 60
+      if not isMatchMode or crTo >= lvl - 2 then
+        local fTag = cr.faction == "horde" and "|cffff5555[部落]|r" or (cr.faction == "alliance" and "|cff44aaff[联盟]|r" or "|cff00ffcc[通用]|r")
+        local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
+        local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+        local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
+        local crLink = FormatQuestLink(cr, cr.level, firstZone)
+        table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
+        for idx, st in ipairs(cr.steps or {}) do
+          local stZone = (st.zone and st.zone ~= "") and st.zone or st.place
+          local sc = (st.x and st.y) and FormatCoordLink(stZone, st.npc or st.name, st.x, st.y) or ""
+          local stLink = FormatQuestLink(st, cr.level, stZone)
+          table.insert(crLines, string.format("    %d. %s — %s %s |cff99e6ff%s|r%s", idx, stLink, st.zone or "", st.place or "", st.npc or "", sc))
+        end
       end
     end
-    local cRuns = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cRuns, y,
-      string.format("|cff00ffcc[任务链] %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
-      table.concat(crLines, "\n"),
-      { 0.0, 0.8, 0.7, 0.9 },
-      { 0.05, 0.12, 0.13, 0.92 }
-    )
+    if #crLines > 0 then
+      local cRuns = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+      y = LayoutCard(
+        cRuns, y,
+        string.format("|cff00ffcc[任务链] %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
+        table.concat(crLines, "\n"),
+        { 0.0, 0.8, 0.7, 0.9 },
+        { 0.05, 0.12, 0.13, 0.92 }
+      )
+    end
   end
 
   HideUnusedCards(cardIdx)
@@ -4267,7 +4309,7 @@ local function RenderTabDungeons()
   for _, d in ipairs(Data.dungeons or {}) do
     local passFilter = true
     if state.dungeonFilter == "MATCH" then
-      passFilter = (state.level >= (d.minLevel - 4) and state.level <= (d.maxLevel + 4))
+      passFilter = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3))
     elseif state.dungeonFilter == "NEW" then
       passFilter = d.isNew and true or false
     end
@@ -4285,14 +4327,22 @@ local function RenderTabDungeons()
         table.insert(lines, "|cffff8000主要首领:|r " .. table.concat(d.bosses, "  ·  "))
       end
       if d.quests and #d.quests > 0 then
-        table.insert(lines, "|cffffd100必接副本任务 (" .. #d.quests .. "个):|r")
+        local filteredQuests = {}
         for _, q in ipairs(d.quests) do
-          local fTag = q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")
-          local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
-          local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
-          local chainTag = (q.stepCount and q.stepCount > 1) and string.format(" [共%d步任务链]", q.stepCount) or ""
-          local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
-          table.insert(lines, string.format("  - %s%s (可接 Lv.%d)%s — %s %s |cff00ffcc%s|r%s", fTag, qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+          if state.dungeonFilter ~= "MATCH" or (q.faction == "both" or q.faction == state.faction) then
+            table.insert(filteredQuests, q)
+          end
+        end
+        if #filteredQuests > 0 then
+          table.insert(lines, "|cffffd100必接副本任务 (" .. #filteredQuests .. "个):|r")
+          for _, q in ipairs(filteredQuests) do
+            local fTag = q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")
+            local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
+            local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
+            local chainTag = (q.stepCount and q.stepCount > 1) and string.format(" [共%d步任务链]", q.stepCount) or ""
+            local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
+            table.insert(lines, string.format("  - %s%s (可接 Lv.%d)%s — %s %s |cff00ffcc%s|r%s", fTag, qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+          end
         end
       end
 
@@ -4554,6 +4604,8 @@ local function CreateMainWindow()
     state.autoFollow = self:GetChecked() and true or false
     if state.autoFollow then
       state.routeFilter = "MATCH"
+      state.talentFilter = "MATCH"
+      state.dungeonFilter = "MATCH"
       SyncPlayerCharacter()
     end
     RefreshUI()
@@ -4568,6 +4620,8 @@ local function CreateMainWindow()
   matchRoleBtn:SetScript("OnClick", function()
     state.autoFollow = true
     state.routeFilter = "MATCH"
+    state.talentFilter = "MATCH"
+    state.dungeonFilter = "MATCH"
     SyncPlayerCharacter()
     RefreshUI()
   end)
@@ -4893,6 +4947,7 @@ SlashCmdList["WOWF"] = function(msg)
     state.routeFilter = "MATCH"
     ToggleMainWindow(2)
   elseif cmd == "class" or cmd == "talent" then
+    state.talentFilter = "MATCH"
     ToggleMainWindow(3)
   elseif cmd == "news" or cmd == "forever" or cmd == "prof" or cmd == "professions" then
     ToggleMainWindow(6)
