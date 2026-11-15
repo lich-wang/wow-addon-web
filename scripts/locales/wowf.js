@@ -3,7 +3,7 @@ import path from 'node:path';
 import JSZip from 'jszip';
 
 const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
-const WOWF_VERSION = 'v1.1.0';
+const WOWF_VERSION = 'v1.2.0';
 
 const CLASS_CONFIGS = [
   { key: 'WARRIOR', slug: 'warrior', name: '战士', color: 'c79c6e', allianceRace: 'human', hordeRace: 'orc' },
@@ -541,6 +541,46 @@ const FOREVER_NEW_DUNGEONS_META = [
   },
 ];
 
+const DUNGEON_ENTRANCE_COORDS = {
+  'hall-of-thanes': { zone: '铁炉堡', x: 28.2, y: 47.7 },
+  'ragefire-chasm': { zone: '奥格瑞玛', x: 51.5, y: 49.7 },
+  'ruins-of-lordaeron': { zone: '提瑞斯法林地', x: 65.0, y: 70.0 },
+  deadmines: { zone: '西部荒野', x: 42.5, y: 71.7 },
+  'wailing-caverns': { zone: '贫瘠之地', x: 46.0, y: 36.4 },
+  'shadowfang-keep': { zone: '银松森林', x: 44.8, y: 67.8 },
+  'blackfathom-deeps': { zone: '灰谷', x: 14.1, y: 13.1 },
+  stockade: { zone: '暴风城', x: 50.4, y: 66.4 },
+  'excavation-site': { zone: '湿地', x: 47.8, y: 56.3 },
+  dalaran: { zone: '奥特兰克山脉', x: 15.0, y: 61.2 },
+  'razorfen-kraul': { zone: '贫瘠之地', x: 41.8, y: 89.4 },
+  gnomeregan: { zone: '丹莫罗', x: 24.4, y: 39.8 },
+  'scarlet-monastery-graveyard': { zone: '提瑞斯法林地', x: 85.2, y: 32.1 },
+  'scarlet-monastery-library': { zone: '提瑞斯法林地', x: 85.2, y: 32.1 },
+  'drowned-city': { zone: '荆棘谷', x: 21.5, y: 27.7 },
+  'scarlet-monastery-armory': { zone: '提瑞斯法林地', x: 85.2, y: 32.1 },
+  'razorfen-downs': { zone: '贫瘠之地', x: 49.1, y: 93.4 },
+  'scarlet-monastery-cathedral': { zone: '提瑞斯法林地', x: 85.2, y: 32.1 },
+  'kroldok-stronghold': { zone: '河林', x: 48.6, y: 26.3 },
+  uldaman: { zone: '荒芜之地', x: 44.6, y: 12.1 },
+  'zul-farrak': { zone: '塔纳利斯', x: 38.7, y: 20.0 },
+  'alcaz-prison': { zone: '尘泥沼泽', x: 76.0, y: 17.5 },
+  maraudon: { zone: '凄凉之地', x: 29.1, y: 62.5 },
+  'sunken-temple': { zone: '悲伤沼泽', x: 69.5, y: 52.5 },
+  'blackmaw-hold': { zone: '艾萨拉', x: 38.5, y: 32.0 },
+  'dire-maul-east': { zone: '菲拉斯', x: 64.8, y: 30.2 },
+  'blackrock-depths': { zone: '灼热峡谷', x: 45.6, y: 89.4 },
+  'lower-blackrock-spire': { zone: '燃烧平原', x: 33.0, y: 25.2 },
+  'shapers-terrace': { zone: '安戈洛环形山', x: 50.5, y: 7.8 },
+  'dire-maul-west': { zone: '菲拉斯', x: 60.3, y: 30.2 },
+  scholomance: { zone: '西瘟疫之地', x: 68.9, y: 72.8 },
+  'dire-maul-north': { zone: '菲拉斯', x: 62.5, y: 24.9 },
+  'stratholme-main-gate': { zone: '东瘟疫之地', x: 27.1, y: 10.7 },
+  'stratholme-service-gate': { zone: '东瘟疫之地', x: 43.5, y: 19.4 },
+  'the-deep-caverns': { zone: '灼热峡谷', x: 45.6, y: 89.4 },
+  'mount-hyjal': { zone: '海加尔山', x: 68.6, y: 44.1 },
+  'upper-blackrock-spire': { zone: '燃烧平原', x: 33.0, y: 25.2 },
+};
+
 const FOREVER_SYSTEMS_DATA = [
   {
     id: 'sleeping-bag',
@@ -551,13 +591,20 @@ const FOREVER_SYSTEMS_DATA = [
     steps: [
       {
         step: 1,
+        questId: 79191,
+        questName: '摸石过河 (一)',
+        questLevel: 14,
         zone: '西部荒野',
         coord: { x: 37.6, y: 50.7 },
+        altCoord: { zone: '贫瘠之地', x: 49.1, y: 56.3 },
         title: '第一步：西部荒野焦痕残骸 (37.6, 50.7) / 或贫瘠之地 (49.1, 56.3)',
         detail: '联盟推荐从西部荒野 (37.6, 50.7) 农场旁烧毁的帐篷残骸接取；部落推荐从贫瘠之地 (49.1, 56.3) 接取，随后将两处残骸全部互动交接。',
       },
       {
         step: 2,
+        questId: 79192,
+        questName: '摸石过河 (二)',
+        questLevel: 14,
         zone: '贫瘠之地',
         coord: { x: 49.1, y: 56.3 },
         title: '第二步：前往南贫瘠之地烧毁的马车 (49.1, 56.3)',
@@ -565,13 +612,20 @@ const FOREVER_SYSTEMS_DATA = [
       },
       {
         step: 3,
+        questId: 79980,
+        questName: '紧急攀爬',
+        questLevel: 14,
         zone: '石爪山脉',
         coord: { x: 39.7, y: 50.0 },
+        altCoord: { zone: '石爪山脉', x: 50.8, y: 52.7 },
         title: '第三步：石爪山脉营地小径与被遗弃的背包 (39.7, 50.0 → 50.8, 52.7)',
         detail: '从贫瘠之地进入石爪山脉，在 (39.7, 50.0) 接取下一步，随后前往 (50.8, 52.7) 乱风崖附近的巨石堆上点击背包。',
       },
       {
         step: 4,
+        questId: 79975,
+        questName: '鹰之拳',
+        questLevel: 14,
         zone: '洛克莫丹',
         coord: { x: 49.5, y: 35.6 },
         title: '第四步：洛克莫丹巨石水坝雕像 (49.5, 35.6)',
@@ -832,7 +886,24 @@ const PROFESSION_GUIDES_META = [
 
 
 /**
- * 将 wowf.io API 的富文本片段数组转换为魔兽世界原生颜色转义字符串
+ * 从任务对象中提取真实魔兽世界任务 ID (questId)
+ * 优先取与当前步骤名对应的 href (/quests/ID)，其次取数值 id 或首个子步骤 id
+ * @param {object | undefined} q
+ * @returns {number | null}
+ */
+function extractQuestId(q) {
+  if (!q || typeof q !== 'object') return null;
+  const hrefMatch = String(q.href || '').match(/\/quests\/(\d+)/);
+  if (hrefMatch) return Number(hrefMatch[1]);
+  if (typeof q.id === 'number' && q.id > 0) return q.id;
+  if (Array.isArray(q.steps) && q.steps[0]) {
+    return extractQuestId(q.steps[0]);
+  }
+  return null;
+}
+
+/**
+ * 将 wowf.io API 的富文本片段数组转换为魔兽世界原生颜色转义与超链接字符串
  * @param {Array<string | object> | string | undefined} segments
  * @returns {string}
  */
@@ -855,7 +926,14 @@ function formatRichSegments(segments) {
       } else if (seg.kind === 'item') {
         const q = seg.quality || 2;
         const qColor = q === 4 ? 'a335ee' : q === 3 ? '0070dd' : q === 2 ? '1eff00' : 'ffffff';
-        out += `|cff${qColor}[${name}]|r`;
+        if (seg.itemId) {
+          out += `|cff${qColor}|Hitem:${seg.itemId}:0:0:0:0:0:0:0|h[${name}]|h|r`;
+        } else {
+          out += `|cff${qColor}[${name}]|r`;
+        }
+      } else if (seg.kind === 'quest') {
+        const qid = extractQuestId(seg);
+        out += qid ? `|cffffff00|Hquest:${qid}:1|h[${name}]|h|r` : `|cffffff00[${name}]|r`;
       } else if (seg.kind === 'dungeon') {
         out += `|cffff8000[${name}]|r`;
       } else if (seg.kind === 'prof') {
@@ -950,20 +1028,41 @@ async function fetchLevelUpPayload(classSlug, raceSlug, faction, deployId, getHe
 /**
  * 精简并转换阶段内的关键任务/职业起始任务
  */
-function transformBandQuests(quests, fallbackLevel) {
+function transformBandQuests(quests, fallbackLevel, defaultZone = '') {
   if (!Array.isArray(quests)) return [];
   return quests.slice(0, 8).map(q => {
     const g = Array.isArray(q.givers) && q.givers[0] ? q.givers[0] : null;
+    const id = extractQuestId(q);
+    const steps =
+      Array.isArray(q.steps) && q.steps.length > 1
+        ? q.steps.map(st => {
+            const sg = Array.isArray(st.givers) && st.givers[0] ? st.givers[0] : null;
+            const stId = extractQuestId(st);
+            return {
+              id: stId,
+              name: st.name || q.name || '',
+              level: st.level || st.minLevel || q.level || fallbackLevel || 1,
+              npc: sg?.name || '',
+              zone: sg?.zone || (stId !== id || sg?.at?.x != null ? defaultZone : '') || '',
+              place: sg?.place || '',
+              x: sg?.at?.x ?? null,
+              y: sg?.at?.y ?? null,
+            };
+          })
+        : undefined;
     return {
+      id,
       name: q.name || '',
       level: q.level || q.minLevel || fallbackLevel || 1,
       minLevel: q.minLevel || fallbackLevel || 1,
       kind: q.kind || 'quest',
       npc: g?.name || '',
+      zone: g?.zone || defaultZone || '',
       place: g?.place || g?.zone || '',
       x: g?.at?.x ?? null,
       y: g?.at?.y ?? null,
       stepCount: Array.isArray(q.steps) ? q.steps.length : 1,
+      steps,
     };
   });
 }
@@ -994,6 +1093,7 @@ function transformBand(b, classKey = 'WARRIOR') {
   const flights = Array.isArray(b.flights)
     ? b.flights.slice(0, 4).map(f => ({
         name: f.name || '',
+        zone: f.zone || b.zone || '',
         place: f.place || f.zone || '',
         x: f.at?.x ?? null,
         y: f.at?.y ?? null,
@@ -1004,6 +1104,7 @@ function transformBand(b, classKey = 'WARRIOR') {
     ? {
         name: b.trainer.name || '',
         title: b.trainer.title || '职业训练师',
+        zone: b.trainer.zone || b.zone || '',
         place: b.trainer.place || b.trainer.zone || '',
         x: b.trainer.at?.x ?? null,
         y: b.trainer.at?.y ?? null,
@@ -1015,7 +1116,7 @@ function transformBand(b, classKey = 'WARRIOR') {
     trainersByClass[classKey] = trainer;
   }
 
-  const allQuests = transformBandQuests(b.quests, b.from || 1);
+  const allQuests = transformBandQuests(b.quests, b.from || 1, b.zone || '');
   const quests = allQuests.filter(q => q.kind !== 'class');
   const questsByClass = {};
   if (allQuests.length > 0 && classKey) {
@@ -1029,6 +1130,7 @@ function transformBand(b, classKey = 'WARRIOR') {
           id: p.id || '',
           name: PROF_NAMES_ZH[p.id] || p.id || '专业',
           trainer: firstTrainer?.name || '',
+          zone: firstTrainer?.zone || b.zone || '',
           place: firstTrainer?.place || firstTrainer?.zone || '',
           x: firstTrainer?.at?.x ?? null,
           y: firstTrainer?.at?.y ?? null,
@@ -1040,11 +1142,13 @@ function transformBand(b, classKey = 'WARRIOR') {
     ? b.dungeonQuests.slice(0, 8).map(dq => {
         const g = Array.isArray(dq.givers) && dq.givers[0] ? dq.givers[0] : null;
         return {
+          id: extractQuestId(dq),
           dungeon: dq.dungeon || '',
           name: dq.name || '',
           level: dq.level || dq.minLevel || b.from,
           minLevel: dq.minLevel || b.from,
           npc: g?.name || '',
+          zone: g?.zone || b.zone || '',
           place: g?.place || g?.zone || '',
           x: g?.at?.x ?? null,
           y: g?.at?.y ?? null,
@@ -1084,11 +1188,13 @@ function transformTimelineSteps(timeline, dungeons) {
       const quests = t.quests.slice(0, 6).map(q => {
         const g = Array.isArray(q.givers) && q.givers[0] ? q.givers[0] : null;
         return {
+          id: extractQuestId(q),
           dungeon: q.dungeon || '',
           name: q.name || '',
           level: q.level || q.minLevel || lastLevel,
           minLevel: q.minLevel || lastLevel,
           npc: g?.name || '',
+          zone: g?.zone || t.city || '',
           place: g?.place || g?.zone || t.city || '',
           x: g?.at?.x ?? null,
           y: g?.at?.y ?? null,
@@ -1099,11 +1205,16 @@ function transformTimelineSteps(timeline, dungeons) {
         level: t.level || lastLevel,
         city: t.city || '',
         quests,
+        flightNpc: t.flight?.name || '',
+        flightZone: t.flight?.zone || t.city || '',
+        flightX: t.flight?.at?.x ?? null,
+        flightY: t.flight?.at?.y ?? null,
       });
     } else if (t.kind === 'dungeon' && typeof t.dungeon === 'number' && Array.isArray(dungeons) && dungeons[t.dungeon]) {
       const dg = dungeons[t.dungeon];
       const minLvl = Array.isArray(dg.level) ? dg.level[0] : 13;
       const maxLvl = Array.isArray(dg.level) ? dg.level[1] : minLvl + 3;
+      const ent = DUNGEON_ENTRANCE_COORDS[dg.id];
       steps.push({
         kind: 'dungeon',
         level: dg.visit || lastLevel || minLvl,
@@ -1112,6 +1223,9 @@ function transformTimelineSteps(timeline, dungeons) {
         minLevel: minLvl,
         maxLevel: maxLvl,
         zone: dg.entrance?.zone || dg.zone || '',
+        entranceZone: ent?.zone || dg.entrance?.zone || dg.zone || '',
+        entranceX: ent?.x ?? null,
+        entranceY: ent?.y ?? null,
       });
     } else if (
       t.kind === 'travel' &&
@@ -1126,7 +1240,8 @@ function transformTimelineSteps(timeline, dungeons) {
         to: t.to || '',
         place: t.place || '',
         flightNpc: fl?.name || '',
-        flightZone: fl?.place || fl?.zone || '',
+        flightZone: fl?.zone || fl?.place || t.to || '',
+        flightPlace: fl?.place || '',
         flightX: fl?.at?.x ?? null,
         flightY: fl?.at?.y ?? null,
       });
@@ -1229,6 +1344,7 @@ function transformClassRuns(classRuns, factionLabel, raceId = '', raceName = '')
       ? cr.steps.map(st => {
           const g = Array.isArray(st.givers) && st.givers[0] ? st.givers[0] : null;
           return {
+            id: extractQuestId(st),
             name: st.name || '',
             level: st.level || st.minLevel || cr.level || 1,
             npc: g?.name || '',
@@ -1240,6 +1356,7 @@ function transformClassRuns(classRuns, factionLabel, raceId = '', raceName = '')
         })
       : [];
     return {
+      id: extractQuestId(cr),
       faction: factionLabel,
       raceId: raceId || undefined,
       raceName: raceName || undefined,
@@ -1262,23 +1379,41 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
   const maxLevel = Array.isArray(d.level) ? d.level[1] : minLevel + 3;
   const zone = d.entrance?.zone || d.zone || '';
   const isNew = FOREVER_NEW_DUNGEON_IDS.has(d.id);
+  const ent = DUNGEON_ENTRANCE_COORDS[d.id];
 
   const incomingQuests = Array.isArray(d.quests)
     ? d.quests.map(q => {
         const g = Array.isArray(q.givers) && q.givers[0] ? q.givers[0] : null;
         const lastStep = Array.isArray(q.steps) && q.steps.length > 0 ? q.steps[q.steps.length - 1] : null;
         return {
+          id: extractQuestId(q),
           name: q.name || '',
           level: q.level || q.minLevel || minLevel,
           minLevel: q.minLevel || minLevel,
           inside: Boolean(q.inside),
           faction: g?.side || q.side || faction || 'both',
           npc: g?.name || '',
-          zone: g?.zone || q.zone || zone,
+          zone: g?.zone || q.zone || ent?.zone || zone,
           place: g?.place || '',
           x: g?.at?.x ?? null,
           y: g?.at?.y ?? null,
           stepCount: Array.isArray(q.steps) ? q.steps.length : 1,
+          steps:
+            Array.isArray(q.steps) && q.steps.length > 1
+              ? q.steps.map(st => {
+                  const sg = Array.isArray(st?.givers) && st.givers[0] ? st.givers[0] : null;
+                  return {
+                    id: typeof st === 'number' ? st : extractQuestId(st),
+                    name: st?.name || q.name || '',
+                    level: st?.level || st?.minLevel || q.level || q.minLevel || minLevel,
+                    npc: sg?.name || g?.name || '',
+                    zone: sg?.zone || g?.zone || q.zone || ent?.zone || zone,
+                    place: sg?.place || g?.place || '',
+                    x: sg?.at?.x ?? null,
+                    y: sg?.at?.y ?? null,
+                  };
+                })
+              : undefined,
           finalObjective: lastStep?.objective || '',
         };
       })
@@ -1293,6 +1428,9 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
       maxLevel,
       visit: d.visit || Math.round((minLevel + maxLevel) / 2),
       zone: newMeta?.zone || zone,
+      entranceZone: ent?.zone || zone,
+      entranceX: ent?.x ?? null,
+      entranceY: ent?.y ?? null,
       isNew,
       bosses: newMeta?.bosses || [],
       summary: newMeta?.summary || `${zone} (${minLevel}-${maxLevel}级) 经典地下城。`,
@@ -1302,6 +1440,11 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
     existing.minLevel = minLevel;
     existing.maxLevel = maxLevel;
     if (d.visit) existing.visit = d.visit;
+    if (ent) {
+      existing.entranceZone = ent.zone;
+      existing.entranceX = ent.x;
+      existing.entranceY = ent.y;
+    }
     const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
     for (const q of incomingQuests) {
       const key = `${q.name}:${q.npc}`;
@@ -1314,7 +1457,12 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
           (prevQuest?.faction && q.faction && prevQuest.faction !== q.faction)
             ? 'both'
             : q.faction || prevQuest?.faction || 'both';
-        existing.quests[idx] = { ...q, faction: mergedFaction };
+        existing.quests[idx] = {
+          ...q,
+          id: q.id || prevQuest?.id || null,
+          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : prevQuest?.steps,
+          faction: mergedFaction,
+        };
       } else {
         questIndexByKey.set(key, existing.quests.length);
         existing.quests.push(q);
@@ -1505,6 +1653,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
 
   // 先预填 11 个无限服新增地下城与团本元数据，确保任何情况下都完整收录
   for (const meta of FOREVER_NEW_DUNGEONS_META) {
+    const ent = DUNGEON_ENTRANCE_COORDS[meta.id] || null;
     dungeonMap.set(meta.id, {
       id: meta.id,
       name: meta.name,
@@ -1512,6 +1661,9 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
       maxLevel: meta.level[1],
       visit: meta.visit,
       zone: meta.zone,
+      entranceZone: ent ? ent.zone : meta.zone,
+      entranceX: ent ? ent.x : null,
+      entranceY: ent ? ent.y : null,
       isNew: true,
       bosses: meta.bosses,
       summary: meta.summary,
@@ -1694,12 +1846,13 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
               targetBand.trainersByClass[classKey] = {
                 name: cb.trainer.name || '',
                 title: cb.trainer.title || '职业训练师',
-                place: cb.trainer.place || cb.trainer.zone || '',
+                place: cb.trainer.place || cb.trainer.zone || targetBand.zone || '',
+                zone: cb.trainer.zone || targetBand.zone || '',
                 x: cb.trainer.at?.x ?? null,
                 y: cb.trainer.at?.y ?? null,
               };
             }
-            const cQuests = transformBandQuests(cb?.quests, targetBand.from);
+            const cQuests = transformBandQuests(cb?.quests, targetBand.from, targetBand.zone);
             if (cQuests.length > 0) {
               targetBand.questsByClass[classKey] = cQuests;
             }
@@ -2302,22 +2455,564 @@ local function SyncPlayerCharacter(overrideLevel)
 end
 
 -- ============================================================================
--- 2. 地图导航与一键创建宏工具函数
+-- 2. 地图导航、原生任务链接、聊天框发送与一键创建宏工具函数
 -- ============================================================================
 
-local function SetWaypointOrPrint(zone, name, x, y)
-  if not x or not y then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 目标位置: |cffffd100" .. (zone or "") .. " - " .. (name or "") .. "|r")
+local ZONE_TO_UIMAP_ID = {
+  -- 东部王国与六大主城
+  ["暴风城"] = 1453,
+  ["铁炉堡"] = 1455,
+  ["幽暗城"] = 1458,
+  ["艾尔文森林"] = 1429,
+  ["北郡山谷"] = 1429,
+  ["北郡修道院"] = 1429,
+  ["闪金镇"] = 1429,
+  ["东谷伐木场"] = 1429,
+  ["丹莫罗"] = 1426,
+  ["寒脊山谷"] = 1426,
+  ["卡拉诺斯"] = 1426,
+  ["古博拉采掘场"] = 1426,
+  ["提瑞斯法林地"] = 1420,
+  ["丧钟镇"] = 1420,
+  ["布瑞尔"] = 1420,
+  ["西部荒野"] = 1436,
+  ["哨兵岭"] = 1436,
+  ["月溪镇"] = 1436,
+  ["洛克莫丹"] = 1432,
+  ["塞尔萨玛"] = 1432,
+  ["银松森林"] = 1421,
+  ["瑟伯切尔"] = 1421,
+  ["赤脊山"] = 1433,
+  ["湖畔镇"] = 1433,
+  ["暮色森林"] = 1431,
+  ["夜色镇"] = 1431,
+  ["湿地"] = 1437,
+  ["米奈希尔港"] = 1437,
+  ["希尔斯布莱德丘陵"] = 1424,
+  ["南海镇"] = 1424,
+  ["塔伦米尔"] = 1424,
+  ["奥特兰克山脉"] = 1416,
+  ["阿拉希高地"] = 1417,
+  ["避难谷地"] = 1417,
+  ["落锤镇"] = 1417,
+  ["荆棘谷"] = 1434,
+  ["藏宝海湾"] = 1434,
+  ["格罗姆高营地"] = 1434,
+  ["反抗军营地"] = 1434,
+  ["荒芜之地"] = 1418,
+  ["卡加斯"] = 1418,
+  ["悲伤沼泽"] = 1435,
+  ["斯通纳德"] = 1435,
+  ["辛特兰"] = 1425,
+  ["鹰巢山"] = 1425,
+  ["恶齿村"] = 1425,
+  ["灼热峡谷"] = 1427,
+  ["瑟银哨塔"] = 1427,
+  ["诅咒之地"] = 1419,
+  ["守望堡"] = 1419,
+  ["燃烧平原"] = 1428,
+  ["摩根的岗哨"] = 1428,
+  ["烈焰峰"] = 1428,
+  ["黑石山"] = 1428,
+  ["西瘟疫之地"] = 1422,
+  ["冰风岗"] = 1422,
+  ["亡灵壁垒"] = 1422,
+  ["东瘟疫之地"] = 1423,
+  ["圣光之愿礼拜堂"] = 1423,
+  ["逆风小径"] = 1430,
+  -- 卡利姆多与主城
+  ["奥格瑞玛"] = 1454,
+  ["雷霆崖"] = 1456,
+  ["达纳苏斯"] = 1457,
+  ["杜隆塔尔"] = 1411,
+  ["试炼谷"] = 1411,
+  ["森金村"] = 1411,
+  ["剃刀岭"] = 1411,
+  ["莫高雷"] = 1412,
+  ["红云台地"] = 1412,
+  ["血蹄村"] = 1412,
+  ["泰达希尔"] = 1438,
+  ["幽影谷"] = 1438,
+  ["多兰纳尔"] = 1438,
+  ["黑海岸"] = 1439,
+  ["奥伯丁"] = 1439,
+  ["贫瘠之地"] = 1413,
+  ["十字路口"] = 1413,
+  ["棘齿城"] = 1413,
+  ["陶拉祖营地"] = 1413,
+  ["石爪山脉"] = 1442,
+  ["烈日石居"] = 1442,
+  ["石爪峰"] = 1442,
+  ["灰谷"] = 1440,
+  ["阿斯特兰纳"] = 1440,
+  ["碎木岗哨"] = 1440,
+  ["佐拉姆加前哨站"] = 1440,
+  ["千针石林"] = 1441,
+  ["乱风岗"] = 1441,
+  ["闪光平原"] = 1441,
+  ["凄凉之地"] = 1443,
+  ["尼耶尔前哨站"] = 1443,
+  ["葬影村"] = 1443,
+  ["尘泥沼泽"] = 1445,
+  ["塞拉摩"] = 1445,
+  ["塞拉摩岛"] = 1445,
+  ["蕨墙村"] = 1445,
+  ["奥卡兹岛"] = 1445,
+  ["菲拉斯"] = 1444,
+  ["羽月要塞"] = 1444,
+  ["莫沙彻营地"] = 1444,
+  ["厄运之槌"] = 1444,
+  ["塔纳利斯"] = 1446,
+  ["加基森"] = 1446,
+  ["艾萨拉"] = 1447,
+  ["塔伦迪斯营地"] = 1447,
+  ["瓦罗莫克"] = 1447,
+  ["费伍德森林"] = 1448,
+  ["刺枝林地"] = 1448,
+  ["血毒河"] = 1448,
+  ["翡翠圣地"] = 1448,
+  ["安戈洛环形山"] = 1449,
+  ["马绍尔营地"] = 1449,
+  ["月光林地"] = 1450,
+  ["永夜港"] = 1450,
+  ["希利苏斯"] = 1451,
+  ["塞纳里奥要塞"] = 1451,
+  ["冬泉谷"] = 1452,
+  ["永望镇"] = 1452,
+  -- 无限服新增地图 (Interface: 16001)
+  ["泽风岛"] = 2521,
+  ["泽风庇护所"] = 2521,
+  ["天裔前哨"] = 2521,
+  ["天裔登陆点"] = 2521,
+  ["塑造者之台"] = 2521,
+  ["河林"] = 2548,
+  ["河林地"] = 2548,
+  ["海加尔山"] = 2482,
+  ["海加尔峰"] = 2482,
+  ["辛德拉"] = 2524,
+}
+
+local ORDERED_ZONE_KEYWORDS = {
+  "希尔斯布莱德丘陵", "奥特兰克山脉", "提瑞斯法林地", "安戈洛环形山", "西瘟疫之地", "东瘟疫之地",
+  "艾尔文森林", "西部荒野", "洛克莫丹", "银松森林", "暮色森林", "阿拉希高地", "荒芜之地", "悲伤沼泽",
+  "灼热峡谷", "诅咒之地", "燃烧平原", "逆风小径", "杜隆塔尔", "泰达希尔", "贫瘠之地", "石爪山脉",
+  "千针石林", "凄凉之地", "尘泥沼泽", "塔纳利斯", "费伍德森林", "月光林地", "希利苏斯", "冬泉谷",
+  "奥格瑞玛", "暴风城", "铁炉堡", "幽暗城", "雷霆崖", "达纳苏斯", "丹莫罗", "赤脊山", "湿地",
+  "荆棘谷", "辛特兰", "黑石山", "莫高雷", "黑海岸", "灰谷", "菲拉斯", "艾萨拉",
+  "泽风岛", "河林地", "河林", "海加尔山", "海加尔峰", "辛德拉",
+  "藏宝海湾", "加基森", "棘齿城", "塞拉摩", "闪金镇", "卡拉诺斯", "布瑞尔", "哨兵岭", "塞尔萨玛",
+  "瑟伯切尔", "湖畔镇", "夜色镇", "米奈希尔港", "南海镇", "塔伦米尔", "避难谷地", "落锤镇",
+  "格罗姆高营地", "卡加斯", "斯通纳德", "鹰巢山", "恶齿村", "瑟银哨塔", "守望堡", "十字路口",
+}
+
+local function ResolveUiMapID(zoneText, placeText)
+  for _, raw in ipairs({ zoneText, placeText }) do
+    if raw and raw ~= "" then
+      if ZONE_TO_UIMAP_ID[raw] then
+        return ZONE_TO_UIMAP_ID[raw]
+      end
+      local stripped = string.gsub(raw, "%s*%b()", "")
+      stripped = string.gsub(stripped, "^%s*(.-)%s*$", "%1")
+      if ZONE_TO_UIMAP_ID[stripped] then
+        return ZONE_TO_UIMAP_ID[stripped]
+      end
+      for _, kw in ipairs(ORDERED_ZONE_KEYWORDS) do
+        if string.find(raw, kw, 1, true) then
+          return ZONE_TO_UIMAP_ID[kw]
+        end
+      end
+      for k, id in pairs(ZONE_TO_UIMAP_ID) do
+        if string.find(raw, k, 1, true) then
+          return id
+        end
+      end
+    end
+  end
+  if C_Map and C_Map.GetBestMapForUnit then
+    local ok, playerMap = pcall(C_Map.GetBestMapForUnit, "player")
+    if ok and playerMap and playerMap > 0 then
+      return playerMap
+    end
+  end
+  return 1429
+end
+
+-- 自定义大地图高亮图钉（即使在主城或不支持原生 C_Map.SetUserWaypoint 的特殊图层，也能在打开的世界地图上精准显示发光坐标标记）
+local customMapPin
+local activePinState = nil
+
+local function UpdateWorldMapHighlightPin()
+  if not activePinState or not WorldMapFrame or not WorldMapFrame:IsShown() then
+    if customMapPin then customMapPin:Hide() end
     return
   end
-  local coordText = string.format("%.1f, %.1f", x, y)
-  DEFAULT_CHAT_FRAME:AddMessage(
-    string.format("|cff00ffcc[WoWF 无限百科]|r 导航坐标: |cffffd100%s - %s (%s)|r", zone or "未知区域", name or "目标点", coordText)
-  )
-  -- 若安装了 TomTom，自动调用 TomTom 箭头
-  if SlashCmdList and SlashCmdList["TOMTOM_WAY"] then
-    SlashCmdList["TOMTOM_WAY"](string.format("%s %.1f %.1f %s", zone or "", x, y, name or "WoWF导航"))
+  local curMapID = WorldMapFrame.GetMapID and WorldMapFrame:GetMapID() or nil
+  if not curMapID or curMapID ~= activePinState.mapID then
+    if customMapPin then customMapPin:Hide() end
+    return
   end
+  local canvas = (WorldMapFrame.GetCanvas and WorldMapFrame:GetCanvas())
+    or (WorldMapFrame.ScrollContainer and WorldMapFrame.ScrollContainer.Child)
+    or nil
+  if not canvas then return end
+
+  if not customMapPin then
+    customMapPin = CreateFrame("Frame", "WoWFWorldMapHighlightPin", canvas)
+    customMapPin:SetSize(28, 28)
+    customMapPin:SetFrameStrata("HIGH")
+    customMapPin:SetFrameLevel(2000)
+
+    local glow = customMapPin:CreateTexture(nil, "BACKGROUND")
+    glow:SetSize(38, 38)
+    glow:SetPoint("CENTER")
+    glow:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    glow:SetBlendMode("ADD")
+
+    local icon = customMapPin:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(22, 22)
+    icon:SetPoint("CENTER")
+    icon:SetTexture("Interface\\Minimap\\ObjectIcons")
+    icon:SetTexCoord(0.125, 0.25, 0.125, 0.25)
+    customMapPin.icon = icon
+
+    local labelBg = customMapPin:CreateTexture(nil, "BORDER")
+    labelBg:SetColorTexture(0.02, 0.05, 0.08, 0.88)
+    customMapPin.labelBg = labelBg
+
+    local label = customMapPin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("BOTTOM", customMapPin, "TOP", 0, 3)
+    customMapPin.label = label
+  else
+    customMapPin:SetParent(canvas)
+  end
+
+  local w = canvas:GetWidth() or 0
+  local h = canvas:GetHeight() or 0
+  if w <= 0 or h <= 0 then return end
+
+  customMapPin:ClearAllPoints()
+  customMapPin:SetPoint("CENTER", canvas, "TOPLEFT", (activePinState.x / 100) * w, -(activePinState.y / 100) * h)
+  customMapPin.label:SetText(string.format("|cff00ffcc★ %s|r |cffffd100(%.1f, %.1f)|r", activePinState.label or "目标点", activePinState.x, activePinState.y))
+  local lw = (customMapPin.label:GetStringWidth() or 80) + 10
+  local lh = (customMapPin.label:GetStringHeight() or 14) + 4
+  customMapPin.labelBg:ClearAllPoints()
+  customMapPin.labelBg:SetPoint("CENTER", customMapPin.label, "CENTER", 0, 0)
+  customMapPin.labelBg:SetSize(lw, lh)
+  customMapPin:Show()
+end
+
+local mapHooked = false
+local function EnsureWorldMapHooks()
+  if mapHooked or not WorldMapFrame then return end
+  mapHooked = true
+  WorldMapFrame:HookScript("OnShow", UpdateWorldMapHighlightPin)
+  if hooksecurefunc and WorldMapFrame.OnMapChanged then
+    pcall(hooksecurefunc, WorldMapFrame, "OnMapChanged", UpdateWorldMapHighlightPin)
+  end
+  if hooksecurefunc and WorldMapFrame.SetMapID then
+    pcall(hooksecurefunc, WorldMapFrame, "SetMapID", UpdateWorldMapHighlightPin)
+  end
+end
+
+local function InsertLinkToChat(chatLink)
+  if not chatLink or chatLink == "" then return false end
+  local activeEditBox = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow() or nil
+  if activeEditBox and activeEditBox:IsVisible() then
+    if ChatEdit_InsertLink and ChatEdit_InsertLink(chatLink) then
+      return true
+    end
+    activeEditBox:Insert(chatLink)
+    activeEditBox:SetFocus()
+    return true
+  end
+
+  if ChatFrame_OpenChat then
+    pcall(ChatFrame_OpenChat, "")
+  elseif DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.editBox and ChatEdit_ActivateChat then
+    pcall(ChatEdit_ActivateChat, DEFAULT_CHAT_FRAME.editBox)
+  end
+
+  local openedBox = (ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow())
+    or (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.editBox)
+    or nil
+  if openedBox then
+    if not openedBox:IsShown() then
+      openedBox:Show()
+    end
+    if ChatEdit_InsertLink and ChatEdit_InsertLink(chatLink) then
+      openedBox:SetFocus()
+      return true
+    end
+    local cur = openedBox:GetText() or ""
+    if cur ~= "" and not string.find(cur, "%s$") then
+      openedBox:Insert(" " .. chatLink)
+    else
+      openedBox:Insert(chatLink)
+    end
+    openedBox:SetFocus()
+    return true
+  end
+  return false
+end
+
+local function OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
+  local numX = tonumber(x)
+  local numY = tonumber(y)
+  local mapID = tonumber(explicitMapID)
+  if not mapID or mapID <= 0 then
+    mapID = ResolveUiMapID(zone, name)
+  end
+
+  local displayZone = (zone and zone ~= "") and zone or "艾泽拉斯"
+  if C_Map and C_Map.GetMapInfo and mapID then
+    local okInfo, mapInfo = pcall(C_Map.GetMapInfo, mapID)
+    if okInfo and mapInfo and mapInfo.name and mapInfo.name ~= "" and (not zone or zone == "") then
+      displayZone = mapInfo.name
+    end
+  end
+  local displayLabel = (name and name ~= "") and name or displayZone
+
+  if not numX or not numY then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 目标位置: |cffffd100" .. displayZone .. " - " .. displayLabel .. "|r")
+    return
+  end
+
+  activePinState = {
+    mapID = mapID,
+    x = numX,
+    y = numY,
+    zone = displayZone,
+    label = displayLabel,
+  }
+
+  -- 1. 设置暴雪原生大地图图钉与超距追踪箭头 (UiMapPoint + C_Map.SetUserWaypoint)
+  if C_Map and C_Map.SetUserWaypoint and UiMapPoint and UiMapPoint.CreateFromCoordinates and mapID then
+    local okPt, uiPt = pcall(UiMapPoint.CreateFromCoordinates, mapID, numX / 100, numY / 100)
+    if okPt and uiPt then
+      pcall(C_Map.SetUserWaypoint, uiPt)
+      if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then
+        pcall(C_SuperTrack.SetSuperTrackedUserWaypoint, true)
+      end
+    end
+  end
+
+  -- 2. 打开世界地图并切换到目标区域图层，渲染高亮标记
+  if C_Map and C_Map.OpenWorldMap and mapID then
+    pcall(C_Map.OpenWorldMap, mapID)
+  elseif WorldMapFrame then
+    if ShowUIPanel then
+      pcall(ShowUIPanel, WorldMapFrame)
+    else
+      WorldMapFrame:Show()
+    end
+    if WorldMapFrame.SetMapID and mapID then
+      pcall(WorldMapFrame.SetMapID, WorldMapFrame, mapID)
+    end
+  end
+  if WorldMapFrame and WorldMapFrame:IsShown() and WorldMapFrame.Raise then
+    pcall(WorldMapFrame.Raise, WorldMapFrame)
+  end
+  EnsureWorldMapHooks()
+  UpdateWorldMapHighlightPin()
+
+  -- 3. 若安装了 TomTom，同步触发 TomTom 导航箭头
+  if SlashCmdList and SlashCmdList["TOMTOM_WAY"] then
+    pcall(SlashCmdList["TOMTOM_WAY"], string.format("%s %.1f %.1f %s", displayZone, numX, numY, displayLabel))
+  end
+
+  -- 4. 在聊天框输出原生可点击的 |Hworldmap:...|h 坐标链接
+  local scaledX = math.floor(numX * 100 + 0.5)
+  local scaledY = math.floor(numY * 100 + 0.5)
+  local worldMapLink = string.format("|cffffff00|Hworldmap:%d:%d:%d|h[%s · %s (%.1f, %.1f)]|h|r", mapID or 1429, scaledX, scaledY, displayZone, displayLabel, numX, numY)
+  DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 已在世界地图标记坐标: " .. worldMapLink .. " |cffaaaaaa(Shift+点击坐标可直接发到聊天框)|r")
+end
+
+local function SetWaypointOrPrint(zone, name, x, y, explicitMapID)
+  OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
+end
+
+local function SanitizeLinkField(str)
+  if not str or str == "" then return "-" end
+  local s = string.gsub(tostring(str), "|c%x%x%x%x%x%x%x%x", "")
+  s = string.gsub(s, "|r", "")
+  s = string.gsub(s, "[|:hH%[%]\r\n]", " ")
+  s = string.gsub(s, "^%s*(.-)%s*$", "%1")
+  if s == "" then return "-" end
+  return s
+end
+
+local function FormatCoordLink(zone, label, x, y, prefixSpace)
+  local numX = tonumber(x)
+  local numY = tonumber(y)
+  if not numX or not numY then return "" end
+  local mapID = ResolveUiMapID(zone, label)
+  local safeZone = SanitizeLinkField((zone and zone ~= "") and zone or label)
+  local safeLabel = SanitizeLinkField((label and label ~= "") and label or zone)
+  local sp = (prefixSpace == false) and "" or " "
+  return string.format(
+    "%s|cff00ffcc|Hwowfmap:%d:%.1f:%.1f:%s:%s|h[%.1f, %.1f]|h|r",
+    sp, mapID, numX, numY, safeZone, safeLabel, numX, numY
+  )
+end
+
+local function DetectZoneInPrefix(prefixText, fallbackZone)
+  if prefixText and prefixText ~= "" then
+    local bestKw = nil
+    local bestPos = -1
+    local bestLen = 0
+    for _, kw in ipairs(ORDERED_ZONE_KEYWORDS) do
+      local pos = 1
+      while true do
+        local s, e = string.find(prefixText, kw, pos, true)
+        if not s then break end
+        if s > bestPos or (s == bestPos and #kw > bestLen) then
+          bestPos = s
+          bestLen = #kw
+          bestKw = kw
+        end
+        pos = e + 1
+      end
+    end
+    if bestKw then
+      return bestKw
+    end
+  end
+  return fallbackZone or ""
+end
+
+local function LinkifyInlineCoords(text, defaultZone, defaultLabel)
+  if not text or text == "" then return "" end
+  local out = tostring(text)
+  -- 将中文全角括号内的坐标统一转为半角括号再替换为可点击地图链接
+  out = string.gsub(out, "（(%d+%.?%d*)%s*[,，]%s*(%d+%.?%d*)）", "(%1, %2)")
+  local result = {}
+  local lastPos = 1
+  while true do
+    local s, e, xStr, yStr = string.find(out, "%((%d+%.?%d*)%s*,%s*(%d+%.?%d*)%)", lastPos)
+    if not s then
+      table.insert(result, string.sub(out, lastPos))
+      break
+    end
+    local before = string.sub(out, lastPos, s - 1)
+    table.insert(result, before)
+    local nx = tonumber(xStr)
+    local ny = tonumber(yStr)
+    if nx and ny and nx >= 1 and nx <= 99.9 and ny >= 1 and ny <= 99.9 then
+      local contextStart = math.max(1, s - 60)
+      local recentText = string.sub(out, contextStart, s - 1)
+      local inferredZone = DetectZoneInPrefix(recentText, defaultZone)
+      table.insert(result, FormatCoordLink(inferredZone, defaultLabel or inferredZone, nx, ny, false))
+    else
+      table.insert(result, string.sub(out, s, e))
+    end
+    lastPos = e + 1
+  end
+  return table.concat(result, "")
+end
+
+local questMetaById = {}
+
+local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
+  if type(q) ~= "table" then return end
+  local qid = tonumber(q.id or q.questId)
+  if not qid or qid <= 0 then return end
+  local prev = questMetaById[qid] or {}
+  local resolvedZone = (q.zone and q.zone ~= "") and q.zone or (q.place and q.place ~= "" and q.place) or fallbackZone or prev.zone or ""
+  local sameZone = (not prev.zone or prev.zone == "" or resolvedZone == prev.zone)
+  local qx = tonumber(q.x)
+  local qy = tonumber(q.y)
+  questMetaById[qid] = {
+    id = qid,
+    name = (q.name and q.name ~= "") and q.name or prev.name or ("任务 #" .. qid),
+    level = tonumber(q.level or q.minLevel or fallbackLevel) or prev.level or state.level or 1,
+    npc = (q.npc and q.npc ~= "") and q.npc or prev.npc or "",
+    zone = resolvedZone,
+    place = (q.place and q.place ~= "") and q.place or prev.place or "",
+    x = qx or (sameZone and prev.x or nil),
+    y = qy or (sameZone and prev.y or nil),
+    dungeon = (q.dungeon and q.dungeon ~= "") and q.dungeon or prev.dungeon or "",
+    teaches = (q.teaches and q.teaches ~= "") and q.teaches or prev.teaches or "",
+    steps = q.steps or prev.steps,
+  }
+  if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
+    pcall(C_QuestLog.RequestLoadQuestByID, qid)
+  end
+end
+
+local function FormatQuestLink(q, fallbackLevel, fallbackZone)
+  if type(q) ~= "table" then
+    return "|cffffd100[" .. tostring(q or "未知任务") .. "]|r"
+  end
+  RegisterQuestMeta(q, fallbackLevel, fallbackZone)
+  local qid = tonumber(q.id or q.questId)
+  local qName = (q.name and q.name ~= "") and q.name or (qid and ("任务 #" .. qid) or "未知任务")
+  local qLevel = tonumber(q.level or q.minLevel or fallbackLevel) or state.level or 1
+  if qid and qid > 0 then
+    return string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", qid, qLevel, qName)
+  end
+  return string.format("|cffffd100[%s]|r", qName)
+end
+
+local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
+  local primary = FormatQuestLink(q, fallbackLevel, fallbackZone)
+  if type(q) ~= "table" or type(q.steps) ~= "table" or #q.steps <= 1 then
+    return primary
+  end
+  local primaryId = tonumber(q.id or q.questId)
+  local parentZone = (q.zone and q.zone ~= "") and q.zone or (fallbackZone or "")
+  local chainLinks = {}
+  for _, st in ipairs(q.steps) do
+    local sid = tonumber(st.id)
+    if sid and sid > 0 then
+      local isPrimary = (sid == primaryId)
+      local stZone = (st.zone and st.zone ~= "") and st.zone or parentZone
+      local stepObj = {
+        id = sid,
+        name = st.name or q.name,
+        level = st.level or q.level or q.minLevel or fallbackLevel,
+        npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
+        zone = stZone,
+        place = (st.place and st.place ~= "") and st.place or (isPrimary and q.place or ""),
+        x = st.x or (isPrimary and q.x or nil),
+        y = st.y or (isPrimary and q.y or nil),
+      }
+      if isPrimary then
+        local hasStepCoords = (st.x ~= nil and st.y ~= nil)
+        local hasStepZone = (st.zone ~= nil and st.zone ~= "")
+        local hasStepInfo = (st.npc and st.npc ~= "") or (st.place and st.place ~= "") or hasStepZone
+        if hasStepCoords or hasStepInfo then
+          local effectiveParentZone = (q.zone and q.zone ~= "") and q.zone or parentZone
+          local primaryZone = hasStepZone and st.zone or effectiveParentZone
+          local zoneChanged = hasStepZone and (effectiveParentZone ~= "") and (st.zone ~= effectiveParentZone)
+          RegisterQuestMeta({
+            id = sid,
+            name = st.name or q.name,
+            level = st.level or q.level or q.minLevel or fallbackLevel,
+            npc = (st.npc and st.npc ~= "") and st.npc or q.npc,
+            zone = primaryZone,
+            place = (st.place and st.place ~= "") and st.place or q.place,
+            x = hasStepCoords and st.x or (not zoneChanged and q.x or nil),
+            y = hasStepCoords and st.y or (not zoneChanged and q.y or nil),
+          }, fallbackLevel, primaryZone)
+        end
+      else
+        table.insert(chainLinks, FormatQuestLink(stepObj, fallbackLevel, stZone))
+      end
+    end
+  end
+  if #chainLinks > 0 then
+    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r"
+  end
+  return primary
+end
+
+local function GetDungeonByIdOrName(id, name)
+  for _, d in ipairs(Data.dungeons or {}) do
+    if (id and d.id == id) or (name and d.name == name) then
+      return d
+    end
+  end
+  return nil
 end
 
 local copyDialog
@@ -2615,6 +3310,123 @@ local tabButtons = {}
 local cardPool = {}
 local RefreshUI
 
+local function OnCardHyperlinkEnter(self, link)
+  if not link or link == "" then return end
+  local linkType, payload = string.match(link, "^([^:]+):(.*)$")
+  if not linkType then return end
+
+  GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+  if linkType == "wowfmap" then
+    local mapID, xStr, yStr, zone, label = string.match(payload or "", "^(%d+):([^:]+):([^:]+):([^:]*):(.*)$")
+    local nx = tonumber(xStr)
+    local ny = tonumber(yStr)
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(string.format("|cff00ffcc[坐标导航]|r %s", (label and label ~= "" and label ~= "-") and label or (zone or "目标点")))
+    if zone and zone ~= "" and zone ~= "-" then
+      GameTooltip:AddLine(string.format("区域: |cffffd100%s|r (MapID: %s)", zone, mapID or "?"))
+    end
+    if nx and ny then
+      GameTooltip:AddLine(string.format("坐标: |cff00ff00%.1f, %.1f|r", nx, ny))
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("|cff00ff00左键点击:|r 打开世界地图并标记坐标")
+    GameTooltip:AddLine("|cff00ff00Shift+左键:|r 插入地图链接到聊天框")
+    GameTooltip:Show()
+  elseif linkType == "quest" then
+    local qid = tonumber(string.match(payload or "", "^(%d+)"))
+    local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
+    local meta = qid and questMetaById[qid] or nil
+    if not ok then
+      GameTooltip:ClearLines()
+      GameTooltip:AddLine((meta and meta.name) or ("任务 #" .. tostring(qid or "")), 1, 0.82, 0)
+    end
+    if meta then
+      GameTooltip:AddLine(" ")
+      if meta.dungeon and meta.dungeon ~= "" then
+        GameTooltip:AddLine("关联副本: |cffff8000" .. meta.dungeon .. "|r")
+      end
+      if meta.npc and meta.npc ~= "" then
+        GameTooltip:AddLine("接取NPC: |cff00ffcc" .. meta.npc .. "|r")
+      end
+      if meta.zone and meta.zone ~= "" then
+        local loc = (meta.place and meta.place ~= "" and meta.place ~= meta.zone) and (meta.zone .. " · " .. meta.place) or meta.zone
+        GameTooltip:AddLine("接取地点: |cffffffff" .. loc .. "|r")
+      end
+      if meta.x and meta.y then
+        GameTooltip:AddLine(string.format("坐标: |cff00ff00%.1f, %.1f|r", meta.x, meta.y))
+      end
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("|cff00ff00左键 / Shift+左键:|r 发送任务链接到聊天框")
+    if meta and meta.x and meta.y then
+      GameTooltip:AddLine("|cff00ff00右键点击:|r 打开世界地图标记接取坐标")
+    end
+    GameTooltip:Show()
+  else
+    pcall(GameTooltip.SetHyperlink, GameTooltip, link)
+    GameTooltip:Show()
+  end
+end
+
+local function OnCardHyperlinkLeave()
+  GameTooltip:Hide()
+end
+
+local function OnCardHyperlinkClick(self, link, text, button)
+  if not link or link == "" then return end
+  local linkType, payload = string.match(link, "^([^:]+):(.*)$")
+  if not linkType then return end
+
+  if linkType == "wowfmap" then
+    local mapID, xStr, yStr, zone, label = string.match(payload or "", "^(%d+):([^:]+):([^:]+):([^:]*):(.*)$")
+    local nx = tonumber(xStr)
+    local ny = tonumber(yStr)
+    local mid = tonumber(mapID)
+    local zText = (zone and zone ~= "-") and zone or ""
+    local lText = (label and label ~= "-") and label or zText
+    if IsShiftKeyDown and IsShiftKeyDown() and nx and ny then
+      local sx = math.floor(nx * 100 + 0.5)
+      local sy = math.floor(ny * 100 + 0.5)
+      local wmLink = string.format("|cffffff00|Hworldmap:%d:%d:%d|h[%s · %s (%.1f, %.1f)]|h|r", mid or 1429, sx, sy, zText ~= "" and zText or "地图", lText ~= "" and lText or "坐标", nx, ny)
+      InsertLinkToChat(wmLink)
+    else
+      OpenMapAndSetWaypoint(zText, lText, nx, ny, mid)
+    end
+  elseif linkType == "quest" then
+    local qid = tonumber(string.match(payload or "", "^(%d+)"))
+    local meta = qid and questMetaById[qid] or nil
+    if button == "RightButton" and meta and meta.x and meta.y then
+      OpenMapAndSetWaypoint(meta.zone ~= "" and meta.zone or meta.place, meta.npc ~= "" and meta.npc or meta.name, meta.x, meta.y)
+      return
+    end
+    local chatLink = (GetQuestLink and qid) and GetQuestLink(qid) or nil
+    if not chatLink or chatLink == "" then
+      if text and string.find(text, "|Hquest:", 1, true) then
+        chatLink = text
+      else
+        local qName = (meta and meta.name) or ("任务 #" .. tostring(qid or ""))
+        chatLink = string.format("|cffffff00|H%s|h[%s]|h|r", link, qName)
+      end
+    end
+    InsertLinkToChat(chatLink)
+  else
+    if (IsModifiedClick and IsModifiedClick("CHATLINK")) or (IsShiftKeyDown and IsShiftKeyDown()) then
+      InsertLinkToChat((text and text ~= "") and text or link)
+    elseif SetItemRef then
+      pcall(SetItemRef, link, text, button, self)
+    end
+  end
+end
+
+local function EnableFontStringHyperlinks(fs)
+  if not fs then return end
+  if fs.SetHyperlinksEnabled then
+    pcall(fs.SetHyperlinksEnabled, fs, true)
+  elseif fs.EnableHyperlinks then
+    pcall(fs.EnableHyperlinks, fs)
+  end
+end
+
 local function AcquireCard(index)
   if not cardPool[index] then
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
@@ -2628,11 +3440,33 @@ local function AcquireCard(index)
       })
     end
 
+    card:EnableMouse(true)
+    if card.SetHyperlinksEnabled then
+      pcall(card.SetHyperlinksEnabled, card, true)
+    end
+    card:SetScript("OnHyperlinkEnter", OnCardHyperlinkEnter)
+    card:SetScript("OnHyperlinkLeave", OnCardHyperlinkLeave)
+    card:SetScript("OnHyperlinkClick", OnCardHyperlinkClick)
+    card:SetScript("OnMouseWheel", function(_, delta)
+      if scrollFrame and scrollFrame.GetScript then
+        local fn = scrollFrame:GetScript("OnMouseWheel")
+        if fn then
+          fn(scrollFrame, delta)
+        else
+          local cur = scrollFrame:GetVerticalScroll() or 0
+          local maxS = scrollFrame:GetVerticalScrollRange() or 0
+          local nextS = math.max(0, math.min(maxS, cur - delta * 36))
+          scrollFrame:SetVerticalScroll(nextS)
+        end
+      end
+    end)
+
     card.title = card:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     card.title:SetPoint("TOPLEFT", 12, -10)
     card.title:SetPoint("TOPRIGHT", -140, -10)
     card.title:SetJustifyH("LEFT")
     card.title:SetWordWrap(true)
+    EnableFontStringHyperlinks(card.title)
 
     card.badge = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     card.badge:SetPoint("TOPRIGHT", -12, -12)
@@ -2644,6 +3478,7 @@ local function AcquireCard(index)
     card.body:SetJustifyH("LEFT")
     card.body:SetSpacing(3)
     card.body:SetWordWrap(true)
+    EnableFontStringHyperlinks(card.body)
 
     card.actionBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
     card.actionBtn:SetSize(128, 22)
@@ -2666,8 +3501,8 @@ local function HideUnusedCards(fromIndex)
 end
 
 local function LayoutCard(card, yOffset, titleText, bodyText, borderColor, bgColor, badgeText, actionLabel, actionCallback)
-  local width = (contentChild:GetWidth() or 700) - 16
-  if width < 500 then width = 690 end
+  local width = (contentChild:GetWidth() or 720) - 16
+  if width < 500 then width = 710 end
   card:SetWidth(width)
   card:ClearAllPoints()
   card:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
@@ -2679,18 +3514,28 @@ local function LayoutCard(card, yOffset, titleText, bodyText, borderColor, bgCol
     card:SetBackdropBorderColor(br[1], br[2], br[3], br[4])
   end
 
-  card.title:SetWidth(width - (actionLabel and 150 or 120))
-  card.title:SetText(titleText or "")
-
+  local titleRightPad = 120
   if actionLabel and actionCallback then
     card.actionBtn:SetText(actionLabel)
+    local btnW = math.max(120, math.ceil((card.actionBtn:GetTextWidth() or 100) + 28))
+    card.actionBtn:SetSize(btnW, 22)
     card.actionBtn:SetScript("OnClick", actionCallback)
     card.actionBtn:Show()
     card.badge:SetText("")
+    titleRightPad = btnW + 20
   else
     card.actionBtn:Hide()
     card.badge:SetText(badgeText or "")
+    if badgeText and badgeText ~= "" then
+      titleRightPad = math.max(120, math.ceil((card.badge:GetStringWidth() or 80) + 24))
+    end
   end
+
+  card.title:ClearAllPoints()
+  card.title:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -10)
+  card.title:SetPoint("TOPRIGHT", card, "TOPRIGHT", -titleRightPad, -10)
+  card.title:SetWidth(width - titleRightPad - 12)
+  card.title:SetText(titleText or "")
 
   card.body:SetWidth(width - 24)
   card.body:SetText(bodyText or "")
@@ -2739,6 +3584,7 @@ local function RenderTabSmartMatch()
   if recProfs ~= "" then
     table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs .. "   |cffaaaaaa(上方控制栏可自由切换等级、职业、专精与种族路线)|r")
   end
+  table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿坐标|r 直接打开世界地图标记点 (Shift+点击发到聊天)；|cffffff00点击黄色任务链接|r 直接插入聊天框发送 (右键标记接取点)。")
   if lvl >= 14 then
     table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r，并在野外利用制皮【营地帐篷】快速攒双倍经验！")
   end
@@ -2746,7 +3592,7 @@ local function RenderTabSmartMatch()
   local c1 = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
     c1, y,
-    string.format("|cff00ffcc🎯 Lv.%d %s·%s·%s 智能匹配总览|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
+    string.format("|cff00ffcc>> Lv.%d %s·%s·%s 智能匹配总览|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
     table.concat(overviewLines, "\n"),
     { 0.0, 0.85, 0.7, 0.95 },
     { 0.05, 0.14, 0.16, 0.95 },
@@ -2757,31 +3603,33 @@ local function RenderTabSmartMatch()
   if band then
     local bandLines = {}
     local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
-    local coordStr = (band.hub and band.hub.x and band.hub.y) and string.format(" (%.1f, %.1f)", band.hub.x, band.hub.y) or ""
+    local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
     table.insert(bandLines, string.format("|cffffd100主推练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
 
     if band.hubs and #band.hubs > 1 then
       local subHubs = {}
       for _, h in ipairs(band.hubs) do
-        local hc = (h.x and h.y) and string.format("(%.1f,%.1f)", h.x, h.y) or ""
+        local hc = (h.x and h.y) and FormatCoordLink(band.zone, h.name, h.x, h.y) or ""
         local activeMark = (lvl >= (h.from or 1) and lvl <= (h.to or 60)) and "|cff00ff00★|r" or ""
         table.insert(subHubs, string.format("%s%s[Lv.%d-%d]%s", activeMark, h.name or "", h.from or band.from, h.to or band.to, hc))
       end
-      table.insert(bandLines, "|cff99e6ff本区分阶段据点:|r " .. table.concat(subHubs, " → "))
+      table.insert(bandLines, "|cff99e6ff本区分阶段据点:|r " .. table.concat(subHubs, " -> "))
     end
 
     if band.flights and #band.flights > 0 then
       local fList = {}
       for _, fl in ipairs(band.flights) do
-        local fc = (fl.x and fl.y) and string.format(" (%.1f, %.1f)", fl.x, fl.y) or ""
+        local flZone = (fl.zone and fl.zone ~= "") and fl.zone or band.zone
+        local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
         table.insert(fList, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
       end
-      table.insert(bandLines, "|cff99e6ff✈️ 解锁飞行点:|r " .. table.concat(fList, "  /  "))
+      table.insert(bandLines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(fList, "  /  "))
     end
 
     local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
     if matchedTrainer and matchedTrainer.name ~= "" then
-      local tCoord = (matchedTrainer.x and matchedTrainer.y) and string.format(" (%.1f, %.1f)", matchedTrainer.x, matchedTrainer.y) or ""
+      local tZone = (matchedTrainer.zone and matchedTrainer.zone ~= "") and matchedTrainer.zone or (matchedTrainer.place or band.zone)
+      local tCoord = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
       table.insert(bandLines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or band.zone or "", tCoord))
     end
 
@@ -2789,9 +3637,11 @@ local function RenderTabSmartMatch()
     if matchedQuests and #matchedQuests > 0 then
       local qLines = {}
       for _, q in ipairs(matchedQuests) do
-        local qc = (q.x and q.y) and string.format(" (%.1f,%.1f)", q.x, q.y) or ""
+        local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or band.zone)
+        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
         local qTag = (q.kind == "class") and "|cff00ffcc[★职业专属]|r " or "|cffffd100[关键任务]|r "
-        table.insert(qLines, string.format("  • %s|cffffd100%s|r (Lv.%d) — %s %s%s", qTag, q.name or "", q.level or band.from, q.place or "", q.npc or "", qc))
+        local qLink = FormatQuestWithSteps(q, q.level or band.from, qZone)
+        table.insert(qLines, string.format("  - %s%s (Lv.%d) — %s %s%s", qTag, qLink, q.level or band.from, q.place or "", q.npc or "", qc))
       end
       table.insert(bandLines, "|cff00ffcc本阶段关键/职业任务:|r\n" .. table.concat(qLines, "\n"))
     end
@@ -2799,10 +3649,12 @@ local function RenderTabSmartMatch()
     if band.professions and #band.professions > 0 then
       local pList = {}
       for _, p in ipairs(band.professions) do
-        local pc = (p.x and p.y) and string.format("(%.1f,%.1f)", p.x, p.y) or ""
+        local pZone = (p.zone and p.zone ~= "") and p.zone or band.zone
+        local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
+        local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
         local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
         local recMark = isRec and "|cff00ff00★推荐|r" or ""
-        table.insert(pList, string.format("|cff00ff96[%s%s]|r %s %s", p.name, recMark, p.trainer or "", pc))
+        table.insert(pList, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recMark, p.trainer or "", pc))
       end
       table.insert(bandLines, "|cff00ff96本区专业训练师:|r " .. table.concat(pList, "  /  "))
     end
@@ -2810,8 +3662,10 @@ local function RenderTabSmartMatch()
     if band.dungeonQuests and #band.dungeonQuests > 0 then
       local dqList = {}
       for _, dq in ipairs(band.dungeonQuests) do
-        local dqc = (dq.x and dq.y) and string.format(" (%.1f,%.1f)", dq.x, dq.y) or ""
-        table.insert(dqList, string.format("  • |cffff8000[%s]|r |cffffd100%s|r (Lv.%d) — 接取: %s %s%s", dq.dungeon, dq.name, dq.level or lvl, dq.place or "", dq.npc or "", dqc))
+        local dqZone = (dq.zone and dq.zone ~= "") and dq.zone or (dq.place or band.zone)
+        local dqc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
+        local dqLink = FormatQuestLink(dq, dq.level or lvl, dqZone)
+        table.insert(dqList, string.format("  - |cffff8000[%s]|r %s (Lv.%d) — 接取: %s %s%s", dq.dungeon, dqLink, dq.level or lvl, dq.place or "", dq.npc or "", dqc))
       end
       table.insert(bandLines, "|cffffa500本阶段顺路必接副本任务:|r\n" .. table.concat(dqList, "\n"))
     end
@@ -2819,12 +3673,12 @@ local function RenderTabSmartMatch()
     local cBand = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cBand, y,
-      string.format("|cffffd100🗺️ 当前角色升级导航 (Lv.%d–%d · %s · %s)|r", band.from, band.to, band.zone or "", route and route.name or ""),
+      string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · %s · %s)|r", band.from, band.to, band.zone or "", route and route.name or ""),
       table.concat(bandLines, "\n"),
       { 0.9, 0.75, 0.2, 0.9 },
       { 0.11, 0.10, 0.06, 0.92 },
       string.format("Lv.%d-%d", band.from, band.to),
-      (band.hub and band.hub.x) and "📍 标记营地坐标" or nil,
+      (band.hub and band.hub.x) and "标记营地坐标" or nil,
       (band.hub and band.hub.x) and function()
         SetWaypointOrPrint(band.zone, band.hub.name, band.hub.x, band.hub.y)
       end or nil
@@ -2842,7 +3696,7 @@ local function RenderTabSmartMatch()
       end
     else
       if talentStep then
-        table.insert(tLines, string.format("👉 |cff00ff00Lv.%d 本级必点天赋:|r |cffffd100[%s] %s (第 %d/%d 点)|r", lvl, talentStep.tree, talentStep.name, talentStep.rank, talentStep.max))
+        table.insert(tLines, string.format(">> |cff00ff00Lv.%d 本级必点天赋:|r |cffffd100[%s] %s (第 %d/%d 点)|r", lvl, talentStep.tree, talentStep.name, talentStep.rank, talentStep.max))
       end
       local nextPreview = {}
       for nextLvl = lvl + 1, math.min(60, lvl + 4) do
@@ -2852,14 +3706,14 @@ local function RenderTabSmartMatch()
         end
       end
       if #nextPreview > 0 then
-        table.insert(tLines, "|cff99e6ff后续等级加点预告:|r " .. table.concat(nextPreview, "  →  "))
+        table.insert(tLines, "|cff99e6ff后续等级加点预告:|r " .. table.concat(nextPreview, "  ->  "))
       end
     end
 
     local cTalent = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cTalent, y,
-      string.format("|cffffd100🌟 Lv.%d 天赋加点指引 (%s·%s)|r", lvl, cls and cls.name or "", spec.name),
+      string.format("|cffffd100★ Lv.%d 天赋加点指引 (%s·%s)|r", lvl, cls and cls.name or "", spec.name),
       table.concat(tLines, "\n"),
       { 0.35, 0.65, 0.95, 0.9 },
       { 0.07, 0.11, 0.17, 0.92 },
@@ -2875,17 +3729,17 @@ local function RenderTabSmartMatch()
       "|cff71d5ff【核心优先级】|r " .. (phase.cycle or "普通攻击"),
     }
     if phase.note and phase.note ~= "" then
-      table.insert(rotLines, "\n|cffffd100【野外实战细节】|r\n" .. phase.note)
+      table.insert(rotLines, "\n|cffffd100【野外实战细节】|r\n" .. LinkifyInlineCoords(phase.note, band and band.zone or "", "实战点"))
     end
     local dTip = GetMatchedDungeonTip(spec, lvl)
     if dTip and dTip.text ~= "" then
-      table.insert(rotLines, "\n|cffff8000【当前等级地下城战斗指南 (Lv." .. dTip.from .. "-" .. dTip.to .. ")】|r\n" .. dTip.text)
+      table.insert(rotLines, "\n|cffff8000【当前等级地下城战斗指南 (Lv." .. dTip.from .. "-" .. dTip.to .. ")】|r\n" .. LinkifyInlineCoords(dTip.text, band and band.zone or "", "副本点"))
     end
 
     local cRot = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cRot, y,
-      string.format("|cff71d5ff⚔️ 当前等级输出手法与循环 (Lv.%d–%d)|r", phase.from, phase.to),
+      string.format("|cff71d5ff[战斗] 当前等级输出手法与循环 (Lv.%d-%d)|r", phase.from, phase.to),
       table.concat(rotLines, "\n"),
       { 0.3, 0.75, 0.95, 0.9 },
       { 0.06, 0.10, 0.15, 0.92 },
@@ -2899,24 +3753,26 @@ local function RenderTabSmartMatch()
     for _, m in ipairs(spec.musts) do
       if math.abs((m.level or 1) - lvl) <= 8 or (m.level <= lvl and m.level >= lvl - 10) then
         local tag = (m.level == lvl) and "|cff00ff00[当前等级必做]|r " or string.format("|cffffd100[Lv.%d 专精要点]|r ", m.level)
-        table.insert(milestoneLines, "  • " .. tag .. (m.text or ""))
+        table.insert(milestoneLines, "  - " .. tag .. LinkifyInlineCoords(m.text or "", band and band.zone or "", spec.name or "要点"))
       end
     end
   end
   for _, cr in ipairs(matchedClassRuns) do
     if lvl >= (cr.level - 4) and lvl <= (cr.to + 10) then
-      local teachStr = (cr.teaches and cr.teaches ~= "") and (" → 奖励技能: |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+      local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 奖励技能: |cff71d5ff[" .. cr.teaches .. "]|r") or ""
       local firstStep = cr.steps and cr.steps[1]
-      local sc = (firstStep and firstStep.x and firstStep.y) and string.format(" (%.1f, %.1f)", firstStep.x, firstStep.y) or ""
+      local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or (band and band.zone or "")
+      local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
       local npcInfo = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-      table.insert(milestoneLines, string.format("  • |cff00ffcc[Lv.%d %s·%s专属任务链]|r |cffffd100%s|r%s%s", cr.level, route and route.name or "", cls and cls.name or "", cr.name, teachStr, npcInfo))
+      local crLink = FormatQuestWithSteps(cr, cr.level, stepZone)
+      table.insert(milestoneLines, string.format("  - |cff00ffcc[Lv.%d %s·%s专属任务链]|r %s%s%s", cr.level, route and route.name or "", cls and cls.name or "", crLink, teachStr, npcInfo))
     end
   end
   if #milestoneLines > 0 then
     local cMile = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cMile, y,
-      string.format("|cff00ff96📌 当前阶段 %s·%s 关键里程碑与专属职业任务|r", route and route.name or "", cls and cls.name or ""),
+      string.format("|cff00ff96★ 当前阶段 %s·%s 关键里程碑与专属职业任务|r", route and route.name or "", cls and cls.name or ""),
       table.concat(milestoneLines, "\n"),
       { 0.2, 0.8, 0.5, 0.85 },
       { 0.06, 0.12, 0.09, 0.92 }
@@ -2928,17 +3784,20 @@ local function RenderTabSmartMatch()
     local dLines = {}
     for _, d in ipairs(matchedDungeons) do
       local newTag = d.isNew and " |cff00ffcc[★无限服新增副本]|r" or ""
+      local entCoord = (d.entranceX and d.entranceY) and FormatCoordLink(d.entranceZone or d.zone, d.name .. "入口", d.entranceX, d.entranceY) or ""
       table.insert(dLines, string.format(
-        "🏰 |cffff8000%s|r (Lv.%d–%d · 推荐 %d 级进本 · %s)%s",
-        d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newTag
+        "|cffff8000[%s]|r (Lv.%d-%d · 推荐 %d 级进本 · %s%s)%s",
+        d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", entCoord, newTag
       ))
       local qCount = 0
       for _, q in ipairs(d.quests or {}) do
         if q.faction == "both" or q.faction == state.faction then
           qCount = qCount + 1
           if qCount <= 5 then
-            local qc = (q.x and q.y) and string.format(" (%.1f, %.1f)", q.x, q.y) or (q.inside and " (副本内接取)" or "")
-            table.insert(dLines, string.format("    └ 任务: |cffffd100[%s]|r (可接 Lv.%d) — %s %s%s", q.name, q.minLevel or d.minLevel, q.zone or "", q.npc or "", qc))
+            local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
+            local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内接取)" or "")
+            local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
+            table.insert(dLines, string.format("    └ 任务: %s (可接 Lv.%d) — %s %s%s", qLink, q.minLevel or d.minLevel, q.zone or "", q.npc or "", qc))
           end
         end
       end
@@ -2946,7 +3805,7 @@ local function RenderTabSmartMatch()
     local cDun = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cDun, y,
-      string.format("|cffff8000🏰 适合当前等级 (Lv.%d) 的地下城与任务 (%d个)|r", lvl, #matchedDungeons),
+      string.format("|cffff8000[副本] 适合当前等级 (Lv.%d) 的地下城与任务 (%d个)|r", lvl, #matchedDungeons),
       table.concat(dLines, "\n"),
       { 0.95, 0.55, 0.15, 0.9 },
       { 0.13, 0.08, 0.05, 0.92 }
@@ -2973,10 +3832,10 @@ local function RenderTabRoutes()
   local matchedClassRuns = GetCurrentClassRuns(route, cls, state.faction)
   local phase = GetMatchedPhase(spec, lvl)
   local isMatchMode = (state.routeFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
-  local toggleBtnLabel = state.routeFilter == "MATCH" and "📋 查看 1–60 全程" or "🎯 仅看当前等级匹配"
+  local toggleBtnLabel = state.routeFilter == "MATCH" and "查看 1-60 全程" or "仅看当前匹配"
   local modeDesc = state.routeFilter == "MATCH"
-    and string.format("🎯 已按您的角色自动聚焦 |cffffd100Lv.%d|r 当前阶段及后续衔接路线（点击右上角按钮可展开 1–60 全部 %d 个阶段）", lvl, #route.bands)
-    or string.format("📋 当前显示 1–60 级完整全部 %d 个阶段（点击右上角按钮可聚焦回当前角色等级阶段）", #route.bands)
+    and string.format("已按您的角色自动聚焦 |cffffd100Lv.%d|r 当前阶段及后续衔接路线（点击右上角按钮可展开 1–60 全部 %d 个阶段）", lvl, #route.bands)
+    or string.format("当前显示 1–60 级完整全部 %d 个阶段（点击右上角按钮可聚焦回当前角色等级阶段）", #route.bands)
 
   local headerLines = {
     string.format(
@@ -2997,7 +3856,7 @@ local function RenderTabRoutes()
   local headerCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
     headerCard, y,
-    string.format("|cff00ffcc🗺️ %s · %s (%s) 专属升级路线 (当前 Lv.%d)|r", route.name, cls and cls.name or "", spec and spec.name or "", lvl),
+    string.format("|cff00ffcc[路线] %s · %s (%s) 专属升级路线 (当前 Lv.%d)|r", route.name, cls and cls.name or "", spec and spec.name or "", lvl),
     table.concat(headerLines, "\n"),
     { 0.0, 0.85, 0.7, 0.95 },
     { 0.05, 0.14, 0.16, 0.95 },
@@ -3017,19 +3876,21 @@ local function RenderTabRoutes()
   local charGuideLines = {}
   if phase then
     table.insert(charGuideLines, string.format(
-      "|cff71d5ff⚔️ 当前等级 (%s·Lv.%d-%d) 练级手法:|r 常驻 %s  |  起手 %s  |  循环 %s",
+      "|cff71d5ff[战斗] 当前等级 (%s·Lv.%d-%d) 练级手法:|r 常驻 %s  |  起手 %s  |  循环 %s",
       spec and spec.name or "", phase.from or 1, phase.to or 60, phase.keep or "无", phase.open or "平砍", phase.cycle or "平砍"
     ))
   end
   if #matchedClassRuns > 0 then
     for _, cr in ipairs(matchedClassRuns) do
       if not isMatchMode or (cr.level <= lvl + 15 and cr.to >= lvl - 10) then
-        local teachStr = (cr.teaches and cr.teaches ~= "") and (" → 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+        local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
         local firstStep = cr.steps and cr.steps[1]
-        local sc = (firstStep and firstStep.x and firstStep.y) and string.format(" (%.1f, %.1f)", firstStep.x, firstStep.y) or ""
+        local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or ""
+        local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
         local stepSummary = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
         local activeTag = (lvl >= cr.level and lvl <= cr.to + 4) and "|cff00ff00★[当前可做]|r " or ""
-        table.insert(charGuideLines, string.format("  • %s|cff00ffcc[Lv.%d %s·%s职业任务]|r |cffffd100%s|r%s%s", activeTag, cr.level, route.name, cls and cls.name or "", cr.name, teachStr, stepSummary))
+        local crLink = FormatQuestWithSteps(cr, cr.level, stepZone)
+        table.insert(charGuideLines, string.format("  - %s|cff00ffcc[Lv.%d %s·%s职业任务]|r %s%s%s", activeTag, cr.level, route.name, cls and cls.name or "", crLink, teachStr, stepSummary))
       end
     end
   end
@@ -3037,7 +3898,7 @@ local function RenderTabRoutes()
     for _, m in ipairs(spec.musts) do
       if not isMatchMode or (m.level >= lvl - 6 and m.level <= lvl + 15) then
         local activeTag = (m.level == lvl) and "|cff00ff00★[本级必做]|r " or ""
-        table.insert(charGuideLines, string.format("  • %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, m.level, spec.name or "专精", m.text or ""))
+        table.insert(charGuideLines, string.format("  - %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, m.level, spec.name or "专精", LinkifyInlineCoords(m.text or "", "", spec.name or "要点")))
       end
     end
   end
@@ -3045,7 +3906,7 @@ local function RenderTabRoutes()
     local charCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       charCard, y,
-      string.format("|cff00ff96📌 %s · %s (%s) 升级路线核心职业任务与专精里程碑|r", route.name, cls and cls.name or "", spec and spec.name or ""),
+      string.format("|cff00ff96★ %s · %s (%s) 升级路线核心职业任务与专精里程碑|r", route.name, cls and cls.name or "", spec and spec.name or ""),
       table.concat(charGuideLines, "\n"),
       { 0.2, 0.82, 0.52, 0.9 },
       { 0.06, 0.13, 0.10, 0.93 },
@@ -3087,7 +3948,7 @@ local function RenderTabRoutes()
     local stepIdx = entry.idx
     local isCurrent = (lvl >= b.from and lvl <= b.to)
     local hubName = (b.hub and b.hub.name ~= "") and b.hub.name or b.zone
-    local coordText = (b.hub and b.hub.x and b.hub.y) and string.format(" (%.1f, %.1f)", b.hub.x, b.hub.y) or ""
+    local coordText = (b.hub and b.hub.x and b.hub.y) and FormatCoordLink(b.zone, hubName, b.hub.x, b.hub.y) or ""
     local matchedTrainer = GetBandTrainer(b, state.classKey, state.faction)
     local matchedQuests = GetBandQuests(b, state.classKey)
     local searchBlob = (b.zone or "") .. " " .. (hubName or "") .. " " .. ((matchedTrainer and matchedTrainer.name) or "")
@@ -3100,42 +3961,48 @@ local function RenderTabRoutes()
       if b.hubs and #b.hubs > 1 then
         local subHubs = {}
         for _, h in ipairs(b.hubs) do
-          local hc = (h.x and h.y) and string.format("(%.1f,%.1f)", h.x, h.y) or ""
+          local hc = (h.x and h.y) and FormatCoordLink(b.zone, h.name, h.x, h.y) or ""
           table.insert(subHubs, string.format("%s[Lv.%d-%d]%s", h.name or "", h.from or b.from, h.to or b.to, hc))
         end
-        table.insert(lines, "|cff99e6ff分阶段据点:|r " .. table.concat(subHubs, " → "))
+        table.insert(lines, "|cff99e6ff分阶段据点:|r " .. table.concat(subHubs, " -> "))
       end
 
       if b.flights and #b.flights > 0 then
         local flNames = {}
         for _, fl in ipairs(b.flights) do
-          local fc = (fl.x and fl.y) and string.format(" (%.1f, %.1f)", fl.x, fl.y) or ""
+          local flZone = (fl.zone and fl.zone ~= "") and fl.zone or b.zone
+          local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
           table.insert(flNames, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
         end
-        table.insert(lines, "|cff99e6ff✈️ 解锁飞行点:|r " .. table.concat(flNames, " · "))
+        table.insert(lines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(flNames, " · "))
       end
 
       if matchedTrainer and matchedTrainer.name ~= "" then
-        local tc = (matchedTrainer.x and matchedTrainer.y) and string.format(" (%.1f, %.1f)", matchedTrainer.x, matchedTrainer.y) or ""
+        local tZone = (matchedTrainer.zone and matchedTrainer.zone ~= "") and matchedTrainer.zone or (matchedTrainer.place or b.zone)
+        local tc = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
         table.insert(lines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or b.zone or "", tc))
       end
 
       if matchedQuests and #matchedQuests > 0 then
         for _, q in ipairs(matchedQuests) do
-          local qc = (q.x and q.y) and string.format(" (%.1f, %.1f)", q.x, q.y) or ""
+          local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or b.zone)
+          local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
           local qTag = (q.kind == "class") and string.format("|cff00ffcc[★%s职业任务]|r", cls and cls.name or "") or "|cffffd100[区域关键任务]|r"
-          table.insert(lines, string.format("%s |cffffd100%s|r (Lv.%d) — %s %s%s", qTag, q.name or "", q.level or b.from, q.place or "", q.npc or "", qc))
+          local qLink = FormatQuestWithSteps(q, q.level or b.from, qZone)
+          table.insert(lines, string.format("%s %s (Lv.%d) — %s %s%s", qTag, qLink, q.level or b.from, q.place or "", q.npc or "", qc))
         end
       end
 
       -- 穿插属于本阶段等级区间的种族+职业专属任务链
       for _, cr in ipairs(matchedClassRuns) do
         if cr.level >= b.from and cr.level <= b.to then
-          local teachStr = (cr.teaches and cr.teaches ~= "") and (" → 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+          local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
           local firstStep = cr.steps and cr.steps[1]
-          local sc = (firstStep and firstStep.x and firstStep.y) and string.format(" (%.1f, %.1f)", firstStep.x, firstStep.y) or ""
+          local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or b.zone
+          local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
           local npcInfo = firstStep and string.format(" — %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-          table.insert(lines, string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r |cffffd100%s|r%s%s", cr.level, cls and cls.name or "", cr.name, teachStr, npcInfo))
+          local crLink = FormatQuestWithSteps(cr, cr.level, stepZone)
+          table.insert(lines, string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r %s%s%s", cr.level, cls and cls.name or "", crLink, teachStr, npcInfo))
         end
       end
 
@@ -3143,7 +4010,7 @@ local function RenderTabRoutes()
       if spec and spec.musts then
         for _, m in ipairs(spec.musts) do
           if m.level >= b.from and m.level <= b.to then
-            table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", m.level, spec.name or "", m.text or ""))
+            table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", m.level, spec.name or "", LinkifyInlineCoords(m.text or "", b.zone, spec.name or "要点")))
           end
         end
       end
@@ -3153,7 +4020,10 @@ local function RenderTabRoutes()
         for _, p in ipairs(b.professions) do
           local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
           local recTag = isRec and "|cff00ff00★推荐|r" or ""
-          table.insert(pNames, string.format("|cff00ff96[%s%s]|r %s", p.name, recTag, p.trainer or ""))
+          local pZone = (p.zone and p.zone ~= "") and p.zone or b.zone
+          local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
+          local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
+          table.insert(pNames, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recTag, p.trainer or "", pc))
         end
         table.insert(lines, "|cff00ff96顺路学专业:|r " .. table.concat(pNames, " · "))
       end
@@ -3177,33 +4047,39 @@ local function RenderTabRoutes()
             seenCityVisit[cKey] = true
             local qNames = {}
             for _, cq in ipairs(tl.quests) do
-              local cqc = (cq.x and cq.y) and string.format("(%.1f,%.1f)", cq.x, cq.y) or ""
-              table.insert(qNames, string.format("|cffffd100[%s]|r(%s %s%s)", cq.name or "", cq.dungeon or "", cq.npc or "", cqc))
+              local cqZone = (cq.zone and cq.zone ~= "") and cq.zone or tl.city
+              local cqc = (cq.x and cq.y) and FormatCoordLink(cqZone, (cq.npc and cq.npc ~= "") and cq.npc or cq.name, cq.x, cq.y) or ""
+              local cqLink = FormatQuestLink(cq, tl.level or b.from, cqZone)
+              table.insert(qNames, string.format("%s (%s %s%s)", cqLink, cq.dungeon or "", cq.npc or "", cqc))
             end
-            table.insert(lines, string.format("|cffffa500🏛️ [Lv.%d 主城副本任务备战 · %s]|r %s", tl.level or b.from, tl.city, table.concat(qNames, " / ")))
+            table.insert(lines, string.format("|cffffa500[主城备战] [Lv.%d %s 副本任务]|r %s", tl.level or b.from, tl.city, table.concat(qNames, " / ")))
           end
         elseif tl.kind == "dungeon" and tl.name and not seenDungeonVisit[tl.name] then
           seenDungeonVisit[tl.name] = true
-          table.insert(lines, string.format("|cffff8000🏰 [Lv.%d 推荐进本 · %s]|r 适龄 Lv.%d–%d (%s)", tl.level or b.from, tl.name, tl.minLevel or b.from, tl.maxLevel or b.to, tl.zone or ""))
+          local dObj = GetDungeonByIdOrName(tl.dungeonId, tl.name)
+          local dEnt = (dObj and dObj.entranceX and dObj.entranceY) and FormatCoordLink(dObj.entranceZone or dObj.zone, tl.name .. "入口", dObj.entranceX, dObj.entranceY) or ""
+          table.insert(lines, string.format("|cffff8000[推荐进本] [Lv.%d %s]|r 适龄 Lv.%d-%d (%s%s)", tl.level or b.from, tl.name, tl.minLevel or b.from, tl.maxLevel or b.to, tl.zone or "", dEnt))
         elseif tl.kind == "travel" and (tl.from ~= "" or tl.to ~= "") then
           local tKey = tostring(tl.level) .. ":" .. (tl.from or "") .. "->" .. (tl.to or "") .. ":" .. (tl.via or "")
           if not seenTravelVisit[tKey] then
             seenTravelVisit[tKey] = true
             local viaText = VIA_LABELS[tl.via or "walk"] or (tl.via or "转场")
             local destText = (tl.place and tl.place ~= "" and tl.place ~= tl.to) and (tl.to .. "·" .. tl.place) or (tl.to or "")
-            local flCoord = (tl.flightX and tl.flightY) and string.format(" (%.1f, %.1f)", tl.flightX, tl.flightY) or ""
+            local flCoord = (tl.flightX and tl.flightY) and FormatCoordLink(tl.flightZone or tl.to, tl.flightNpc or "鸟点", tl.flightX, tl.flightY) or ""
             local flText = (tl.flightNpc and tl.flightNpc ~= "")
               and string.format(" — 顺路开鸟点: %s %s%s", tl.flightZone or "", tl.flightNpc, flCoord)
               or ""
-            table.insert(lines, string.format("|cff99e6ff⛵ [Lv.%d 跨区交通 · %s]|r %s → |cff00ffcc%s|r%s", tl.level or b.from, viaText, tl.from or "起点", destText, flText))
+            table.insert(lines, string.format("|cff99e6ff[跨区交通] [Lv.%d %s]|r %s -> |cff00ffcc%s|r%s", tl.level or b.from, viaText, tl.from or "起点", destText, flText))
           end
         end
       end
 
       if b.dungeonQuests and #b.dungeonQuests > 0 then
         for _, dq in ipairs(b.dungeonQuests) do
-          local dc = (dq.x and dq.y) and string.format(" (%.1f, %.1f)", dq.x, dq.y) or ""
-          table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r |cffffd100%s|r — %s %s%s", dq.dungeon, dq.name, dq.place or "", dq.npc or "", dc))
+          local dqZone = (dq.zone and dq.zone ~= "") and dq.zone or (dq.place or b.zone)
+          local dc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
+          local dqLink = FormatQuestLink(dq, dq.level or b.from, dqZone)
+          table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r %s — %s %s%s", dq.dungeon, dqLink, dq.place or "", dq.npc or "", dc))
         end
       end
 
@@ -3216,7 +4092,7 @@ local function RenderTabRoutes()
         isCurrent and { 0.1, 0.95, 0.4, 0.95 } or { 0.25, 0.35, 0.45, 0.85 },
         isCurrent and { 0.06, 0.16, 0.10, 0.95 } or { 0.08, 0.10, 0.14, 0.92 },
         string.format("Lv.%d-%d", b.from, b.to),
-        (b.hub and b.hub.x) and "📍 营地坐标" or nil,
+        (b.hub and b.hub.x) and "标记营地坐标" or nil,
         (b.hub and b.hub.x) and function()
           SetWaypointOrPrint(b.zone, b.hub.name, b.hub.x, b.hub.y)
         end or nil
@@ -3250,12 +4126,12 @@ local function RenderTabClassAndTalents()
         "|cff71d5ff【核心循环】|r " .. (p.cycle or "无"),
       }
       if p.note and p.note ~= "" then
-        table.insert(lines, "\n" .. p.note)
+        table.insert(lines, "\n" .. LinkifyInlineCoords(p.note, "", spec.name or "要点"))
       end
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
       y = LayoutCard(
         card, y,
-        string.format("%s|cff71d5ff⚔️ %s·%s 野外循环 (Lv.%d – %d)|r", isCurrent and "|cff00ff00▶ [当前阶段]|r " or "", cls.name, spec.name, p.from, p.to),
+        string.format("%s|cff71d5ff[战斗] %s·%s 野外循环 (Lv.%d - %d)|r", isCurrent and "|cff00ff00▶ [当前阶段]|r " or "", cls.name, spec.name, p.from, p.to),
         table.concat(lines, "\n"),
         isCurrent and { 0.1, 0.9, 0.5, 0.95 } or { 0.25, 0.45, 0.65, 0.85 },
         isCurrent and { 0.06, 0.15, 0.12, 0.95 } or { 0.07, 0.10, 0.14, 0.92 },
@@ -3274,7 +4150,7 @@ local function RenderTabClassAndTalents()
     local cSteps = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cSteps, y,
-      string.format("|cffffd100🌟 %s·%s 10–60 级逐级天赋加点顺序 (共 %d 点)|r", cls.name, spec.name, #spec.steps),
+      string.format("|cffffd100★ %s·%s 10–60 级逐级天赋加点顺序 (共 %d 点)|r", cls.name, spec.name, #spec.steps),
       table.concat(stepLines, "\n"),
       { 0.9, 0.75, 0.2, 0.9 },
       { 0.11, 0.10, 0.06, 0.92 },
@@ -3290,17 +4166,21 @@ local function RenderTabClassAndTalents()
     for _, cr in ipairs(runsToRender) do
       local fTag = cr.faction == "horde" and "|cffff5555[部落]|r" or (cr.faction == "alliance" and "|cff44aaff[联盟]|r" or "|cff00ffcc[通用]|r")
       local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
-      local teachTag = (cr.teaches and cr.teaches ~= "") and (" → 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-      table.insert(crLines, string.format("%s %s|cffffd100Lv.%d %s|r%s", fTag, rTag, cr.level, cr.name, teachTag))
+      local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+      local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
+      local crLink = FormatQuestLink(cr, cr.level, firstZone)
+      table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
       for idx, st in ipairs(cr.steps or {}) do
-        local sc = (st.x and st.y) and string.format(" (%.1f, %.1f)", st.x, st.y) or ""
-        table.insert(crLines, string.format("    %d. %s — %s %s |cff99e6ff%s|r%s", idx, st.name, st.zone or "", st.place or "", st.npc or "", sc))
+        local stZone = (st.zone and st.zone ~= "") and st.zone or st.place
+        local sc = (st.x and st.y) and FormatCoordLink(stZone, st.npc or st.name, st.x, st.y) or ""
+        local stLink = FormatQuestLink(st, cr.level, stZone)
+        table.insert(crLines, string.format("    %d. %s — %s %s |cff99e6ff%s|r%s", idx, stLink, st.zone or "", st.place or "", st.npc or "", sc))
       end
     end
     local cRuns = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cRuns, y,
-      string.format("|cff00ffcc📜 %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
+      string.format("|cff00ffcc[任务链] %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
       table.concat(crLines, "\n"),
       { 0.0, 0.8, 0.7, 0.9 },
       { 0.05, 0.12, 0.13, 0.92 }
@@ -3320,8 +4200,8 @@ local function RenderTabMacros()
   local introCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
     introCard, y,
-    string.format("|cff00ffcc📜 %s 实用一键宏命令库 (共 %d 个)|r", cls and cls.name or "", #macros),
-    "同步自 |cffffd100wowf.io/zh/macros|r。点击每个宏卡片右上角的 |cff00ff00[⚡ 一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击将弹出 Ctrl+C 复制窗口。",
+    string.format("|cff00ffcc[宏库] %s 实用一键宏命令库 (共 %d 个)|r", cls and cls.name or "", #macros),
+    "同步自 |cffffd100wowf.io/zh/macros|r。点击每个宏卡片右上角的 |cff00ff00[一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击将弹出 Ctrl+C 复制窗口。",
     { 0.0, 0.85, 0.7, 0.9 },
     { 0.05, 0.13, 0.15, 0.92 },
     "支持一键生成"
@@ -3343,7 +4223,7 @@ local function RenderTabMacros()
         m.isForeverNew and { 0.0, 0.85, 0.7, 0.9 } or { 0.3, 0.45, 0.6, 0.85 },
         { 0.07, 0.09, 0.13, 0.94 },
         nil,
-        "⚡ 一键写入宏",
+        "一键写入宏",
         function()
           CreateOrUpdateGameMacro(m.title, m.code)
         end
@@ -3359,15 +4239,15 @@ local function RenderTabDungeons()
   local cardIdx = 1
   local y = 6
 
-  local nextModeLabel = state.dungeonFilter == "MATCH" and "切换: 仅看无限服新本" or (state.dungeonFilter == "NEW" and "切换: 显示全部副本" or "切换: 仅看当前等级")
-  local modeTitle = state.dungeonFilter == "MATCH" and string.format("当前筛选: 🎯 适合 Lv.%d 的地下城", state.level)
-    or (state.dungeonFilter == "NEW" and "当前筛选: ✨ 无限服新增地下城与团本 (11个)" or "当前筛选: 📚 全部地下城与团本")
+  local nextModeLabel = state.dungeonFilter == "MATCH" and "看无限服新本" or (state.dungeonFilter == "NEW" and "显示全部副本" or "看当前等级")
+  local modeTitle = state.dungeonFilter == "MATCH" and string.format("当前筛选: 适合 Lv.%d 的地下城", state.level)
+    or (state.dungeonFilter == "NEW" and "当前筛选: ★ 无限服新增地下城与团本 (11个)" or "当前筛选: 全部地下城与团本")
 
   local filterCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
     filterCard, y,
-    "|cffff8000🏰 艾泽拉斯地下城与无限服新副本百科 (" .. modeTitle .. ")|r",
-    "包含《魔兽世界：无限服》全部 |cff00ffcc9 大全新五人副本|r（领主大厅、洛丹伦废墟、挖掘场：湿地、达拉然城、沉没之城、克罗多克要塞、奥卡兹监狱、黑喉要塞、塑造者之台）与新增团本（深穴、海加尔峰）及所有必接副本任务坐标。点击右上角按钮可切换筛选模式。",
+    "|cffff8000[副本] 艾泽拉斯地下城与无限服新副本百科 (" .. modeTitle .. ")|r",
+    "包含《魔兽世界：无限服》全部 |cff00ffcc9 大全新五人副本|r（领主大厅、洛丹伦废墟、挖掘场：湿地、达拉然城、沉没之城、克罗多克要塞、奥卡兹监狱、黑喉要塞、塑造者之台）与新增团本（深穴、海加尔峰）及所有必接副本任务坐标。点击蓝色坐标可直接在世界地图标点，点击黄色任务链接可发送至聊天框。",
     { 0.95, 0.55, 0.15, 0.9 },
     { 0.13, 0.08, 0.05, 0.92 },
     nil,
@@ -3394,8 +4274,12 @@ local function RenderTabDungeons()
 
     if passFilter and MatchesSearch((d.name or "") .. " " .. (d.zone or "") .. " " .. (d.summary or "")) then
       local lines = {}
+      if d.entranceX and d.entranceY then
+        local entLink = FormatCoordLink(d.entranceZone or d.zone, d.name .. "副本入口", d.entranceX, d.entranceY)
+        table.insert(lines, string.format("|cff00ffcc副本入口位置:|r %s%s", d.entranceZone or d.zone or "", entLink))
+      end
       if d.summary and d.summary ~= "" then
-        table.insert(lines, "|cff99e6ff简介:|r " .. d.summary)
+        table.insert(lines, "|cff99e6ff简介:|r " .. LinkifyInlineCoords(d.summary, d.entranceZone or d.zone or "", d.name))
       end
       if d.bosses and #d.bosses > 0 then
         table.insert(lines, "|cffff8000主要首领:|r " .. table.concat(d.bosses, "  ·  "))
@@ -3404,9 +4288,11 @@ local function RenderTabDungeons()
         table.insert(lines, "|cffffd100必接副本任务 (" .. #d.quests .. "个):|r")
         for _, q in ipairs(d.quests) do
           local fTag = q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")
-          local qc = (q.x and q.y) and string.format(" (%.1f, %.1f)", q.x, q.y) or (q.inside and " (副本内触发)" or "")
+          local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
+          local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
           local chainTag = (q.stepCount and q.stepCount > 1) and string.format(" [共%d步任务链]", q.stepCount) or ""
-          table.insert(lines, string.format("  • %s|cffffd100[%s]|r (可接 Lv.%d)%s — %s %s |cff00ffcc%s|r%s", fTag, q.name, q.minLevel or d.minLevel, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+          local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
+          table.insert(lines, string.format("  - %s%s (可接 Lv.%d)%s — %s %s |cff00ffcc%s|r%s", fTag, qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
         end
       end
 
@@ -3417,7 +4303,7 @@ local function RenderTabDungeons()
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
       y = LayoutCard(
         card, y,
-        string.format("|cffff8000%s|r  |cffffd100(Lv.%d–%d · 推荐 %d 级)|r  —  %s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge),
+        string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge),
         table.concat(lines, "\n"),
         d.isNew and { 0.0, 0.85, 0.7, 0.9 } or (isLevelMatch and { 0.2, 0.85, 0.4, 0.9 } or { 0.3, 0.35, 0.45, 0.85 }),
         d.isNew and { 0.05, 0.13, 0.14, 0.94 } or { 0.08, 0.10, 0.14, 0.92 },
@@ -3439,13 +4325,32 @@ local function RenderTabForeverAndNews()
   -- 1. 无限服专属玩法攻略（露营、睡袋、经典旧世之树、物资箱等）
   for _, sys in ipairs(Data.foreverSystems or {}) do
     if MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
-      local lines = { sys.summary or "" }
+      local lines = { LinkifyInlineCoords(sys.summary or "", "", sys.title or "") }
       local firstCoord = nil
       for _, st in ipairs(sys.steps or {}) do
         if st.coord and not firstCoord then
           firstCoord = { zone = st.zone, title = st.title, x = st.coord.x, y = st.coord.y }
         end
-        table.insert(lines, string.format("\n|cffffd100%s|r\n%s", st.title or "", st.detail or ""))
+        local stepHeader = "|cffffd100" .. (st.title or "") .. "|r"
+        if st.questId and st.questName then
+          local qObj = {
+            id = st.questId,
+            name = st.questName,
+            level = st.questLevel or 14,
+            zone = st.zone or "",
+            x = st.coord and st.coord.x or nil,
+            y = st.coord and st.coord.y or nil,
+          }
+          stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
+        end
+        if st.coord then
+          stepHeader = stepHeader .. FormatCoordLink(st.zone or "", st.title or "", st.coord.x, st.coord.y)
+        end
+        if st.altCoord then
+          stepHeader = stepHeader .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or st.title or "", st.altCoord.x, st.altCoord.y, false)
+        end
+        local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", st.title or "")
+        table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
       end
 
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
@@ -3456,7 +4361,7 @@ local function RenderTabForeverAndNews()
         { 0.0, 0.85, 0.7, 0.9 },
         { 0.05, 0.12, 0.14, 0.94 },
         sys.category or "无限服特色",
-        firstCoord and "📍 发送起始坐标" or nil,
+        firstCoord and "标记起始坐标" or nil,
         firstCoord and function()
           SetWaypointOrPrint(firstCoord.zone, firstCoord.title, firstCoord.x, firstCoord.y)
         end or nil
@@ -3481,10 +4386,10 @@ local function RenderTabForeverAndNews()
           table.insert(pLines, "|cff71d5ff1–300 冲级路线:|r " .. prof.brackets)
         end
         if prof.trainers and prof.trainers ~= "" then
-          table.insert(pLines, "|cffffa500关键训练师与突破:|r " .. prof.trainers)
+          table.insert(pLines, "|cffffa500关键训练师与突破:|r " .. LinkifyInlineCoords(prof.trainers, "", (prof.name or "") .. "训练师"))
         end
         if prof.foreverNote and prof.foreverNote ~= "" then
-          table.insert(pLines, "|cff00ffcc★ 无限服指南:|r " .. prof.foreverNote)
+          table.insert(pLines, "|cff00ffcc★ 无限服指南:|r " .. LinkifyInlineCoords(prof.foreverNote, "", prof.name or ""))
         end
 
         local typeLabel = prof.type == "gathering" and "采集专业" or (prof.type == "secondary" and "生活副业" or "制造专业")
@@ -3492,7 +4397,7 @@ local function RenderTabForeverAndNews()
         local cProf = AcquireCard(cardIdx); cardIdx = cardIdx + 1
         y = LayoutCard(
           cProf, y,
-          string.format("|cff00ff96🛠️ 专业指南：%s (1–300)|r%s", prof.name or prof.id, recTag),
+          string.format("|cff00ff96[专业] %s (1-300)|r%s", prof.name or prof.id, recTag),
           table.concat(pLines, "\n"),
           isRec and { 0.1, 0.9, 0.5, 0.95 } or { 0.25, 0.55, 0.45, 0.85 },
           isRec and { 0.05, 0.15, 0.10, 0.94 } or { 0.06, 0.11, 0.10, 0.92 },
@@ -3505,14 +4410,14 @@ local function RenderTabForeverAndNews()
   -- 3. wowf.io 最新热修公告
   local newsLines = {}
   for _, n in ipairs(Data.news or {}) do
-    table.insert(newsLines, string.format("• |cffffd100[%s] %s|r\n  %s", n.date or "", n.title or "", n.summary or ""))
+    table.insert(newsLines, string.format("- |cffffd100[%s] %s|r\n  %s", n.date or "", n.title or "", n.summary or ""))
   end
   if #newsLines > 0 then
     local meta = Data.meta or {}
     local cNews = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cNews, y,
-      string.format("|cffffa500📰 wowf.io 无限服最新热修与官方公告 (数据版本: %s)|r", meta.updatedAt or "最新"),
+      string.format("|cffffa500[公告] wowf.io 无限服最新热修与官方公告 (数据版本: %s)|r", meta.updatedAt or "最新"),
       table.concat(newsLines, "\n\n"),
       { 0.9, 0.6, 0.2, 0.9 },
       { 0.12, 0.09, 0.05, 0.94 },
@@ -3556,7 +4461,7 @@ RefreshUI = function()
     headerControls.autoCheck:SetChecked(state.autoFollow)
   end
   if headerControls.matchRoleBtn then
-    headerControls.matchRoleBtn:SetText(state.autoFollow and "|cff00ffcc🎯 匹配角色|r" or "|cffffa500🎯 匹配角色|r")
+    headerControls.matchRoleBtn:SetText(state.autoFollow and "|cff00ffcc匹配角色|r" or "|cffffa500匹配角色|r")
   end
 
   for i, btn in ipairs(tabButtons) do
@@ -3591,9 +4496,12 @@ local function CreateMainWindow()
 
   local template = BackdropTemplateMixin and "BackdropTemplate" or nil
   mainFrame = CreateFrame("Frame", "WoWFMainFrame", UIParent, template)
-  mainFrame:SetSize(780, 560)
+  mainFrame:SetSize(800, 560)
   mainFrame:SetPoint("CENTER")
-  mainFrame:SetFrameStrata("HIGH")
+  mainFrame:SetFrameStrata("MEDIUM")
+  if mainFrame.SetToplevel then
+    mainFrame:SetToplevel(true)
+  end
   mainFrame:EnableMouse(true)
   mainFrame:SetMovable(true)
   mainFrame:RegisterForDrag("LeftButton")
@@ -3652,11 +4560,11 @@ local function CreateMainWindow()
   end)
   headerControls.autoCheck = autoCheck
 
-  -- 「🎯 匹配角色」按钮：一键恢复跟随当前角色（种族+职业+专精+等级）并聚焦当前等级路线
+  -- 「匹配角色」按钮：一键恢复跟随当前角色（种族+职业+专精+等级）并聚焦当前等级路线
   local matchRoleBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
   matchRoleBtn:SetSize(88, 22)
   matchRoleBtn:SetPoint("LEFT", autoCheck, "RIGHT", 2, 0)
-  matchRoleBtn:SetText("|cff00ffcc🎯 匹配角色|r")
+  matchRoleBtn:SetText("|cff00ffcc匹配角色|r")
   matchRoleBtn:SetScript("OnClick", function()
     state.autoFollow = true
     state.routeFilter = "MATCH"
@@ -3770,18 +4678,18 @@ local function CreateMainWindow()
 
   -- 六大功能标签栏
   local TAB_DEFS = {
-    { id = 1, label = "🎯 智能匹配" },
-    { id = 2, label = "🗺️ 升级路线" },
-    { id = 3, label = "⚔️ 职业与天赋" },
-    { id = 4, label = "📜 一键宏库" },
-    { id = 5, label = "🏰 地下城百科" },
-    { id = 6, label = "🌟 专业&无限特色" },
+    { id = 1, label = "智能匹配" },
+    { id = 2, label = "升级路线" },
+    { id = 3, label = "职业与天赋" },
+    { id = 4, label = "一键宏库" },
+    { id = 5, label = "地下城百科" },
+    { id = 6, label = "专业&无限特色" },
   }
 
   for i, def in ipairs(TAB_DEFS) do
     local btn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
-    btn:SetSize(122, 26)
-    btn:SetPoint("TOPLEFT", 12 + (i - 1) * 126, -82)
+    btn:SetSize(125, 26)
+    btn:SetPoint("TOPLEFT", 12 + (i - 1) * 129, -82)
     btn:SetText(def.label)
     btn:SetScript("OnClick", function()
       state.activeTab = def.id
@@ -3796,7 +4704,10 @@ local function CreateMainWindow()
   scrollFrame:SetPoint("BOTTOMRIGHT", -32, 12)
 
   contentChild = CreateFrame("Frame", nil, scrollFrame)
-  contentChild:SetSize(720, 500)
+  contentChild:SetSize(740, 500)
+  if contentChild.SetHyperlinksEnabled then
+    pcall(contentChild.SetHyperlinksEnabled, contentChild, true)
+  end
   scrollFrame:SetScrollChild(contentChild)
 
   return mainFrame
