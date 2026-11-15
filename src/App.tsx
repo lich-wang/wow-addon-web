@@ -32,6 +32,7 @@ import { groupAddons } from './services/addonGrouper';
 
 import {
   downloadAndInstallAddon,
+  fetchCuratedAddonZip,
   enrichAddonsWithUpdateStatus,
   findMatchingCuratedAddon,
 } from './services/catalogService';
@@ -400,12 +401,10 @@ export function App() {
           message: `正在从 wow.lich.tech 下载 ${addon.name}...`,
         });
 
-        const url = addon.downloadUrl.startsWith('http')
-          ? addon.downloadUrl
-          : `https://wow.lich.tech${addon.downloadUrl}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`下载失败 (HTTP ${res.status})`);
-        const blob = await res.blob();
+        const arrayBuffer = await fetchCuratedAddonZip(addon, (p: InstallProgress) => {
+          setInstallProgress(p);
+        });
+        const blob = new Blob([arrayBuffer], { type: 'application/zip' });
 
         setInstallProgress({
           status: 'writing',
@@ -472,12 +471,8 @@ export function App() {
         });
 
         if (directoryState.mode === 'agent' && directoryState.agentPath) {
-          const url = curated.downloadUrl.startsWith('http')
-            ? curated.downloadUrl
-            : `https://wow.lich.tech${curated.downloadUrl}`;
-          const res = await fetch(url);
-          if (!res.ok) throw new Error(`下载 ${curated.name} 失败 (HTTP ${res.status})`);
-          const blob = await res.blob();
+          const arrayBuffer = await fetchCuratedAddonZip(curated);
+          const blob = new Blob([arrayBuffer], { type: 'application/zip' });
           await agentInstallZip(directoryState.agentPath, blob);
         } else if (directoryState.handle) {
           await downloadAndInstallAddon(curated, directoryState.handle, (p) => {
