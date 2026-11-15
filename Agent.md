@@ -198,7 +198,7 @@ git push origin feat/add-addon-search
 4. **持续跟踪 CI 与 CodeRabbit 审核**：
    - 开始检查前先记录当前 PR 的 head SHA（`gh pr view <PR编号> --json headRefOid -q .headRefOid`）。
    - 使用 `gh pr checks <PR编号> --watch --interval 5` 跟踪 `检查是否关联 Issue`；该命令退出后需再次执行 `gh pr checks <PR编号>`，确认 `CodeRabbit` 检查已出现且状态为 `pass`（若尚未出现或仍为 `pending` 则继续等待）。
-   - 检查全部通过且评审状态为 `APPROVED` 后，重新读取当前 PR head SHA 并确认仍与检查前记录的 SHA 一致（若不一致说明有新提交，不得合并，须基于新 SHA 重新检查与审核）；仅在一致时使用该 SHA 执行合并。
+   - 检查全部通过且 CodeRabbit 对记录的 head SHA 的正式评审状态为 `APPROVED` 后，重新读取当前 PR head SHA 并确认仍与检查前记录的 SHA 一致（若不一致说明有新提交，不得合并，须基于新 SHA 重新检查与审核）；仅在一致时使用该 SHA 执行合并。
    - 若存在失败项或审核意见，使用 `gh pr view <PR编号> --json state,mergeStateStatus,reviewDecision,comments,reviews` 查看 PR 评论与评审摘要；若需排查行内评审对话的解决状态，请前往 PR 的 **Files changed** 页面查看或通过 GitHub GraphQL 查询 `reviewThreads.isResolved`。若 CodeRabbit 发起 `CHANGES_REQUESTED` 或存在未解决对话，须逐项修复并解决对应评审对话，等待重新审查通过。
 5. **合并与部署确认**：
    - 所有检查通过且评审无阻塞后，执行 `gh pr merge <PR编号> --squash --delete-branch --match-head-commit <已检查的SHA>` 完成合并并清理远程分支，确保合并的是已通过检查的提交。
