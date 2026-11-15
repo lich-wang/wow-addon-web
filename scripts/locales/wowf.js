@@ -4309,7 +4309,7 @@ local function RenderTabDungeons()
   for _, d in ipairs(Data.dungeons or {}) do
     local passFilter = true
     if state.dungeonFilter == "MATCH" then
-      passFilter = (state.level >= (d.minLevel - 4) and state.level <= (d.maxLevel + 3))
+      passFilter = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3))
     elseif state.dungeonFilter == "NEW" then
       passFilter = d.isNew and true or false
     end
