@@ -1037,12 +1037,13 @@ function transformBandQuests(quests, fallbackLevel, defaultZone = '') {
       Array.isArray(q.steps) && q.steps.length > 1
         ? q.steps.map(st => {
             const sg = Array.isArray(st.givers) && st.givers[0] ? st.givers[0] : null;
+            const stId = extractQuestId(st);
             return {
-              id: extractQuestId(st),
+              id: stId,
               name: st.name || q.name || '',
               level: st.level || st.minLevel || q.level || fallbackLevel || 1,
               npc: sg?.name || '',
-              zone: sg?.zone || '',
+              zone: sg?.zone || (stId !== id || sg?.at?.x != null ? defaultZone : '') || '',
               place: sg?.place || '',
               x: sg?.at?.x ?? null,
               y: sg?.at?.y ?? null,
