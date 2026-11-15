@@ -2963,20 +2963,22 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
   for _, st in ipairs(q.steps) do
     local sid = tonumber(st.id)
     if sid and sid > 0 then
+      local isPrimary = (sid == primaryId)
       local stZone = (st.zone and st.zone ~= "") and st.zone or parentZone
-      local canInheritCoords = (not st.x and not st.y) and (not st.zone or st.zone == "" or st.zone == parentZone) and (not st.place or st.place == "" or st.place == q.place)
       local stepObj = {
         id = sid,
         name = st.name or q.name,
         level = st.level or q.level or q.minLevel or fallbackLevel,
-        npc = (st.npc and st.npc ~= "") and st.npc or q.npc,
+        npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
         zone = stZone,
-        place = (st.place and st.place ~= "") and st.place or (canInheritCoords and q.place or ""),
-        x = st.x or (canInheritCoords and q.x or nil),
-        y = st.y or (canInheritCoords and q.y or nil),
+        place = (st.place and st.place ~= "") and st.place or (isPrimary and q.place or ""),
+        x = st.x or (isPrimary and q.x or nil),
+        y = st.y or (isPrimary and q.y or nil),
       }
-      if sid == primaryId then
-        RegisterQuestMeta(stepObj, fallbackLevel, stZone)
+      if isPrimary then
+        if st.x and st.y then
+          RegisterQuestMeta(stepObj, fallbackLevel, stZone)
+        end
       else
         table.insert(chainLinks, FormatQuestLink(stepObj, fallbackLevel, stZone))
       end
