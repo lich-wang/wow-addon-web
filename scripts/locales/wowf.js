@@ -1042,7 +1042,7 @@ function transformBandQuests(quests, fallbackLevel, defaultZone = '') {
               name: st.name || q.name || '',
               level: st.level || st.minLevel || q.level || fallbackLevel || 1,
               npc: sg?.name || '',
-              zone: sg?.zone || defaultZone || '',
+              zone: sg?.zone || '',
               place: sg?.place || '',
               x: sg?.at?.x ?? null,
               y: sg?.at?.y ?? null,
@@ -2977,9 +2977,12 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
       }
       if isPrimary then
         local hasStepCoords = (st.x ~= nil and st.y ~= nil)
-        local hasStepInfo = (st.npc and st.npc ~= "") or (st.place and st.place ~= "") or (st.zone and st.zone ~= "")
+        local hasStepZone = (st.zone ~= nil and st.zone ~= "")
+        local hasStepInfo = (st.npc and st.npc ~= "") or (st.place and st.place ~= "") or hasStepZone
         if hasStepCoords or hasStepInfo then
-          local primaryZone = (st.zone and st.zone ~= "") and st.zone or ((q.zone and q.zone ~= "") and q.zone or parentZone)
+          local effectiveParentZone = (q.zone and q.zone ~= "") and q.zone or parentZone
+          local primaryZone = hasStepZone and st.zone or effectiveParentZone
+          local zoneChanged = hasStepZone and (effectiveParentZone ~= "") and (st.zone ~= effectiveParentZone)
           RegisterQuestMeta({
             id = sid,
             name = st.name or q.name,
@@ -2987,8 +2990,8 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
             npc = (st.npc and st.npc ~= "") and st.npc or q.npc,
             zone = primaryZone,
             place = (st.place and st.place ~= "") and st.place or q.place,
-            x = hasStepCoords and st.x or q.x,
-            y = hasStepCoords and st.y or q.y,
+            x = hasStepCoords and st.x or (not zoneChanged and q.x or nil),
+            y = hasStepCoords and st.y or (not zoneChanged and q.y or nil),
           }, fallbackLevel, primaryZone)
         end
       else
