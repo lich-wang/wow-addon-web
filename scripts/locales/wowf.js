@@ -1314,6 +1314,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   let liveFetchCount = 0;
   let hasPartialFailure = false;
   let hasRouteFailure = false;
+  const liveDungeonIds = new Set();
 
   // 1. 抓取 10 条种族升级路线 (bands + dungeons + professions)
   for (const route of RACE_ROUTES) {
@@ -1397,6 +1398,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     };
     if (Array.isArray(payload.dungeons)) {
       for (const d of payload.dungeons) {
+        if (d?.id) liveDungeonIds.add(d.id);
         mergeDungeonIntoMap(dungeonMap, d, route.faction);
       }
     }
@@ -1444,6 +1446,13 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
         dungeonMap.set(cd.id, { ...cd, quests: Array.isArray(cd.quests) ? [...cd.quests] : [] });
       } else {
         const existing = dungeonMap.get(cd.id);
+        if (!liveDungeonIds.has(cd.id)) {
+          if (cd.name) existing.name = cd.name;
+          if (cd.minLevel != null) existing.minLevel = cd.minLevel;
+          if (cd.maxLevel != null) existing.maxLevel = cd.maxLevel;
+          if (cd.visit != null) existing.visit = cd.visit;
+          if (cd.zone) existing.zone = cd.zone;
+        }
         const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
         for (const cq of cd.quests || []) {
           const key = `${cq.name}:${cq.npc}`;
