@@ -2255,7 +2255,7 @@ local function DetectActiveTalentSpec(classFile)
     end
   end
 
-  return 1
+  return nil
 end
 
 local function SyncPlayerCharacter(overrideLevel)
@@ -2293,11 +2293,9 @@ local function SyncPlayerCharacter(overrideLevel)
     state.routeId = routeId
     local detectedSpec = DetectActiveTalentSpec(resolvedClass)
     local clsData = Data.classes and Data.classes[resolvedClass]
-    if clsData and clsData.specs and clsData.specs[detectedSpec] then
-      if prevClass ~= resolvedClass or detectedSpec > 1 or not state.specIndex then
-        state.specIndex = detectedSpec
-      end
-    else
+    if detectedSpec and clsData and clsData.specs and clsData.specs[detectedSpec] then
+      state.specIndex = detectedSpec
+    elseif prevClass ~= resolvedClass or not state.specIndex or not (clsData and clsData.specs and clsData.specs[state.specIndex]) then
       state.specIndex = 1
     end
   end
@@ -3160,10 +3158,18 @@ local function RenderTabRoutes()
         table.insert(lines, "|cff00ff96顺路学专业:|r " .. table.concat(pNames, " · "))
       end
 
-      -- 穿插本阶段主城副本任务备战与推荐进本节点 (timelineSteps)
+      -- 穿插本阶段主城副本任务备战、跨区交通航线与推荐进本节点 (timelineSteps)
       local tlSteps = GetBandTimelineSteps(route, b.from, b.to)
       local seenDungeonVisit = {}
       local seenCityVisit = {}
+      local seenTravelVisit = {}
+      local VIA_LABELS = {
+        tram = "矿道地铁",
+        boat = "跨海轮船",
+        zeppelin = "飞艇航线",
+        flight = "飞行航线",
+        walk = "陆路转场",
+      }
       for _, tl in ipairs(tlSteps) do
         if tl.kind == "city" and tl.city and tl.quests and #tl.quests > 0 then
           local cKey = tl.city .. ":" .. tostring(tl.level)
@@ -3179,6 +3185,18 @@ local function RenderTabRoutes()
         elseif tl.kind == "dungeon" and tl.name and not seenDungeonVisit[tl.name] then
           seenDungeonVisit[tl.name] = true
           table.insert(lines, string.format("|cffff8000🏰 [Lv.%d 推荐进本 · %s]|r 适龄 Lv.%d–%d (%s)", tl.level or b.from, tl.name, tl.minLevel or b.from, tl.maxLevel or b.to, tl.zone or ""))
+        elseif tl.kind == "travel" and (tl.from ~= "" or tl.to ~= "") then
+          local tKey = tostring(tl.level) .. ":" .. (tl.from or "") .. "->" .. (tl.to or "") .. ":" .. (tl.via or "")
+          if not seenTravelVisit[tKey] then
+            seenTravelVisit[tKey] = true
+            local viaText = VIA_LABELS[tl.via or "walk"] or (tl.via or "转场")
+            local destText = (tl.place and tl.place ~= "" and tl.place ~= tl.to) and (tl.to .. "·" .. tl.place) or (tl.to or "")
+            local flCoord = (tl.flightX and tl.flightY) and string.format(" (%.1f, %.1f)", tl.flightX, tl.flightY) or ""
+            local flText = (tl.flightNpc and tl.flightNpc ~= "")
+              and string.format(" — 顺路开鸟点: %s %s%s", tl.flightZone or "", tl.flightNpc, flCoord)
+              or ""
+            table.insert(lines, string.format("|cff99e6ff⛵ [Lv.%d 跨区交通 · %s]|r %s → |cff00ffcc%s|r%s", tl.level or b.from, viaText, tl.from or "起点", destText, flText))
+          end
         end
       end
 
@@ -3537,8 +3555,8 @@ RefreshUI = function()
   if headerControls.autoCheck then
     headerControls.autoCheck:SetChecked(state.autoFollow)
   end
-  if headerControls.autoLabel then
-    headerControls.autoLabel:SetText(state.autoFollow and "|cff00ffcc跟随当前角色|r" or "|cffffa500手动(点此回角色)|r")
+  if headerControls.matchRoleBtn then
+    headerControls.matchRoleBtn:SetText(state.autoFollow and "|cff00ffcc🎯 匹配角色|r" or "|cffffa500🎯 匹配角色|r")
   end
 
   for i, btn in ipairs(tabButtons) do
@@ -3624,9 +3642,6 @@ local function CreateMainWindow()
   autoCheck:SetSize(24, 24)
   autoCheck:SetPoint("LEFT", 6, 0)
   autoCheck:SetChecked(state.autoFollow)
-  local autoLabel = ctrlBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  autoLabel:SetPoint("LEFT", autoCheck, "RIGHT", 2, 0)
-  autoLabel:SetText("|cff00ffcc跟随当前角色|r")
   autoCheck:SetScript("OnClick", function(self)
     state.autoFollow = self:GetChecked() and true or false
     if state.autoFollow then
@@ -3636,12 +3651,24 @@ local function CreateMainWindow()
     RefreshUI()
   end)
   headerControls.autoCheck = autoCheck
-  headerControls.autoLabel = autoLabel
+
+  -- 「🎯 匹配角色」按钮：一键恢复跟随当前角色（种族+职业+专精+等级）并聚焦当前等级路线
+  local matchRoleBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
+  matchRoleBtn:SetSize(88, 22)
+  matchRoleBtn:SetPoint("LEFT", autoCheck, "RIGHT", 2, 0)
+  matchRoleBtn:SetText("|cff00ffcc🎯 匹配角色|r")
+  matchRoleBtn:SetScript("OnClick", function()
+    state.autoFollow = true
+    state.routeFilter = "MATCH"
+    SyncPlayerCharacter()
+    RefreshUI()
+  end)
+  headerControls.matchRoleBtn = matchRoleBtn
 
   -- 等级 -1 / Lv.X / +1
   local lvlMinusBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
   lvlMinusBtn:SetSize(26, 22)
-  lvlMinusBtn:SetPoint("LEFT", autoLabel, "RIGHT", 10, 0)
+  lvlMinusBtn:SetPoint("LEFT", matchRoleBtn, "RIGHT", 6, 0)
   lvlMinusBtn:SetText("-")
   lvlMinusBtn:SetScript("OnClick", function()
     state.autoFollow = false
