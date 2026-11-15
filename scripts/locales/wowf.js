@@ -3,31 +3,113 @@ import path from 'node:path';
 import JSZip from 'jszip';
 
 const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
-const WOWF_VERSION = 'v1.0.0';
+const WOWF_VERSION = 'v1.1.0';
 
 const CLASS_CONFIGS = [
   { key: 'WARRIOR', slug: 'warrior', name: '战士', color: 'c79c6e', allianceRace: 'human', hordeRace: 'orc' },
-  { key: 'PALADIN', slug: 'paladin', name: '圣骑士', color: 'f58cba', allianceRace: 'human', hordeRace: null },
+  { key: 'PALADIN', slug: 'paladin', name: '圣骑士', color: 'f58cba', allianceRace: 'human', hordeRace: 'undead' },
   { key: 'HUNTER', slug: 'hunter', name: '猎人', color: 'abd473', allianceRace: 'dwarf', hordeRace: 'orc' },
   { key: 'ROGUE', slug: 'rogue', name: '潜行者', color: 'fff569', allianceRace: 'human', hordeRace: 'undead' },
   { key: 'PRIEST', slug: 'priest', name: '牧师', color: 'ffffff', allianceRace: 'human', hordeRace: 'undead' },
-  { key: 'SHAMAN', slug: 'shaman', name: '萨满祭司', color: '0070de', allianceRace: null, hordeRace: 'orc' },
+  { key: 'SHAMAN', slug: 'shaman', name: '萨满祭司', color: '0070de', allianceRace: 'dwarf', hordeRace: 'orc' },
   { key: 'MAGE', slug: 'mage', name: '法师', color: '69ccf0', allianceRace: 'human', hordeRace: 'undead' },
   { key: 'WARLOCK', slug: 'warlock', name: '术士', color: '9482c9', allianceRace: 'human', hordeRace: 'undead' },
   { key: 'DRUID', slug: 'druid', name: '德鲁伊', color: 'ff7d0a', allianceRace: 'nightelf', hordeRace: 'tauren' },
 ];
 
+const CLASS_SLUG_TO_KEY = Object.fromEntries(CLASS_CONFIGS.map(c => [c.slug, c.key]));
+
 const RACE_ROUTES = [
-  { id: 'human', apiRaces: ['human'], name: '人类', faction: 'alliance', sampleClass: 'warrior', wowRaceKeys: ['Human'] },
-  { id: 'dwarf', apiRaces: ['dwarf'], name: '矮人', faction: 'alliance', sampleClass: 'warrior', wowRaceKeys: ['Dwarf'] },
-  { id: 'night-elf', apiRaces: ['nightelf', 'night_elf', 'night-elf'], name: '暗夜精灵', faction: 'alliance', sampleClass: 'warrior', wowRaceKeys: ['NightElf'] },
-  { id: 'gnome', apiRaces: ['gnome'], name: '侏儒', faction: 'alliance', sampleClass: 'warrior', wowRaceKeys: ['Gnome'] },
-  { id: 'skyborne-alliance', apiRaces: ['skyborne', 'highelf', 'skyborne_alliance'], name: '天裔 (联盟)', faction: 'alliance', sampleClass: 'warrior', wowRaceKeys: ['Skyborne', 'HighElf'] },
-  { id: 'orc', apiRaces: ['orc'], name: '兽人', faction: 'horde', sampleClass: 'warrior', wowRaceKeys: ['Orc'] },
-  { id: 'undead', apiRaces: ['undead', 'scourge'], name: '亡灵', faction: 'horde', sampleClass: 'warrior', wowRaceKeys: ['Scourge', 'Undead'] },
-  { id: 'tauren', apiRaces: ['tauren'], name: '牛头人', faction: 'horde', sampleClass: 'warrior', wowRaceKeys: ['Tauren'] },
-  { id: 'troll', apiRaces: ['troll'], name: '巨魔', faction: 'horde', sampleClass: 'warrior', wowRaceKeys: ['Troll'] },
-  { id: 'skyborne-horde', apiRaces: ['skyborne', 'windshaper', 'skyborne_horde'], name: '天裔 (部落)', faction: 'horde', sampleClass: 'warrior', wowRaceKeys: ['Skyborne', 'Windshaper'] },
+  {
+    id: 'human',
+    apiRaces: ['human'],
+    name: '人类',
+    faction: 'alliance',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'paladin', 'hunter', 'rogue', 'priest', 'mage', 'warlock'],
+    wowRaceKeys: ['Human'],
+  },
+  {
+    id: 'dwarf',
+    apiRaces: ['dwarf'],
+    name: '矮人',
+    faction: 'alliance',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'paladin', 'hunter', 'rogue', 'priest', 'shaman'],
+    wowRaceKeys: ['Dwarf'],
+  },
+  {
+    id: 'night-elf',
+    apiRaces: ['nightelf', 'night_elf', 'night-elf'],
+    name: '暗夜精灵',
+    faction: 'alliance',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'hunter', 'rogue', 'priest', 'druid'],
+    wowRaceKeys: ['NightElf'],
+  },
+  {
+    id: 'gnome',
+    apiRaces: ['gnome'],
+    name: '侏儒',
+    faction: 'alliance',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'rogue', 'priest', 'mage', 'warlock'],
+    wowRaceKeys: ['Gnome'],
+  },
+  {
+    id: 'skyborne-alliance',
+    apiRaces: ['skyborne', 'highelf', 'skyborne_alliance'],
+    name: '天裔 (联盟)',
+    faction: 'alliance',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'hunter', 'rogue', 'druid', 'mage'],
+    wowRaceKeys: ['Skyborne', 'HighElf'],
+  },
+  {
+    id: 'orc',
+    apiRaces: ['orc'],
+    name: '兽人',
+    faction: 'horde',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'hunter', 'rogue', 'shaman', 'mage', 'warlock'],
+    wowRaceKeys: ['Orc'],
+  },
+  {
+    id: 'undead',
+    apiRaces: ['undead', 'scourge'],
+    name: '亡灵',
+    faction: 'horde',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'paladin', 'rogue', 'priest', 'mage', 'warlock'],
+    wowRaceKeys: ['Scourge', 'Undead'],
+  },
+  {
+    id: 'tauren',
+    apiRaces: ['tauren'],
+    name: '牛头人',
+    faction: 'horde',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'hunter', 'shaman', 'druid'],
+    wowRaceKeys: ['Tauren'],
+  },
+  {
+    id: 'troll',
+    apiRaces: ['troll'],
+    name: '巨魔',
+    faction: 'horde',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'hunter', 'rogue', 'priest', 'shaman', 'mage', 'warlock'],
+    wowRaceKeys: ['Troll'],
+  },
+  {
+    id: 'skyborne-horde',
+    apiRaces: ['skyborne', 'windshaper', 'skyborne_horde'],
+    name: '天裔 (部落)',
+    faction: 'horde',
+    sampleClass: 'warrior',
+    classes: ['warrior', 'hunter', 'rogue', 'druid', 'shaman'],
+    wowRaceKeys: ['Skyborne', 'Windshaper'],
+  },
 ];
 
 const FOREVER_NEW_DUNGEON_IDS = new Set([
@@ -866,9 +948,30 @@ async function fetchLevelUpPayload(classSlug, raceSlug, faction, deployId, getHe
 }
 
 /**
+ * 精简并转换阶段内的关键任务/职业起始任务
+ */
+function transformBandQuests(quests, fallbackLevel) {
+  if (!Array.isArray(quests)) return [];
+  return quests.slice(0, 8).map(q => {
+    const g = Array.isArray(q.givers) && q.givers[0] ? q.givers[0] : null;
+    return {
+      name: q.name || '',
+      level: q.level || q.minLevel || fallbackLevel || 1,
+      minLevel: q.minLevel || fallbackLevel || 1,
+      kind: q.kind || 'quest',
+      npc: g?.name || '',
+      place: g?.place || g?.zone || '',
+      x: g?.at?.x ?? null,
+      y: g?.at?.y ?? null,
+      stepCount: Array.isArray(q.steps) ? q.steps.length : 1,
+    };
+  });
+}
+
+/**
  * 精简并转换单个升级阶段 band
  */
-function transformBand(b) {
+function transformBand(b, classKey = 'WARRIOR') {
   const hub = b.hub
     ? {
         name: b.hub.name || '',
@@ -877,6 +980,25 @@ function transformBand(b) {
         y: b.hub.at?.y ?? null,
       }
     : null;
+
+  const hubs = Array.isArray(b.hubs)
+    ? b.hubs.slice(0, 6).map(h => ({
+        from: h.from || b.from || 1,
+        to: h.to || b.to || 60,
+        name: h.name || '',
+        x: h.at?.x ?? null,
+        y: h.at?.y ?? null,
+      }))
+    : [];
+
+  const flights = Array.isArray(b.flights)
+    ? b.flights.slice(0, 4).map(f => ({
+        name: f.name || '',
+        place: f.place || f.zone || '',
+        x: f.at?.x ?? null,
+        y: f.at?.y ?? null,
+      }))
+    : [];
 
   const trainer = b.trainer
     ? {
@@ -887,6 +1009,18 @@ function transformBand(b) {
         y: b.trainer.at?.y ?? null,
       }
     : null;
+
+  const trainersByClass = {};
+  if (trainer && classKey) {
+    trainersByClass[classKey] = trainer;
+  }
+
+  const allQuests = transformBandQuests(b.quests, b.from || 1);
+  const quests = allQuests.filter(q => q.kind !== 'class');
+  const questsByClass = {};
+  if (allQuests.length > 0 && classKey) {
+    questsByClass[classKey] = allQuests;
+  }
 
   const professions = Array.isArray(b.professions)
     ? b.professions.slice(0, 6).map(p => {
@@ -923,10 +1057,82 @@ function transformBand(b) {
     to: b.to || b.from || 60,
     zone: b.zone || (hub ? hub.zone : ''),
     hub,
+    hubs,
+    flights,
     trainer,
+    trainersByClass,
+    quests,
+    questsByClass,
     professions,
     dungeonQuests,
   };
+}
+
+/**
+ * 精简并转换路线时间轴步骤 (主城副本任务备战、推荐进本等级、关键跨区交通与航线)
+ */
+function transformTimelineSteps(timeline, dungeons) {
+  if (!Array.isArray(timeline)) return [];
+  const steps = [];
+  let lastLevel = 1;
+  for (const t of timeline) {
+    if (!t || typeof t !== 'object') continue;
+    if (typeof t.level === 'number') lastLevel = t.level;
+    else if (typeof t.from === 'number') lastLevel = t.from;
+
+    if (t.kind === 'city' && Array.isArray(t.quests) && t.quests.length > 0) {
+      const quests = t.quests.slice(0, 6).map(q => {
+        const g = Array.isArray(q.givers) && q.givers[0] ? q.givers[0] : null;
+        return {
+          dungeon: q.dungeon || '',
+          name: q.name || '',
+          level: q.level || q.minLevel || lastLevel,
+          minLevel: q.minLevel || lastLevel,
+          npc: g?.name || '',
+          place: g?.place || g?.zone || t.city || '',
+          x: g?.at?.x ?? null,
+          y: g?.at?.y ?? null,
+        };
+      });
+      steps.push({
+        kind: 'city',
+        level: t.level || lastLevel,
+        city: t.city || '',
+        quests,
+      });
+    } else if (t.kind === 'dungeon' && typeof t.dungeon === 'number' && Array.isArray(dungeons) && dungeons[t.dungeon]) {
+      const dg = dungeons[t.dungeon];
+      const minLvl = Array.isArray(dg.level) ? dg.level[0] : 13;
+      const maxLvl = Array.isArray(dg.level) ? dg.level[1] : minLvl + 3;
+      steps.push({
+        kind: 'dungeon',
+        level: dg.visit || lastLevel || minLvl,
+        id: dg.id || '',
+        name: dg.name || '',
+        minLevel: minLvl,
+        maxLevel: maxLvl,
+        zone: dg.entrance?.zone || dg.zone || '',
+      });
+    } else if (
+      t.kind === 'travel' &&
+      (t.via === 'tram' || t.via === 'boat' || t.via === 'zeppelin' || (Array.isArray(t.flights) && t.flights.length > 0))
+    ) {
+      const fl = Array.isArray(t.flights) && t.flights[0] ? t.flights[0] : null;
+      steps.push({
+        kind: 'travel',
+        level: t.level || lastLevel,
+        via: t.via || 'walk',
+        from: t.from || '',
+        to: t.to || '',
+        place: t.place || '',
+        flightNpc: fl?.name || '',
+        flightZone: fl?.place || fl?.zone || '',
+        flightX: fl?.at?.x ?? null,
+        flightY: fl?.at?.y ?? null,
+      });
+    }
+  }
+  return steps;
 }
 
 /**
@@ -1016,7 +1222,7 @@ function transformTalentBuilds(talentBuildsObj) {
 /**
  * 精简并转换职业专属任务链 classRuns
  */
-function transformClassRuns(classRuns, factionLabel) {
+function transformClassRuns(classRuns, factionLabel, raceId = '', raceName = '') {
   if (!Array.isArray(classRuns)) return [];
   return classRuns.map(cr => {
     const steps = Array.isArray(cr.steps)
@@ -1035,6 +1241,8 @@ function transformClassRuns(classRuns, factionLabel) {
       : [];
     return {
       faction: factionLabel,
+      raceId: raceId || undefined,
+      raceName: raceName || undefined,
       level: cr.level || 1,
       to: cr.to || cr.level || 60,
       name: cr.name || '职业任务',
@@ -1315,54 +1523,115 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   let hasPartialFailure = false;
   let hasRouteFailure = false;
   const liveDungeonIds = new Set();
+  const payloadCache = new Map();
 
-  // 1. 抓取 10 条种族升级路线 (bands + dungeons + professions)
+  // 1. 抓取所有种族 × 职业组合升级路线 (bands + trainersByClass + questsByClass + classRunsByClass + timelineSteps + dungeons + professions)
   for (const route of RACE_ROUTES) {
-    let payload = null;
+    const isSkyborne = route.id === 'skyborne-alliance' || route.id === 'skyborne-horde';
+    const routeClasses = Array.isArray(route.classes) && route.classes.length > 0 ? route.classes : [route.sampleClass];
+    let resolvedApiRace = null;
+    let basePayload = null;
     let lastErr = null;
+    const baseClassKey = CLASS_SLUG_TO_KEY[route.sampleClass] || 'WARRIOR';
+
     for (const candidateRace of route.apiRaces || [route.id]) {
       try {
-        payload = await fetchLevelUpPayload(route.sampleClass, candidateRace, route.faction, deployId, getHeaders);
+        basePayload = await fetchLevelUpPayload(route.sampleClass, candidateRace, route.faction, deployId, getHeaders);
+        resolvedApiRace = candidateRace;
+        payloadCache.set(`${route.id}:${route.sampleClass}`, basePayload);
+        payloadCache.set(`${candidateRace}:${route.sampleClass}:${route.faction}`, basePayload);
         break;
       } catch (err) {
         lastErr = err;
       }
     }
-    if (!payload) {
-      hasPartialFailure = true;
-      hasRouteFailure = true;
-      const cachedRoute = cachedDataset?.routes?.[route.id];
-      const isSkyborne = route.id === 'skyborne-alliance' || route.id === 'skyborne-horde';
 
-      // 若已有非合成的专属路线缓存，优先复用该缓存并标记局部失败
-      if (Array.isArray(cachedRoute?.bands) && cachedRoute.bands.length > 0 && (!isSkyborne || !cachedRoute.synthesized)) {
+    if (!basePayload) {
+      const cachedRoute = cachedDataset?.routes?.[route.id];
+
+      // 非天裔常规路线若请求失败，优先复用已有缓存并标记局部失败
+      if (!isSkyborne && Array.isArray(cachedRoute?.bands) && cachedRoute.bands.length > 0) {
+        hasPartialFailure = true;
+        hasRouteFailure = true;
         routesData[route.id] = cachedRoute;
         continue;
       }
 
       if (isSkyborne) {
         const baseKey = route.faction === 'horde' ? 'orc' : 'human';
+        const druidSourceKey = route.faction === 'horde' ? 'tauren' : 'night-elf';
         const liveBaseRoute = routesData[baseKey];
         const baseRoute = liveBaseRoute || cachedDataset?.routes?.[baseKey];
+        const druidRoute = routesData[druidSourceKey] || cachedDataset?.routes?.[druidSourceKey];
+        if (!liveBaseRoute) {
+          hasPartialFailure = true;
+          hasRouteFailure = true;
+        }
         const tailBands = Array.isArray(baseRoute?.bands)
           ? baseRoute.bands
               .filter(b => (b.to ?? b.from ?? 0) >= 12)
-              .map(b => ((b.from ?? 1) < 12 ? { ...b, from: 12 } : b))
+              .map(b => {
+                const cloned = {
+                  ...b,
+                  from: (b.from ?? 1) < 12 ? 12 : b.from,
+                  trainersByClass: { ...(b.trainersByClass || {}) },
+                  questsByClass: { ...(b.questsByClass || {}) },
+                };
+                if (!cloned.trainersByClass.DRUID && Array.isArray(druidRoute?.bands)) {
+                  const db = druidRoute.bands.find(x => x.zone === b.zone) || druidRoute.bands.find(x => Math.abs((x.from || 1) - (b.from || 1)) <= 4);
+                  if (db?.trainersByClass?.DRUID) {
+                    cloned.trainersByClass.DRUID = db.trainersByClass.DRUID;
+                  }
+                }
+                return cloned;
+              })
           : [];
         if (tailBands.length > 0) {
+          const zephrasTrainersByClass = {};
+          for (const cSlug of routeClasses) {
+            const cKey = CLASS_SLUG_TO_KEY[cSlug];
+            const clsCfg = CLASS_CONFIGS.find(c => c.key === cKey);
+            if (cKey) {
+              zephrasTrainersByClass[cKey] = {
+                name: `天裔${clsCfg?.name || '职业'}导师`,
+                title: `${clsCfg?.name || '全职业'}训练师`,
+                place: '泽风岛主营地 (天裔前哨)',
+                x: 49.2,
+                y: 51.4,
+              };
+            }
+          }
+          const mergedClassRunsByClass = { ...(baseRoute?.classRunsByClass || {}) };
+          if (druidRoute?.classRunsByClass?.DRUID) {
+            mergedClassRunsByClass.DRUID = druidRoute.classRunsByClass.DRUID;
+          }
           routesData[route.id] = {
             id: route.id,
             name: route.name,
             faction: route.faction,
             wowRaceKeys: route.wowRaceKeys,
             synthesized: true,
+            classRunsByClass: mergedClassRunsByClass,
+            timelineSteps: Array.isArray(baseRoute?.timelineSteps)
+              ? baseRoute.timelineSteps.filter(t => (t.level || 1) >= 12)
+              : [],
             bands: [
               {
                 from: 1,
                 to: 12,
                 zone: '泽风岛 (Zephras Isle)',
                 hub: { name: '泽风庇护所 / 天裔前哨', zone: '泽风岛', x: 48.5, y: 52.0 },
+                hubs: [
+                  { from: 1, to: 6, name: '天裔登陆点', x: 51.0, y: 62.0 },
+                  { from: 6, to: 12, name: '泽风庇护所 / 天裔前哨', x: 48.5, y: 52.0 },
+                ],
+                flights: [
+                  { name: '泽风岛航线管理员', place: '泽风庇护所', x: 48.8, y: 51.8 },
+                ],
                 trainer: { name: '天裔导师', title: '全职业训练师', place: '泽风岛主营地', x: 49.2, y: 51.4 },
+                trainersByClass: zephrasTrainersByClass,
+                quests: [],
+                questsByClass: {},
                 professions: [
                   { id: 'first-aid', name: '急救', trainer: '天裔医师', place: '泽风岛', x: 48.0, y: 53.0 },
                 ],
@@ -1372,30 +1641,108 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
             ],
           };
         } else if (cachedRoute) {
+          hasPartialFailure = true;
+          hasRouteFailure = true;
           routesData[route.id] = cachedRoute;
         }
         continue;
       }
 
+      hasPartialFailure = true;
+      hasRouteFailure = true;
       console.warn(`[WoWF] Route fetch failed for ${route.id}: ${lastErr?.message}`);
       continue;
     }
+
     liveFetchCount++;
+    const bands = Array.isArray(basePayload.bands)
+      ? basePayload.bands.map(b => transformBand(b, baseClassKey))
+      : [];
+    const classRunsByClass = {
+      [baseClassKey]: transformClassRuns(basePayload.classRuns, route.faction, route.id, route.name),
+    };
+    const timelineSteps = transformTimelineSteps(basePayload.timeline, basePayload.dungeons);
+
+    // 并发拉取该种族支持的其他职业路线，提取各职业专属训练师 (trainersByClass)、职业起始任务 (questsByClass) 与种族专属职业任务链 (classRunsByClass)
+    const otherClasses = routeClasses.filter(c => c !== route.sampleClass);
+    const cachedRoute = cachedDataset?.routes?.[route.id];
+    const results = await Promise.allSettled(
+      otherClasses.map(async classSlug => {
+        const p = await fetchLevelUpPayload(classSlug, resolvedApiRace, route.faction, deployId, getHeaders);
+        payloadCache.set(`${route.id}:${classSlug}`, p);
+        payloadCache.set(`${resolvedApiRace}:${classSlug}:${route.faction}`, p);
+        return { classSlug, payload: p };
+      })
+    );
+
+    for (let i = 0; i < otherClasses.length; i++) {
+      const classSlug = otherClasses[i];
+      const classKey = CLASS_SLUG_TO_KEY[classSlug];
+      if (!classKey) continue;
+      const res = results[i];
+      if (res.status === 'fulfilled' && res.value?.payload) {
+        liveFetchCount++;
+        const cp = res.value.payload;
+        classRunsByClass[classKey] = transformClassRuns(cp.classRuns, route.faction, route.id, route.name);
+        if (Array.isArray(cp.bands)) {
+          for (let bIdx = 0; bIdx < bands.length; bIdx++) {
+            const targetBand = bands[bIdx];
+            const cb =
+              cp.bands.find(x => x.from === targetBand.from && x.to === targetBand.to && x.zone === targetBand.zone) ||
+              cp.bands[bIdx];
+            if (cb?.trainer?.name) {
+              targetBand.trainersByClass[classKey] = {
+                name: cb.trainer.name || '',
+                title: cb.trainer.title || '职业训练师',
+                place: cb.trainer.place || cb.trainer.zone || '',
+                x: cb.trainer.at?.x ?? null,
+                y: cb.trainer.at?.y ?? null,
+              };
+            }
+            const cQuests = transformBandQuests(cb?.quests, targetBand.from);
+            if (cQuests.length > 0) {
+              targetBand.questsByClass[classKey] = cQuests;
+            }
+          }
+        }
+      } else {
+        hasPartialFailure = true;
+        console.warn(`[WoWF] Route class fetch failed for ${route.id}/${classSlug}: ${res.reason?.message}`);
+        if (cachedRoute?.classRunsByClass?.[classKey]) {
+          classRunsByClass[classKey] = cachedRoute.classRunsByClass[classKey];
+        }
+        if (Array.isArray(cachedRoute?.bands)) {
+          for (let bIdx = 0; bIdx < bands.length && bIdx < cachedRoute.bands.length; bIdx++) {
+            const cachedBand = cachedRoute.bands[bIdx];
+            if (cachedBand?.trainersByClass?.[classKey]) {
+              bands[bIdx].trainersByClass[classKey] = cachedBand.trainersByClass[classKey];
+            }
+            if (cachedBand?.questsByClass?.[classKey]) {
+              bands[bIdx].questsByClass[classKey] = cachedBand.questsByClass[classKey];
+            }
+          }
+        }
+      }
+    }
+
     routesData[route.id] = {
       id: route.id,
       name: route.name,
       faction: route.faction,
       wowRaceKeys: route.wowRaceKeys,
-      bands: Array.isArray(payload.bands) ? payload.bands.map(transformBand) : [],
+      classRunsByClass,
+      timelineSteps,
+      bands,
     };
-    if (Array.isArray(payload.dungeons)) {
-      for (const d of payload.dungeons) {
+
+    if (Array.isArray(basePayload.dungeons)) {
+      for (const d of basePayload.dungeons) {
         if (d?.id) liveDungeonIds.add(d.id);
         mergeDungeonIntoMap(dungeonMap, d, route.faction);
       }
     }
-    if (Array.isArray(payload.professions)) {
-      for (const p of payload.professions) {
+    if (Array.isArray(basePayload.professions)) {
+      for (const p of basePayload.professions) {
         if (!p || !p.id) continue;
         const meta = professionsMap.get(p.id) || {};
         professionsMap.set(p.id, {
@@ -1410,8 +1757,8 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
         });
       }
     }
-    if (payload.items && typeof payload.items === 'object') {
-      for (const [id, item] of Object.entries(payload.items)) {
+    if (basePayload.items && typeof basePayload.items === 'object') {
+      for (const [id, item] of Object.entries(basePayload.items)) {
         if (item && item.quality >= 3 && (notableItemsMap.has(id) || notableItemsMap.size < 180)) {
           notableItemsMap.set(id, {
             id: Number(id),
@@ -1424,6 +1771,46 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
             stats: Array.isArray(item.stats) ? item.stats.map(s => `${s.label}+${s.value}`).join(' ') : '',
             effect: Array.isArray(item.effects) && item.effects[0]?.text ? item.effects[0].text : '',
           });
+        }
+      }
+    }
+  }
+
+  // 若天裔合成路线在 human/orc/night-elf/tauren 之前或之后生成，用已抓取的完整阵营路线补齐天裔全职业训练师与任务链
+  for (const skyId of ['skyborne-alliance', 'skyborne-horde']) {
+    const skyRoute = routesData[skyId];
+    if (skyRoute && skyRoute.synthesized) {
+      const baseKey = skyRoute.faction === 'horde' ? 'orc' : 'human';
+      const druidSourceKey = skyRoute.faction === 'horde' ? 'tauren' : 'night-elf';
+      const baseRoute = routesData[baseKey] || cachedDataset?.routes?.[baseKey];
+      const druidRoute = routesData[druidSourceKey] || cachedDataset?.routes?.[druidSourceKey];
+      if (baseRoute) {
+        skyRoute.classRunsByClass = {
+          ...(baseRoute.classRunsByClass || {}),
+          ...(druidRoute?.classRunsByClass?.DRUID ? { DRUID: druidRoute.classRunsByClass.DRUID } : {}),
+        };
+        skyRoute.timelineSteps = Array.isArray(baseRoute.timelineSteps)
+          ? baseRoute.timelineSteps.filter(t => (t.level || 1) >= 12)
+          : [];
+        if (Array.isArray(skyRoute.bands) && skyRoute.bands.length > 1 && Array.isArray(baseRoute.bands)) {
+          const tailBands = baseRoute.bands
+            .filter(b => (b.to ?? b.from ?? 0) >= 12)
+            .map(b => {
+              const cloned = {
+                ...b,
+                from: (b.from ?? 1) < 12 ? 12 : b.from,
+                trainersByClass: { ...(b.trainersByClass || {}) },
+                questsByClass: { ...(b.questsByClass || {}) },
+              };
+              if (!cloned.trainersByClass.DRUID && Array.isArray(druidRoute?.bands)) {
+                const db = druidRoute.bands.find(x => x.zone === b.zone) || druidRoute.bands.find(x => Math.abs((x.from || 1) - (b.from || 1)) <= 4);
+                if (db?.trainersByClass?.DRUID) {
+                  cloned.trainersByClass.DRUID = db.trainersByClass.DRUID;
+                }
+              }
+              return cloned;
+            });
+          skyRoute.bands = [skyRoute.bands[0], ...tailBands];
         }
       }
     }
@@ -1473,33 +1860,58 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     }
   }
 
-  // 2. 抓取 9 大职业的专精循环、10-60 天赋加点、双阵营职业任务与宏命令
+  // 2. 整理 9 大职业的专精循环、10-60 天赋加点、全种族专属职业任务与宏命令（优先复用上方已抓取的 payloadCache）
   for (const cls of CLASS_CONFIGS) {
     const cachedClass = cachedDataset?.classes?.[cls.key];
     let specs = [];
     const classRuns = [];
+    const seenRunKeys = new Set();
+    const appendClassRuns = list => {
+      for (const cr of list || []) {
+        const firstStep = Array.isArray(cr.steps) && cr.steps[0] ? cr.steps[0] : null;
+        const dedupKey = `${cr.faction}:${cr.level}:${cr.name}:${firstStep?.zone || ''}:${firstStep?.npc || ''}`;
+        if (!seenRunKeys.has(dedupKey)) {
+          seenRunKeys.add(dedupKey);
+          classRuns.push(cr);
+        }
+      }
+    };
+
     const primaryFaction = cls.hordeRace && !cls.allianceRace ? 'horde' : (cls.key === 'DRUID' ? 'horde' : 'alliance');
     const primaryRace = primaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
     const secondaryFaction = primaryFaction === 'alliance' ? 'horde' : 'alliance';
     const secondaryRace = secondaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
 
     try {
-      const primaryPayload = await fetchLevelUpPayload(cls.slug, primaryRace, primaryFaction, deployId, getHeaders);
-      liveFetchCount++;
+      const cachedPrimary = payloadCache.get(`${primaryRace}:${cls.slug}:${primaryFaction}`);
+      const primaryPayload =
+        cachedPrimary || (await fetchLevelUpPayload(cls.slug, primaryRace, primaryFaction, deployId, getHeaders));
+      if (!cachedPrimary) liveFetchCount++;
       specs = transformTalentBuilds(primaryPayload.talentBuilds);
-      classRuns.push(...transformClassRuns(primaryPayload.classRuns, primaryFaction));
+      appendClassRuns(transformClassRuns(primaryPayload.classRuns, primaryFaction, primaryRace));
 
-      // 如果该职业双阵营都有，额外拉取另一阵营的专属职业任务链
       if (secondaryRace) {
         try {
-          const secondaryPayload = await fetchLevelUpPayload(cls.slug, secondaryRace, secondaryFaction, deployId, getHeaders);
-          classRuns.push(...transformClassRuns(secondaryPayload.classRuns, secondaryFaction));
+          const cachedSecondary = payloadCache.get(`${secondaryRace}:${cls.slug}:${secondaryFaction}`);
+          const secondaryPayload =
+            cachedSecondary ||
+            (await fetchLevelUpPayload(cls.slug, secondaryRace, secondaryFaction, deployId, getHeaders));
+          if (!cachedSecondary) liveFetchCount++;
+          appendClassRuns(transformClassRuns(secondaryPayload.classRuns, secondaryFaction, secondaryRace));
         } catch (secErr) {
           hasPartialFailure = true;
           console.warn(`[WoWF] Secondary faction classRuns fetch failed for ${cls.key} (${secondaryFaction}): ${secErr.message}`);
           if (Array.isArray(cachedClass?.classRuns)) {
-            classRuns.push(...cachedClass.classRuns.filter(cr => cr.faction === secondaryFaction));
+            appendClassRuns(cachedClass.classRuns.filter(cr => cr.faction === secondaryFaction));
           }
+        }
+      }
+
+      // 将各路线中该职业的种族特有职业任务链一并去重收录
+      for (const route of RACE_ROUTES) {
+        const rRuns = routesData[route.id]?.classRunsByClass?.[cls.key];
+        if (Array.isArray(rRuns)) {
+          appendClassRuns(rRuns);
         }
       }
     } catch (err) {
@@ -1509,7 +1921,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
         specs = cachedClass.specs;
       }
       if (Array.isArray(cachedClass?.classRuns) && cachedClass.classRuns.length > 0) {
-        classRuns.push(...cachedClass.classRuns);
+        appendClassRuns(cachedClass.classRuns);
       }
     }
 
@@ -1657,6 +2069,7 @@ local state = {
   faction = "alliance",
   zone = "",
   activeTab = 1,
+  routeFilter = "MATCH", -- "MATCH" | "ALL"
   dungeonFilter = "MATCH", -- "MATCH" | "NEW" | "ALL"
   searchQuery = "",
 }
@@ -1665,77 +2078,224 @@ local state = {
 -- 1. 角色状态自动探测与智能匹配
 -- ============================================================================
 
-local function ResolveRouteId(wowRaceFile, faction)
-  local r = (wowRaceFile or ""):lower()
+local RACE_ID_TO_ROUTE = {
+  [1] = "human",
+  [2] = "orc",
+  [3] = "dwarf",
+  [4] = "night-elf",
+  [5] = "undead",
+  [6] = "tauren",
+  [7] = "gnome",
+  [8] = "troll",
+  [95] = "skyborne-alliance",
+  [96] = "skyborne-horde",
+}
+
+local CLASS_ID_TO_KEY = {
+  [1] = "WARRIOR",
+  [2] = "PALADIN",
+  [3] = "HUNTER",
+  [4] = "ROGUE",
+  [5] = "PRIEST",
+  [7] = "SHAMAN",
+  [8] = "MAGE",
+  [9] = "WARLOCK",
+  [11] = "DRUID",
+}
+
+local function ResolveRouteId(raceName, wowRaceFile, raceID, faction)
+  if raceID and RACE_ID_TO_ROUTE[raceID] then
+    return RACE_ID_TO_ROUTE[raceID]
+  end
+
+  local r = string.gsub(string.lower(wowRaceFile or ""), "[%s_%-]", "")
   if r == "human" then return "human" end
   if r == "dwarf" then return "dwarf" end
-  if r == "nightelf" or r == "night-elf" then return "night-elf" end
+  if r == "nightelf" then return "night-elf" end
   if r == "gnome" then return "gnome" end
   if r == "orc" then return "orc" end
   if r == "scourge" or r == "undead" then return "undead" end
   if r == "tauren" then return "tauren" end
   if r == "troll" then return "troll" end
-  if r:find("skyborne") or r:find("highelf") or r:find("windshaper") then
+  if string.find(r, "windshaper", 1, true) or string.find(r, "skybornehorde", 1, true) then
+    return "skyborne-horde"
+  end
+  if string.find(r, "highelf", 1, true) or string.find(r, "skybornealliance", 1, true) then
+    return "skyborne-alliance"
+  end
+  if string.find(r, "skyborne", 1, true) then
     return faction == "horde" and "skyborne-horde" or "skyborne-alliance"
   end
+
+  local zh = raceName or ""
+  if string.find(zh, "人类", 1, true) then return "human" end
+  if string.find(zh, "矮人", 1, true) then return "dwarf" end
+  if string.find(zh, "暗夜", 1, true) then return "night-elf" end
+  if string.find(zh, "侏儒", 1, true) then return "gnome" end
+  if string.find(zh, "兽人", 1, true) then return "orc" end
+  if string.find(zh, "亡灵", 1, true) or string.find(zh, "被遗忘者", 1, true) then return "undead" end
+  if string.find(zh, "牛头人", 1, true) then return "tauren" end
+  if string.find(zh, "巨魔", 1, true) then return "troll" end
+  if string.find(zh, "塑风", 1, true) then return "skyborne-horde" end
+  if string.find(zh, "高阶", 1, true) then return "skyborne-alliance" end
+  if string.find(zh, "天裔", 1, true) then
+    return faction == "horde" and "skyborne-horde" or "skyborne-alliance"
+  end
+
   return faction == "horde" and "orc" or "human"
 end
 
-local function DetectActiveTalentSpec()
-  if not GetNumTalentTabs or not GetTalentTabInfo then
-    return 1
+local function ResolveClassKey(className, classFile, classID)
+  if classID and CLASS_ID_TO_KEY[classID] then
+    return CLASS_ID_TO_KEY[classID]
   end
-  local numTabs = GetNumTalentTabs() or 0
-  local bestTab = 1
-  local maxPoints = -1
-  for i = 1, numTabs do
-    local name, _, pointsSpent = GetTalentTabInfo(i)
-    local pts = tonumber(pointsSpent) or tonumber(name) or 0
-    if pts > maxPoints then
-      maxPoints = pts
-      bestTab = i
+  if classFile then
+    local upper = string.upper(classFile)
+    if Data.classes and Data.classes[upper] then
+      return upper
     end
   end
-  return bestTab
+  local zh = className or ""
+  if string.find(zh, "战士", 1, true) then return "WARRIOR" end
+  if string.find(zh, "圣骑士", 1, true) or string.find(zh, "骑士", 1, true) then return "PALADIN" end
+  if string.find(zh, "猎人", 1, true) then return "HUNTER" end
+  if string.find(zh, "潜行者", 1, true) or string.find(zh, "盗贼", 1, true) then return "ROGUE" end
+  if string.find(zh, "牧师", 1, true) then return "PRIEST" end
+  if string.find(zh, "萨满", 1, true) then return "SHAMAN" end
+  if string.find(zh, "法师", 1, true) then return "MAGE" end
+  if string.find(zh, "术士", 1, true) then return "WARLOCK" end
+  if string.find(zh, "德鲁伊", 1, true) then return "DRUID" end
+  return "WARRIOR"
+end
+
+local function DetectActiveTalentSpec(classFile)
+  local cls = Data.classes and Data.classes[classFile or state.classKey]
+
+  -- 1. 优先支持无限服 (Interface: 16001) C_ClassTalents + C_Traits 天赋树 API
+  if C_ClassTalents and C_Traits and C_ClassTalents.GetActiveConfigID and cls and cls.specs then
+    local okCfgId, configID = pcall(C_ClassTalents.GetActiveConfigID)
+    if okCfgId and configID then
+      local okCfg, cfgInfo = pcall(C_Traits.GetConfigInfo, configID)
+      local treeID = cfgInfo and cfgInfo.treeIDs and cfgInfo.treeIDs[1]
+      if treeID then
+        local okNodes, nodeIDs = pcall(C_Traits.GetTreeNodes, treeID)
+        if okNodes and type(nodeIDs) == "table" then
+          local purchasedByName = {}
+          local totalPurchased = 0
+          for _, nodeID in ipairs(nodeIDs) do
+            local okNode, nodeInfo = pcall(C_Traits.GetNodeInfo, configID, nodeID)
+            local ranks = nodeInfo and (nodeInfo.activeRank or nodeInfo.currentRank or nodeInfo.ranksPurchased) or 0
+            if ranks and ranks > 0 then
+              local entryID = (nodeInfo.activeEntry and nodeInfo.activeEntry.entryID) or (nodeInfo.entryIDs and nodeInfo.entryIDs[1])
+              if entryID then
+                local okEntry, entryInfo = pcall(C_Traits.GetEntryInfo, configID, entryID)
+                if okEntry and entryInfo and entryInfo.definitionID then
+                  local okDef, defInfo = pcall(C_Traits.GetDefinitionInfo, entryInfo.definitionID)
+                  local talentName = defInfo and defInfo.overrideName
+                  if (not talentName or talentName == "") and defInfo and defInfo.spellID then
+                    if C_Spell and C_Spell.GetSpellName then
+                      local okSp, spName = pcall(C_Spell.GetSpellName, defInfo.spellID)
+                      if okSp then talentName = spName end
+                    elseif GetSpellInfo then
+                      talentName = GetSpellInfo(defInfo.spellID)
+                    end
+                  end
+                  if talentName and talentName ~= "" then
+                    purchasedByName[talentName] = (purchasedByName[talentName] or 0) + ranks
+                    totalPurchased = totalPurchased + ranks
+                  end
+                end
+              end
+            end
+          end
+          if totalPurchased > 0 then
+            local bestSpec = 1
+            local bestScore = -1
+            for idx, sp in ipairs(cls.specs) do
+              local score = 0
+              for _, st in ipairs(sp.steps or {}) do
+                if st.name and purchasedByName[st.name] then
+                  score = score + purchasedByName[st.name]
+                end
+              end
+              if score > bestScore then
+                bestScore = score
+                bestSpec = idx
+              end
+            end
+            if bestScore > 0 then
+              return bestSpec
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- 2. 兼容传统 GetNumTalentTabs / GetTalentTabInfo
+  if GetNumTalentTabs and GetTalentTabInfo then
+    local okTabs, numTabs = pcall(GetNumTalentTabs)
+    numTabs = (okTabs and tonumber(numTabs)) or 0
+    if numTabs > 0 then
+      local bestTab = 1
+      local maxPoints = -1
+      for i = 1, numTabs do
+        local okInfo, a1, a2, a3, a4, a5 = pcall(GetTalentTabInfo, i)
+        if okInfo then
+          local pts = tonumber(a3) or tonumber(a5) or tonumber(a1) or 0
+          if pts > maxPoints then
+            maxPoints = pts
+            bestTab = i
+          end
+        end
+      end
+      if maxPoints > 0 then
+        return bestTab
+      end
+    end
+  end
+
+  return nil
 end
 
 local function SyncPlayerCharacter(overrideLevel)
-  local lvl = overrideLevel or (UnitLevel and UnitLevel("player")) or 1
+  local rawLvl = overrideLevel or (UnitLevel and UnitLevel("player")) or state.level or 1
+  local lvl = tonumber(rawLvl) or 1
   if lvl < 1 then lvl = 1 end
   if lvl > 60 then lvl = 60 end
 
-  local classFile = "WARRIOR"
+  local className, classFile, classID
   if UnitClass then
-    local _, cf = UnitClass("player")
-    if cf and Data.classes and Data.classes[cf] then
-      classFile = cf
-    end
+    className, classFile, classID = UnitClass("player")
   end
+  local resolvedClass = ResolveClassKey(className, classFile, classID)
 
-  local engFaction = (UnitFactionGroup and UnitFactionGroup("player")) or "Alliance"
-  local faction = (engFaction == "Horde") and "horde" or "alliance"
+  local engFaction = (UnitFactionGroup and UnitFactionGroup("player")) or nil
+  local faction = (engFaction == "Horde") and "horde" or ((engFaction == "Alliance") and "alliance" or state.faction or "alliance")
 
-  local raceFile = "Human"
+  local raceName, raceFile, raceID
   if UnitRace then
-    local _, rf = UnitRace("player")
-    if rf then
-      raceFile = rf
-    end
+    raceName, raceFile, raceID = UnitRace("player")
   end
-  local routeId = ResolveRouteId(raceFile, faction)
+  local routeId = ResolveRouteId(raceName, raceFile, raceID, faction)
+  local routeObj = Data.routes and Data.routes[routeId]
+  if routeObj and routeObj.faction then
+    faction = routeObj.faction
+  end
 
-  state.zone = (GetRealZoneText and GetRealZoneText()) or ""
+  state.zone = (GetRealZoneText and GetRealZoneText()) or state.zone or ""
 
   if state.autoFollow then
+    local prevClass = state.classKey
     state.level = lvl
-    state.classKey = classFile
+    state.classKey = resolvedClass
     state.faction = faction
     state.routeId = routeId
-    local detectedSpec = DetectActiveTalentSpec()
-    local clsData = Data.classes and Data.classes[classFile]
-    if clsData and clsData.specs and clsData.specs[detectedSpec] then
+    local detectedSpec = DetectActiveTalentSpec(resolvedClass)
+    local clsData = Data.classes and Data.classes[resolvedClass]
+    if detectedSpec and clsData and clsData.specs and clsData.specs[detectedSpec] then
       state.specIndex = detectedSpec
-    else
+    elseif prevClass ~= resolvedClass or not state.specIndex or not (clsData and clsData.specs and clsData.specs[state.specIndex]) then
       state.specIndex = 1
     end
   end
@@ -1939,6 +2499,103 @@ local function GetMatchedDungeons(level)
   return list
 end
 
+local function GetBandTrainer(band, classKey, faction)
+  if not band then return nil end
+  local ck = classKey or state.classKey or "WARRIOR"
+  if band.trainersByClass and band.trainersByClass[ck] and band.trainersByClass[ck].name ~= "" then
+    return band.trainersByClass[ck]
+  end
+  -- 1. 先在当前种族路线的同一区域 (band.zone) 相邻阶段中查找（离开 1-5 新手谷后优先匹配城镇训练师）
+  local curRoute = GetCurrentRoute()
+  if curRoute and curRoute.bands then
+    local bestTrainer = nil
+    local bestDist = 999
+    local refLvl = state.level or band.from or 1
+    for _, ob in ipairs(curRoute.bands) do
+      if ob.zone == band.zone and ob.trainersByClass and ob.trainersByClass[ck] and ob.trainersByClass[ck].name ~= "" then
+        local mid = ((ob.from or 1) + (ob.to or 60)) / 2
+        local dist = math.abs(mid - refLvl)
+        if (band.from or 1) >= 5 and (ob.to or 60) <= 5 then
+          dist = dist + 20
+        end
+        if dist < bestDist then
+          bestDist = dist
+          bestTrainer = ob.trainersByClass[ck]
+        end
+      end
+    end
+    if bestTrainer then
+      return bestTrainer
+    end
+  end
+  -- 2. 若当前种族默认未收录该职业训练师，从同阵营其他种族相同区域阶段中查找该职业训练师
+  local targetFaction = faction or state.faction or "alliance"
+  for _, rObj in pairs(Data.routes or {}) do
+    if rObj and rObj.faction == targetFaction and rObj.bands then
+      for _, ob in ipairs(rObj.bands) do
+        if ob.zone == band.zone and ob.trainersByClass and ob.trainersByClass[ck] and ob.trainersByClass[ck].name ~= "" then
+          return ob.trainersByClass[ck]
+        end
+      end
+    end
+  end
+  if band.trainer and band.trainer.name ~= "" then
+    if ck == "WARRIOR" or string.find(band.trainer.title or "", "全职业", 1, true) then
+      return band.trainer
+    end
+  end
+  return nil
+end
+
+local function GetBandQuests(band, classKey)
+  if not band then return {} end
+  local ck = classKey or state.classKey or "WARRIOR"
+  if band.questsByClass and band.questsByClass[ck] and #band.questsByClass[ck] > 0 then
+    return band.questsByClass[ck]
+  end
+  return band.quests or {}
+end
+
+local function GetCurrentClassRuns(route, cls, faction)
+  local r = route or GetCurrentRoute()
+  local c = cls or GetCurrentClassData()
+  local ck = state.classKey or "WARRIOR"
+  local f = faction or state.faction or "alliance"
+
+  if r and r.classRunsByClass and r.classRunsByClass[ck] and #r.classRunsByClass[ck] > 0 then
+    return r.classRunsByClass[ck]
+  end
+  local fallback = {}
+  local anyFactionFallback = {}
+  if c and c.classRuns then
+    for _, cr in ipairs(c.classRuns) do
+      if cr.faction == f or cr.faction == "both" then
+        if not cr.raceId or cr.raceId == state.routeId then
+          table.insert(fallback, cr)
+        end
+        table.insert(anyFactionFallback, cr)
+      end
+    end
+  end
+  if #fallback > 0 then
+    return fallback
+  end
+  return anyFactionFallback
+end
+
+local function GetBandTimelineSteps(route, fromLvl, toLvl)
+  local r = route or GetCurrentRoute()
+  if not r or not r.timelineSteps then return {} end
+  local steps = {}
+  for _, st in ipairs(r.timelineSteps) do
+    local lv = st.level or 1
+    if lv >= (fromLvl or 1) and lv <= (toLvl or 60) then
+      table.insert(steps, st)
+    end
+  end
+  return steps
+end
+
 local function MatchesSearch(text)
   if not state.searchQuery or state.searchQuery == "" then
     return true
@@ -2058,24 +2715,29 @@ local function RenderTabSmartMatch()
   local route = GetCurrentRoute()
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
+  local recProfs = (spec and spec.recommendedProfs) or ""
 
   -- 1. 角色智能匹配总览卡
   local band = GetMatchedBand(route, lvl)
   local phase = GetMatchedPhase(spec, lvl)
   local talentStep = GetMatchedTalentStep(spec, lvl)
   local matchedDungeons = GetMatchedDungeons(lvl)
+  local matchedClassRuns = GetCurrentClassRuns(route, cls, state.faction)
 
   local overviewLines = {}
+  local zoneTag = (state.zone and state.zone ~= "") and ("  ·  |cff00ff96当前所在:|r " .. state.zone) or ""
   table.insert(overviewLines, string.format(
-    "|cff00ffcc当前匹配角色:|r |cffffd100Lv.%d %s (%s)|r  ·  |cff99e6ff升级路线:|r %s (%s)",
+    "|cff00ffcc当前匹配角色:|r |cffffd100Lv.%d %s · %s (%s)|r  ·  |cff99e6ff阵营路线:|r %s (%s)%s",
     lvl,
+    route and route.name or state.routeId,
     cls and cls.name or state.classKey,
     spec and spec.name or "默认专精",
     route and route.name or state.routeId,
-    state.faction == "horde" and "|cffff5555部落|r" or "|cff44aaff联盟|r"
+    state.faction == "horde" and "|cffff5555部落|r" or "|cff44aaff联盟|r",
+    zoneTag
   ))
-  if spec and spec.recommendedProfs and spec.recommendedProfs ~= "" then
-    table.insert(overviewLines, "|cff00ff96推荐搭配专业:|r " .. spec.recommendedProfs .. "   |cffaaaaaa(上方控制栏可自由切换等级、职业、专精与种族路线)|r")
+  if recProfs ~= "" then
+    table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs .. "   |cffaaaaaa(上方控制栏可自由切换等级、职业、专精与种族路线)|r")
   end
   if lvl >= 14 then
     table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r，并在野外利用制皮【营地帐篷】快速攒双倍经验！")
@@ -2084,30 +2746,63 @@ local function RenderTabSmartMatch()
   local c1 = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
     c1, y,
-    string.format("|cff00ffcc🎯 Lv.%d %s·%s 智能匹配总览|r", lvl, cls and cls.name or "", spec and spec.name or ""),
+    string.format("|cff00ffcc🎯 Lv.%d %s·%s·%s 智能匹配总览|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
     table.concat(overviewLines, "\n"),
     { 0.0, 0.85, 0.7, 0.95 },
     { 0.05, 0.14, 0.16, 0.95 },
     "|cff00ffccwowf.io 实时引擎|r"
   )
 
-  -- 2. 当前等级推荐区域与营地导航
+  -- 2. 当前等级推荐区域与营地导航（按当前种族+职业+专精精准匹配）
   if band then
     local bandLines = {}
     local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
     local coordStr = (band.hub and band.hub.x and band.hub.y) and string.format(" (%.1f, %.1f)", band.hub.x, band.hub.y) or ""
     table.insert(bandLines, string.format("|cffffd100主推练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
 
-    if band.trainer and band.trainer.name ~= "" then
-      local tCoord = (band.trainer.x and band.trainer.y) and string.format(" (%.1f, %.1f)", band.trainer.x, band.trainer.y) or ""
-      table.insert(bandLines, string.format("|cff71d5ff职业训练师:|r %s (%s · %s)%s", band.trainer.name, band.trainer.title or "", band.trainer.place or "", tCoord))
+    if band.hubs and #band.hubs > 1 then
+      local subHubs = {}
+      for _, h in ipairs(band.hubs) do
+        local hc = (h.x and h.y) and string.format("(%.1f,%.1f)", h.x, h.y) or ""
+        local activeMark = (lvl >= (h.from or 1) and lvl <= (h.to or 60)) and "|cff00ff00★|r" or ""
+        table.insert(subHubs, string.format("%s%s[Lv.%d-%d]%s", activeMark, h.name or "", h.from or band.from, h.to or band.to, hc))
+      end
+      table.insert(bandLines, "|cff99e6ff本区分阶段据点:|r " .. table.concat(subHubs, " → "))
+    end
+
+    if band.flights and #band.flights > 0 then
+      local fList = {}
+      for _, fl in ipairs(band.flights) do
+        local fc = (fl.x and fl.y) and string.format(" (%.1f, %.1f)", fl.x, fl.y) or ""
+        table.insert(fList, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
+      end
+      table.insert(bandLines, "|cff99e6ff✈️ 解锁飞行点:|r " .. table.concat(fList, "  /  "))
+    end
+
+    local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
+    if matchedTrainer and matchedTrainer.name ~= "" then
+      local tCoord = (matchedTrainer.x and matchedTrainer.y) and string.format(" (%.1f, %.1f)", matchedTrainer.x, matchedTrainer.y) or ""
+      table.insert(bandLines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or band.zone or "", tCoord))
+    end
+
+    local matchedQuests = GetBandQuests(band, state.classKey)
+    if matchedQuests and #matchedQuests > 0 then
+      local qLines = {}
+      for _, q in ipairs(matchedQuests) do
+        local qc = (q.x and q.y) and string.format(" (%.1f,%.1f)", q.x, q.y) or ""
+        local qTag = (q.kind == "class") and "|cff00ffcc[★职业专属]|r " or "|cffffd100[关键任务]|r "
+        table.insert(qLines, string.format("  • %s|cffffd100%s|r (Lv.%d) — %s %s%s", qTag, q.name or "", q.level or band.from, q.place or "", q.npc or "", qc))
+      end
+      table.insert(bandLines, "|cff00ffcc本阶段关键/职业任务:|r\n" .. table.concat(qLines, "\n"))
     end
 
     if band.professions and #band.professions > 0 then
       local pList = {}
       for _, p in ipairs(band.professions) do
         local pc = (p.x and p.y) and string.format("(%.1f,%.1f)", p.x, p.y) or ""
-        table.insert(pList, string.format("|cff00ff96[%s]|r %s %s", p.name, p.trainer or "", pc))
+        local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
+        local recMark = isRec and "|cff00ff00★推荐|r" or ""
+        table.insert(pList, string.format("|cff00ff96[%s%s]|r %s %s", p.name, recMark, p.trainer or "", pc))
       end
       table.insert(bandLines, "|cff00ff96本区专业训练师:|r " .. table.concat(pList, "  /  "))
     end
@@ -2124,7 +2819,7 @@ local function RenderTabSmartMatch()
     local cBand = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cBand, y,
-      string.format("|cffffd100🗺️ 当前等级升级导航 (Lv.%d–%d · %s)|r", band.from, band.to, band.zone or ""),
+      string.format("|cffffd100🗺️ 当前角色升级导航 (Lv.%d–%d · %s · %s)|r", band.from, band.to, band.zone or "", route and route.name or ""),
       table.concat(bandLines, "\n"),
       { 0.9, 0.75, 0.2, 0.9 },
       { 0.11, 0.10, 0.06, 0.92 },
@@ -2198,31 +2893,30 @@ local function RenderTabSmartMatch()
     )
   end
 
-  -- 5. 当前等级职业任务与关键里程碑
+  -- 5. 当前等级种族+职业专属任务链与关键里程碑
   local milestoneLines = {}
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
       if math.abs((m.level or 1) - lvl) <= 8 or (m.level <= lvl and m.level >= lvl - 10) then
-        local tag = (m.level == lvl) and "|cff00ff00[当前等级必做]|r " or string.format("|cffffd100[Lv.%d 里程碑]|r ", m.level)
+        local tag = (m.level == lvl) and "|cff00ff00[当前等级必做]|r " or string.format("|cffffd100[Lv.%d 专精要点]|r ", m.level)
         table.insert(milestoneLines, "  • " .. tag .. (m.text or ""))
       end
     end
   end
-  if cls and cls.classRuns then
-    for _, cr in ipairs(cls.classRuns) do
-      if (cr.faction == state.faction or cr.faction == "both") and lvl >= (cr.level - 4) and lvl <= (cr.to + 8) then
-        local teachStr = (cr.teaches and cr.teaches ~= "") and (" → 奖励技能: |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-        local firstStep = cr.steps and cr.steps[1]
-        local npcInfo = firstStep and string.format(" (起始: %s %s %s)", firstStep.zone or "", firstStep.place or "", firstStep.npc or "") or ""
-        table.insert(milestoneLines, string.format("  • |cff00ffcc[Lv.%d 职业任务链]|r |cffffd100%s|r%s%s", cr.level, cr.name, teachStr, npcInfo))
-      end
+  for _, cr in ipairs(matchedClassRuns) do
+    if lvl >= (cr.level - 4) and lvl <= (cr.to + 10) then
+      local teachStr = (cr.teaches and cr.teaches ~= "") and (" → 奖励技能: |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+      local firstStep = cr.steps and cr.steps[1]
+      local sc = (firstStep and firstStep.x and firstStep.y) and string.format(" (%.1f, %.1f)", firstStep.x, firstStep.y) or ""
+      local npcInfo = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
+      table.insert(milestoneLines, string.format("  • |cff00ffcc[Lv.%d %s·%s专属任务链]|r |cffffd100%s|r%s%s", cr.level, route and route.name or "", cls and cls.name or "", cr.name, teachStr, npcInfo))
     end
   end
   if #milestoneLines > 0 then
     local cMile = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cMile, y,
-      "|cff00ff96📌 当前阶段关键里程碑与职业任务|r",
+      string.format("|cff00ff96📌 当前阶段 %s·%s 关键里程碑与专属职业任务|r", route and route.name or "", cls and cls.name or ""),
       table.concat(milestoneLines, "\n"),
       { 0.2, 0.8, 0.5, 0.85 },
       { 0.06, 0.12, 0.09, 0.92 }
@@ -2266,52 +2960,255 @@ end
 local function RenderTabRoutes()
   local cardIdx = 1
   local y = 6
+  local lvl = state.level
   local route = GetCurrentRoute()
+  local cls = GetCurrentClassData()
+  local spec = GetCurrentSpecData()
   if not route or not route.bands then
     HideUnusedCards(1)
     return
   end
 
+  local recProfs = (spec and spec.recommendedProfs) or ""
+  local matchedClassRuns = GetCurrentClassRuns(route, cls, state.faction)
+  local phase = GetMatchedPhase(spec, lvl)
+  local isMatchMode = (state.routeFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
+  local toggleBtnLabel = state.routeFilter == "MATCH" and "📋 查看 1–60 全程" or "🎯 仅看当前等级匹配"
+  local modeDesc = state.routeFilter == "MATCH"
+    and string.format("🎯 已按您的角色自动聚焦 |cffffd100Lv.%d|r 当前阶段及后续衔接路线（点击右上角按钮可展开 1–60 全部 %d 个阶段）", lvl, #route.bands)
+    or string.format("📋 当前显示 1–60 级完整全部 %d 个阶段（点击右上角按钮可聚焦回当前角色等级阶段）", #route.bands)
+
+  local headerLines = {
+    string.format(
+      "|cff00ffcc当前匹配角色:|r |cffffd100Lv.%d %s · %s (%s)|r  ·  |cff99e6ff阵营:|r %s%s",
+      lvl,
+      route.name or state.routeId,
+      cls and cls.name or state.classKey,
+      spec and spec.name or "默认专精",
+      route.faction == "horde" and "|cffff5555部落|r" or "|cff44aaff联盟|r",
+      (state.zone and state.zone ~= "") and ("  ·  |cff00ff96当前区域:|r " .. state.zone) or ""
+    ),
+    modeDesc,
+  }
+  if recProfs ~= "" then
+    table.insert(headerLines, "|cff00ff96专精推荐练级专业:|r " .. recProfs .. "   |cffaaaaaa(路线中带 ★ 标记的专业训练师可顺路学习)|r")
+  end
+
   local headerCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
     headerCard, y,
-    string.format("|cff00ffcc🗺️ %s (%s) 1–60 级完整升级路线图|r", route.name, route.faction == "horde" and "部落" or "联盟"),
-    "以下路线同步自 |cffffd100wowf.io/zh/level-up|r。高亮卡片为您当前等级所在阶段，点击右侧按钮可在聊天框输出/标记导航坐标。",
-    { 0.0, 0.8, 0.7, 0.9 },
-    { 0.05, 0.13, 0.14, 0.92 },
-    string.format("共 %d 个阶段", #route.bands)
+    string.format("|cff00ffcc🗺️ %s · %s (%s) 专属升级路线 (当前 Lv.%d)|r", route.name, cls and cls.name or "", spec and spec.name or "", lvl),
+    table.concat(headerLines, "\n"),
+    { 0.0, 0.85, 0.7, 0.95 },
+    { 0.05, 0.14, 0.16, 0.95 },
+    nil,
+    toggleBtnLabel,
+    function()
+      if state.routeFilter == "MATCH" then
+        state.routeFilter = "ALL"
+      else
+        state.routeFilter = "MATCH"
+      end
+      RefreshUI()
+    end
   )
 
-  for _, b in ipairs(route.bands) do
-    local isCurrent = (state.level >= b.from and state.level <= b.to)
+  -- 角色专属职业任务链与当前阶段手法/专精里程碑摘要卡
+  local charGuideLines = {}
+  if phase then
+    table.insert(charGuideLines, string.format(
+      "|cff71d5ff⚔️ 当前等级 (%s·Lv.%d-%d) 练级手法:|r 常驻 %s  |  起手 %s  |  循环 %s",
+      spec and spec.name or "", phase.from or 1, phase.to or 60, phase.keep or "无", phase.open or "平砍", phase.cycle or "平砍"
+    ))
+  end
+  if #matchedClassRuns > 0 then
+    for _, cr in ipairs(matchedClassRuns) do
+      if not isMatchMode or (cr.level <= lvl + 15 and cr.to >= lvl - 10) then
+        local teachStr = (cr.teaches and cr.teaches ~= "") and (" → 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+        local firstStep = cr.steps and cr.steps[1]
+        local sc = (firstStep and firstStep.x and firstStep.y) and string.format(" (%.1f, %.1f)", firstStep.x, firstStep.y) or ""
+        local stepSummary = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
+        local activeTag = (lvl >= cr.level and lvl <= cr.to + 4) and "|cff00ff00★[当前可做]|r " or ""
+        table.insert(charGuideLines, string.format("  • %s|cff00ffcc[Lv.%d %s·%s职业任务]|r |cffffd100%s|r%s%s", activeTag, cr.level, route.name, cls and cls.name or "", cr.name, teachStr, stepSummary))
+      end
+    end
+  end
+  if spec and spec.musts then
+    for _, m in ipairs(spec.musts) do
+      if not isMatchMode or (m.level >= lvl - 6 and m.level <= lvl + 15) then
+        local activeTag = (m.level == lvl) and "|cff00ff00★[本级必做]|r " or ""
+        table.insert(charGuideLines, string.format("  • %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, m.level, spec.name or "专精", m.text or ""))
+      end
+    end
+  end
+  if #charGuideLines > 0 then
+    local charCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+    y = LayoutCard(
+      charCard, y,
+      string.format("|cff00ff96📌 %s · %s (%s) 升级路线核心职业任务与专精里程碑|r", route.name, cls and cls.name or "", spec and spec.name or ""),
+      table.concat(charGuideLines, "\n"),
+      { 0.2, 0.82, 0.52, 0.9 },
+      { 0.06, 0.13, 0.10, 0.93 },
+      "角色专属匹配"
+    )
+  end
+
+  -- 整理要渲染的阶段列表：在 MATCH 模式下将当前等级所在阶段置顶，并展示前后衔接阶段
+  local orderedBands = {}
+  if isMatchMode then
+    local currentBands = {}
+    local upcomingBands = {}
+    local recentBands = {}
+    for idx, b in ipairs(route.bands) do
+      if lvl >= b.from and lvl <= b.to then
+        table.insert(currentBands, { idx = idx, band = b })
+      elseif b.from > lvl and b.from <= lvl + 16 then
+        table.insert(upcomingBands, { idx = idx, band = b })
+      elseif b.to < lvl and b.to >= lvl - 4 then
+        table.insert(recentBands, { idx = idx, band = b })
+      end
+    end
+    for _, item in ipairs(currentBands) do table.insert(orderedBands, item) end
+    for _, item in ipairs(upcomingBands) do table.insert(orderedBands, item) end
+    for _, item in ipairs(recentBands) do table.insert(orderedBands, item) end
+    if #orderedBands == 0 then
+      for idx, b in ipairs(route.bands) do
+        table.insert(orderedBands, { idx = idx, band = b })
+      end
+    end
+  else
+    for idx, b in ipairs(route.bands) do
+      table.insert(orderedBands, { idx = idx, band = b })
+    end
+  end
+
+  for _, entry in ipairs(orderedBands) do
+    local b = entry.band
+    local stepIdx = entry.idx
+    local isCurrent = (lvl >= b.from and lvl <= b.to)
     local hubName = (b.hub and b.hub.name ~= "") and b.hub.name or b.zone
     local coordText = (b.hub and b.hub.x and b.hub.y) and string.format(" (%.1f, %.1f)", b.hub.x, b.hub.y) or ""
-    local searchBlob = (b.zone or "") .. " " .. (hubName or "")
+    local matchedTrainer = GetBandTrainer(b, state.classKey, state.faction)
+    local matchedQuests = GetBandQuests(b, state.classKey)
+    local searchBlob = (b.zone or "") .. " " .. (hubName or "") .. " " .. ((matchedTrainer and matchedTrainer.name) or "")
 
     if MatchesSearch(searchBlob) then
       local lines = {
         string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordText),
       }
-      if b.trainer and b.trainer.name ~= "" then
-        local tc = (b.trainer.x and b.trainer.y) and string.format(" (%.1f, %.1f)", b.trainer.x, b.trainer.y) or ""
-        table.insert(lines, string.format("|cff71d5ff职业训练师:|r %s (%s)%s", b.trainer.name, b.trainer.place or b.zone or "", tc))
+
+      if b.hubs and #b.hubs > 1 then
+        local subHubs = {}
+        for _, h in ipairs(b.hubs) do
+          local hc = (h.x and h.y) and string.format("(%.1f,%.1f)", h.x, h.y) or ""
+          table.insert(subHubs, string.format("%s[Lv.%d-%d]%s", h.name or "", h.from or b.from, h.to or b.to, hc))
+        end
+        table.insert(lines, "|cff99e6ff分阶段据点:|r " .. table.concat(subHubs, " → "))
       end
+
+      if b.flights and #b.flights > 0 then
+        local flNames = {}
+        for _, fl in ipairs(b.flights) do
+          local fc = (fl.x and fl.y) and string.format(" (%.1f, %.1f)", fl.x, fl.y) or ""
+          table.insert(flNames, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
+        end
+        table.insert(lines, "|cff99e6ff✈️ 解锁飞行点:|r " .. table.concat(flNames, " · "))
+      end
+
+      if matchedTrainer and matchedTrainer.name ~= "" then
+        local tc = (matchedTrainer.x and matchedTrainer.y) and string.format(" (%.1f, %.1f)", matchedTrainer.x, matchedTrainer.y) or ""
+        table.insert(lines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or b.zone or "", tc))
+      end
+
+      if matchedQuests and #matchedQuests > 0 then
+        for _, q in ipairs(matchedQuests) do
+          local qc = (q.x and q.y) and string.format(" (%.1f, %.1f)", q.x, q.y) or ""
+          local qTag = (q.kind == "class") and string.format("|cff00ffcc[★%s职业任务]|r", cls and cls.name or "") or "|cffffd100[区域关键任务]|r"
+          table.insert(lines, string.format("%s |cffffd100%s|r (Lv.%d) — %s %s%s", qTag, q.name or "", q.level or b.from, q.place or "", q.npc or "", qc))
+        end
+      end
+
+      -- 穿插属于本阶段等级区间的种族+职业专属任务链
+      for _, cr in ipairs(matchedClassRuns) do
+        if cr.level >= b.from and cr.level <= b.to then
+          local teachStr = (cr.teaches and cr.teaches ~= "") and (" → 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
+          local firstStep = cr.steps and cr.steps[1]
+          local sc = (firstStep and firstStep.x and firstStep.y) and string.format(" (%.1f, %.1f)", firstStep.x, firstStep.y) or ""
+          local npcInfo = firstStep and string.format(" — %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
+          table.insert(lines, string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r |cffffd100%s|r%s%s", cr.level, cls and cls.name or "", cr.name, teachStr, npcInfo))
+        end
+      end
+
+      -- 穿插属于本阶段等级区间的专精关键里程碑
+      if spec and spec.musts then
+        for _, m in ipairs(spec.musts) do
+          if m.level >= b.from and m.level <= b.to then
+            table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", m.level, spec.name or "", m.text or ""))
+          end
+        end
+      end
+
       if b.professions and #b.professions > 0 then
         local pNames = {}
         for _, p in ipairs(b.professions) do
-          table.insert(pNames, string.format("|cff00ff96[%s]|r %s", p.name, p.trainer or ""))
+          local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
+          local recTag = isRec and "|cff00ff00★推荐|r" or ""
+          table.insert(pNames, string.format("|cff00ff96[%s%s]|r %s", p.name, recTag, p.trainer or ""))
         end
         table.insert(lines, "|cff00ff96顺路学专业:|r " .. table.concat(pNames, " · "))
       end
+
+      -- 穿插本阶段主城副本任务备战、跨区交通航线与推荐进本节点 (timelineSteps)
+      local tlSteps = GetBandTimelineSteps(route, b.from, b.to)
+      local seenDungeonVisit = {}
+      local seenCityVisit = {}
+      local seenTravelVisit = {}
+      local VIA_LABELS = {
+        tram = "矿道地铁",
+        boat = "跨海轮船",
+        zeppelin = "飞艇航线",
+        flight = "飞行航线",
+        walk = "陆路转场",
+      }
+      for _, tl in ipairs(tlSteps) do
+        if tl.kind == "city" and tl.city and tl.quests and #tl.quests > 0 then
+          local cKey = tl.city .. ":" .. tostring(tl.level)
+          if not seenCityVisit[cKey] then
+            seenCityVisit[cKey] = true
+            local qNames = {}
+            for _, cq in ipairs(tl.quests) do
+              local cqc = (cq.x and cq.y) and string.format("(%.1f,%.1f)", cq.x, cq.y) or ""
+              table.insert(qNames, string.format("|cffffd100[%s]|r(%s %s%s)", cq.name or "", cq.dungeon or "", cq.npc or "", cqc))
+            end
+            table.insert(lines, string.format("|cffffa500🏛️ [Lv.%d 主城副本任务备战 · %s]|r %s", tl.level or b.from, tl.city, table.concat(qNames, " / ")))
+          end
+        elseif tl.kind == "dungeon" and tl.name and not seenDungeonVisit[tl.name] then
+          seenDungeonVisit[tl.name] = true
+          table.insert(lines, string.format("|cffff8000🏰 [Lv.%d 推荐进本 · %s]|r 适龄 Lv.%d–%d (%s)", tl.level or b.from, tl.name, tl.minLevel or b.from, tl.maxLevel or b.to, tl.zone or ""))
+        elseif tl.kind == "travel" and (tl.from ~= "" or tl.to ~= "") then
+          local tKey = tostring(tl.level) .. ":" .. (tl.from or "") .. "->" .. (tl.to or "") .. ":" .. (tl.via or "")
+          if not seenTravelVisit[tKey] then
+            seenTravelVisit[tKey] = true
+            local viaText = VIA_LABELS[tl.via or "walk"] or (tl.via or "转场")
+            local destText = (tl.place and tl.place ~= "" and tl.place ~= tl.to) and (tl.to .. "·" .. tl.place) or (tl.to or "")
+            local flCoord = (tl.flightX and tl.flightY) and string.format(" (%.1f, %.1f)", tl.flightX, tl.flightY) or ""
+            local flText = (tl.flightNpc and tl.flightNpc ~= "")
+              and string.format(" — 顺路开鸟点: %s %s%s", tl.flightZone or "", tl.flightNpc, flCoord)
+              or ""
+            table.insert(lines, string.format("|cff99e6ff⛵ [Lv.%d 跨区交通 · %s]|r %s → |cff00ffcc%s|r%s", tl.level or b.from, viaText, tl.from or "起点", destText, flText))
+          end
+        end
+      end
+
       if b.dungeonQuests and #b.dungeonQuests > 0 then
         for _, dq in ipairs(b.dungeonQuests) do
           local dc = (dq.x and dq.y) and string.format(" (%.1f, %.1f)", dq.x, dq.y) or ""
-          table.insert(lines, string.format("|cffff8000[副本任务 · %s]|r |cffffd100%s|r — %s %s%s", dq.dungeon, dq.name, dq.place or "", dq.npc or "", dc))
+          table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r |cffffd100%s|r — %s %s%s", dq.dungeon, dq.name, dq.place or "", dq.npc or "", dc))
         end
       end
 
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      local titlePrefix = isCurrent and "|cff00ff00▶ [当前等级阶段]|r " or ""
+      local titlePrefix = isCurrent and "|cff00ff00▶ [当前角色所在阶段]|r " or string.format("|cff8899aa[第%d步]|r ", stepIdx)
       y = LayoutCard(
         card, y,
         string.format("%s|cffffd100Lv.%d – %d|r  ·  |cff00ffcc%s|r (%s)", titlePrefix, b.from, b.to, b.zone or "", hubName or ""),
@@ -2334,6 +3231,7 @@ end
 local function RenderTabClassAndTalents()
   local cardIdx = 1
   local y = 6
+  local route = GetCurrentRoute()
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
   if not cls or not spec then
@@ -2384,13 +3282,16 @@ local function RenderTabClassAndTalents()
     )
   end
 
-  -- 3. 职业专属任务链
-  if cls.classRuns and #cls.classRuns > 0 then
+  -- 3. 职业专属任务链（优先展示当前种族专属职业任务链）
+  local matchedRuns = GetCurrentClassRuns(route, cls, state.faction)
+  local runsToRender = (#matchedRuns > 0) and matchedRuns or (cls.classRuns or {})
+  if #runsToRender > 0 then
     local crLines = {}
-    for _, cr in ipairs(cls.classRuns) do
+    for _, cr in ipairs(runsToRender) do
       local fTag = cr.faction == "horde" and "|cffff5555[部落]|r" or (cr.faction == "alliance" and "|cff44aaff[联盟]|r" or "|cff00ffcc[通用]|r")
+      local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
       local teachTag = (cr.teaches and cr.teaches ~= "") and (" → 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-      table.insert(crLines, string.format("%s |cffffd100Lv.%d %s|r%s", fTag, cr.level, cr.name, teachTag))
+      table.insert(crLines, string.format("%s %s|cffffd100Lv.%d %s|r%s", fTag, rTag, cr.level, cr.name, teachTag))
       for idx, st in ipairs(cr.steps or {}) do
         local sc = (st.x and st.y) and string.format(" (%.1f, %.1f)", st.x, st.y) or ""
         table.insert(crLines, string.format("    %d. %s — %s %s |cff99e6ff%s|r%s", idx, st.name, st.zone or "", st.place or "", st.npc or "", sc))
@@ -2399,7 +3300,7 @@ local function RenderTabClassAndTalents()
     local cRuns = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cRuns, y,
-      string.format("|cff00ffcc📜 %s 专属职业任务链与坐标指引|r", cls.name),
+      string.format("|cff00ffcc📜 %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
       table.concat(crLines, "\n"),
       { 0.0, 0.8, 0.7, 0.9 },
       { 0.05, 0.12, 0.13, 0.92 }
@@ -2631,6 +3532,9 @@ local headerControls = {}
 
 RefreshUI = function()
   if not mainFrame or not mainFrame:IsShown() then return end
+  if state.autoFollow then
+    SyncPlayerCharacter()
+  end
 
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
@@ -2650,6 +3554,9 @@ RefreshUI = function()
   end
   if headerControls.autoCheck then
     headerControls.autoCheck:SetChecked(state.autoFollow)
+  end
+  if headerControls.matchRoleBtn then
+    headerControls.matchRoleBtn:SetText(state.autoFollow and "|cff00ffcc🎯 匹配角色|r" or "|cffffa500🎯 匹配角色|r")
   end
 
   for i, btn in ipairs(tabButtons) do
@@ -2735,22 +3642,33 @@ local function CreateMainWindow()
   autoCheck:SetSize(24, 24)
   autoCheck:SetPoint("LEFT", 6, 0)
   autoCheck:SetChecked(state.autoFollow)
-  local autoLabel = ctrlBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  autoLabel:SetPoint("LEFT", autoCheck, "RIGHT", 2, 0)
-  autoLabel:SetText("|cff00ffcc跟随当前角色|r")
   autoCheck:SetScript("OnClick", function(self)
     state.autoFollow = self:GetChecked() and true or false
     if state.autoFollow then
+      state.routeFilter = "MATCH"
       SyncPlayerCharacter()
     end
     RefreshUI()
   end)
   headerControls.autoCheck = autoCheck
 
+  -- 「🎯 匹配角色」按钮：一键恢复跟随当前角色（种族+职业+专精+等级）并聚焦当前等级路线
+  local matchRoleBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
+  matchRoleBtn:SetSize(88, 22)
+  matchRoleBtn:SetPoint("LEFT", autoCheck, "RIGHT", 2, 0)
+  matchRoleBtn:SetText("|cff00ffcc🎯 匹配角色|r")
+  matchRoleBtn:SetScript("OnClick", function()
+    state.autoFollow = true
+    state.routeFilter = "MATCH"
+    SyncPlayerCharacter()
+    RefreshUI()
+  end)
+  headerControls.matchRoleBtn = matchRoleBtn
+
   -- 等级 -1 / Lv.X / +1
   local lvlMinusBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
   lvlMinusBtn:SetSize(26, 22)
-  lvlMinusBtn:SetPoint("LEFT", autoLabel, "RIGHT", 10, 0)
+  lvlMinusBtn:SetPoint("LEFT", matchRoleBtn, "RIGHT", 6, 0)
   lvlMinusBtn:SetText("-")
   lvlMinusBtn:SetScript("OnClick", function()
     state.autoFollow = false
@@ -3000,6 +3918,9 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED" }) do
+  pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
+end
 
 local hasPrintedWelcome = false
 
@@ -3014,7 +3935,16 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     RefreshUI()
     if not hasPrintedWelcome then
       hasPrintedWelcome = true
-      DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 已加载 |cffffd100wowf.io|r 动态数据库！输入 |cffffd100/wowf|r 或点击小地图图标查看当前角色智能指南。")
+      local route = GetCurrentRoute()
+      local cls = GetCurrentClassData()
+      local spec = GetCurrentSpecData()
+      DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cff00ffcc[WoWF 无限百科]|r 已加载 |cffffd100wowf.io|r 动态数据库并自动匹配当前角色: |cffffd100Lv.%d %s·%s (%s)|r！输入 |cffffd100/wowf|r 或点击小地图图标查看。",
+        state.level,
+        route and route.name or "",
+        cls and cls.name or "",
+        spec and spec.name or ""
+      ))
     end
   elseif event == "PLAYER_LEVEL_UP" then
     local newLevel = tonumber(arg1) or ((UnitLevel and UnitLevel("player")) or state.level)
@@ -3032,7 +3962,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
-  elseif event == "ZONE_CHANGED_NEW_AREA" then
+  else
     SyncPlayerCharacter()
     RefreshUI()
   end
@@ -3042,18 +3972,20 @@ SLASH_WOWF1 = "/wowf"
 SLASH_WOWF2 = "/wowfio"
 SlashCmdList["WOWF"] = function(msg)
   local cmd = string.lower(string.gsub(msg or "", "^%s*(.-)%s*$", "%1"))
+  state.autoFollow = true
+  SyncPlayerCharacter()
   if cmd == "macro" or cmd == "macros" then
     ToggleMainWindow(4)
   elseif cmd == "dungeon" or cmd == "dungeons" then
     ToggleMainWindow(5)
   elseif cmd == "route" or cmd == "level" then
+    state.routeFilter = "MATCH"
     ToggleMainWindow(2)
   elseif cmd == "class" or cmd == "talent" then
     ToggleMainWindow(3)
   elseif cmd == "news" or cmd == "forever" or cmd == "prof" or cmd == "professions" then
     ToggleMainWindow(6)
   else
-    state.autoFollow = true
     ToggleMainWindow(1)
   end
 end
