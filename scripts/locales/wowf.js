@@ -1035,7 +1035,7 @@ function transformBandQuests(quests, fallbackLevel, defaultZone = '') {
     const id = extractQuestId(q);
     const steps =
       Array.isArray(q.steps) && q.steps.length > 1
-        ? q.steps.slice(0, 6).map(st => {
+        ? q.steps.map(st => {
             const sg = Array.isArray(st.givers) && st.givers[0] ? st.givers[0] : null;
             return {
               id: extractQuestId(st),
@@ -1397,6 +1397,22 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
           x: g?.at?.x ?? null,
           y: g?.at?.y ?? null,
           stepCount: Array.isArray(q.steps) ? q.steps.length : 1,
+          steps:
+            Array.isArray(q.steps) && q.steps.length > 1
+              ? q.steps.map(st => {
+                  const sg = Array.isArray(st?.givers) && st.givers[0] ? st.givers[0] : null;
+                  return {
+                    id: typeof st === 'number' ? st : extractQuestId(st),
+                    name: st?.name || q.name || '',
+                    level: st?.level || st?.minLevel || q.level || q.minLevel || minLevel,
+                    npc: sg?.name || g?.name || '',
+                    zone: sg?.zone || g?.zone || q.zone || ent?.zone || zone,
+                    place: sg?.place || g?.place || '',
+                    x: sg?.at?.x ?? null,
+                    y: sg?.at?.y ?? null,
+                  };
+                })
+              : undefined,
           finalObjective: lastStep?.objective || '',
         };
       })
@@ -1440,7 +1456,12 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
           (prevQuest?.faction && q.faction && prevQuest.faction !== q.faction)
             ? 'both'
             : q.faction || prevQuest?.faction || 'both';
-        existing.quests[idx] = { ...q, id: q.id || prevQuest?.id || null, faction: mergedFaction };
+        existing.quests[idx] = {
+          ...q,
+          id: q.id || prevQuest?.id || null,
+          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : prevQuest?.steps,
+          faction: mergedFaction,
+        };
       } else {
         questIndexByKey.set(key, existing.quests.length);
         existing.quests.push(q);
@@ -2835,10 +2856,24 @@ end
 
 local function DetectZoneInPrefix(prefixText, fallbackZone)
   if prefixText and prefixText ~= "" then
+    local bestKw = nil
+    local bestPos = -1
+    local bestLen = 0
     for _, kw in ipairs(ORDERED_ZONE_KEYWORDS) do
-      if string.find(prefixText, kw, 1, true) then
-        return kw
+      local pos = 1
+      while true do
+        local s, e = string.find(prefixText, kw, pos, true)
+        if not s then break end
+        if s > bestPos or (s == bestPos and #kw > bestLen) then
+          bestPos = s
+          bestLen = #kw
+          bestKw = kw
+        end
+        pos = e + 1
       end
+    end
+    if bestKw then
+      return bestKw
     end
   end
   return fallbackZone or ""
@@ -2881,15 +2916,19 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
   local qid = tonumber(q.id or q.questId)
   if not qid or qid <= 0 then return end
   local prev = questMetaById[qid] or {}
+  local resolvedZone = (q.zone and q.zone ~= "") and q.zone or (q.place and q.place ~= "" and q.place) or fallbackZone or prev.zone or ""
+  local sameZone = (not prev.zone or prev.zone == "" or resolvedZone == prev.zone)
+  local qx = tonumber(q.x)
+  local qy = tonumber(q.y)
   questMetaById[qid] = {
     id = qid,
     name = (q.name and q.name ~= "") and q.name or prev.name or ("任务 #" .. qid),
     level = tonumber(q.level or q.minLevel or fallbackLevel) or prev.level or state.level or 1,
     npc = (q.npc and q.npc ~= "") and q.npc or prev.npc or "",
-    zone = (q.zone and q.zone ~= "") and q.zone or (q.place and q.place ~= "" and q.place) or fallbackZone or prev.zone or "",
+    zone = resolvedZone,
     place = (q.place and q.place ~= "") and q.place or prev.place or "",
-    x = tonumber(q.x) or prev.x,
-    y = tonumber(q.y) or prev.y,
+    x = qx or (sameZone and prev.x or nil),
+    y = qy or (sameZone and prev.y or nil),
     dungeon = (q.dungeon and q.dungeon ~= "") and q.dungeon or prev.dungeon or "",
     teaches = (q.teaches and q.teaches ~= "") and q.teaches or prev.teaches or "",
     steps = q.steps or prev.steps,
@@ -3554,7 +3593,8 @@ local function RenderTabSmartMatch()
     if band.flights and #band.flights > 0 then
       local fList = {}
       for _, fl in ipairs(band.flights) do
-        local fc = (fl.x and fl.y) and FormatCoordLink(band.zone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
+        local flZone = (fl.zone and fl.zone ~= "") and fl.zone or band.zone
+        local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
         table.insert(fList, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
       end
       table.insert(bandLines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(fList, "  /  "))
@@ -3583,7 +3623,9 @@ local function RenderTabSmartMatch()
     if band.professions and #band.professions > 0 then
       local pList = {}
       for _, p in ipairs(band.professions) do
-        local pc = (p.x and p.y) and FormatCoordLink(p.place or band.zone, (p.name or "") .. " " .. (p.trainer or ""), p.x, p.y) or ""
+        local pZone = (p.zone and p.zone ~= "") and p.zone or band.zone
+        local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
+        local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
         local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
         local recMark = isRec and "|cff00ff00★推荐|r" or ""
         table.insert(pList, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recMark, p.trainer or "", pc))
@@ -3902,7 +3944,8 @@ local function RenderTabRoutes()
       if b.flights and #b.flights > 0 then
         local flNames = {}
         for _, fl in ipairs(b.flights) do
-          local fc = (fl.x and fl.y) and FormatCoordLink(b.zone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
+          local flZone = (fl.zone and fl.zone ~= "") and fl.zone or b.zone
+          local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
           table.insert(flNames, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
         end
         table.insert(lines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(flNames, " · "))
@@ -3951,7 +3994,9 @@ local function RenderTabRoutes()
         for _, p in ipairs(b.professions) do
           local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
           local recTag = isRec and "|cff00ff00★推荐|r" or ""
-          local pc = (p.x and p.y) and FormatCoordLink(p.place or b.zone, (p.name or "") .. " " .. (p.trainer or ""), p.x, p.y) or ""
+          local pZone = (p.zone and p.zone ~= "") and p.zone or b.zone
+          local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
+          local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
           table.insert(pNames, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recTag, p.trainer or "", pc))
         end
         table.insert(lines, "|cff00ff96顺路学专业:|r " .. table.concat(pNames, " · "))
