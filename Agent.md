@@ -181,3 +181,31 @@ git push origin feat/add-addon-search
 ### 3. CI 提示 "PR 未在描述中关联任何 Issue"？
 - 检查 PR 描述（Description）是否含有有效的 Issue 编号（例如 `Fixes #12`）。注意：写在标题中不会生效。
 - 亦可在 PR 右侧边栏的 **Development** 分组中，手动搜索并勾选对应的 Issue。修改后重新触发工作流即可通过。
+
+---
+
+## 八、PR 提交、审核跟踪与合并标准流程
+
+所有代码或配置改动均应通过 PR 合入 `main`，默认执行以下闭环流程（使用 `gh` CLI）：
+
+1. **确认/创建关联 Issue**：
+   - 若暂无对应 Issue，先执行 `gh issue create --title "<标题>" --body "<说明>"` 获取 Issue 编号。
+2. **切分支与本地验证**：
+   - 从最新 `main` 切出工作分支（如 `fix/<topic>` 或 `feat/<topic>`），禁止直接向 `main` 提交或推送。
+   - 提交前执行本地校验（前端改动运行 `npm run lint && npm run build`）。
+3. **推送分支并创建 PR**：
+   - 推送分支并执行 `gh pr create`，**必须在 PR 描述（Description）中包含 `Fixes #<Issue编号>`**（写在标题中无效），以通过 `检查是否关联 Issue` 门禁。
+4. **持续跟踪 CI 与 CodeRabbit 审核**：
+   - 开始检查前先记录当前 PR 的 head SHA（`gh pr view <PR编号> --json headRefOid -q .headRefOid`）。
+   - 使用 `gh pr checks <PR编号> --watch --interval 5` 跟踪 `检查是否关联 Issue`；该命令退出后需再次执行 `gh pr checks <PR编号>`，确认 `CodeRabbit` 检查已出现且状态为 `pass`（若尚未出现或仍为 `pending` 则继续等待）。
+   - 检查全部通过且 CodeRabbit 对记录的 head SHA 的正式评审状态为 `APPROVED` 后，重新读取当前 PR head SHA 并确认仍与检查前记录的 SHA 一致（若不一致说明有新提交，不得合并，须基于新 SHA 重新检查与审核）；仅在一致时使用该 SHA 执行合并。
+   - 若存在失败项或审核意见，使用 `gh pr view <PR编号> --json state,mergeStateStatus,reviewDecision,comments,reviews` 查看 PR 评论与评审摘要；若需排查行内评审对话的解决状态，请前往 PR 的 **Files changed** 页面查看或通过 GitHub GraphQL 查询 `reviewThreads.isResolved`。若 CodeRabbit 发起 `CHANGES_REQUESTED` 或存在未解决对话，须逐项修复并解决对应评审对话，等待重新审查通过。
+5. **合并与部署确认**：
+   - 所有检查通过且评审无阻塞后，执行 `gh pr merge <PR编号> --squash --delete-branch --match-head-commit <已检查的SHA>` 完成合并并清理远程分支，确保合并的是已通过检查的提交。
+   - 切回本地主干并同步：`git checkout main && git pull`。
+   - 涉及网页或静态资源发布时，先获取 PR 的合并提交 SHA（`gh pr view <PR编号> --json mergeCommit -q .mergeCommit.oid`），再按该 SHA 筛选部署记录：`gh run list --workflow=deploy.yml --commit <MERGE_SHA>`，确认对应本次合并的 `Build & Deploy to Cloudflare Pages` 运行状态：
+     - 若状态为 `queued`、`in_progress` 或 `waiting`，执行 `gh run watch <RUN_ID> --exit-status` 等待运行结束。
+     - 仅当运行结论为 `success` 时，判定部署完成。
+     - 若结论为 `failure`、`cancelled` 或 `timed_out`，执行 `gh run view <RUN_ID> --log-failed` 查看失败日志并报告，不得判定部署完成。
+     - 若暂未查询到对应运行，等待片刻后重新查询；仍无结果时向操作者报告，不得判定部署完成。
+
