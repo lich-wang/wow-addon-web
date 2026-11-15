@@ -2963,17 +2963,12 @@ end
 local function IsQuestCompleted(q)
   if type(q) ~= "table" then return false end
   if type(q.steps) == "table" and #q.steps > 0 then
-    local lastStepId = nil
-    for i = #q.steps, 1, -1 do
-      local sid = tonumber(q.steps[i] and q.steps[i].id)
-      if sid and sid > 0 then
-        lastStepId = sid
-        break
-      end
+    local lastStep = q.steps[#q.steps]
+    local lastStepId = tonumber(lastStep and lastStep.id)
+    if not lastStepId or lastStepId <= 0 then
+      return false
     end
-    if lastStepId then
-      return IsQuestCompletedById(lastStepId)
-    end
+    return IsQuestCompletedById(lastStepId)
   end
   return IsQuestCompletedById(q.id or q.questId)
 end
@@ -4372,11 +4367,20 @@ local function RenderTabDungeons()
   )
 
   local shownCount = 0
+  local levelMatchedCount = 0
+  local hiddenCompletedCount = 0
   for _, d in ipairs(Data.dungeons or {}) do
     local passFilter = true
     local allDone = IsDungeonAllQuestsCompleted(d, state.faction)
     if state.dungeonFilter == "MATCH" then
-      passFilter = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3)) and (not allDone)
+      local levelOk = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3))
+      if levelOk then
+        levelMatchedCount = levelMatchedCount + 1
+        if allDone then
+          hiddenCompletedCount = hiddenCompletedCount + 1
+        end
+      end
+      passFilter = levelOk and (not allDone)
     elseif state.dungeonFilter == "NEW" then
       passFilter = d.isNew and true or false
     end
@@ -4432,11 +4436,22 @@ local function RenderTabDungeons()
   end
 
   if shownCount == 0 and state.dungeonFilter == "MATCH" then
+    local emptyTitle, emptyBody
+    if levelMatchedCount == 0 then
+      emptyTitle = "|cffffd100[提示] 当前等级暂无适龄地下城|r"
+      emptyBody = string.format("Lv.%d 暂无适龄地下城，可点击上方「看无限服新本」或「显示全部副本」查看全部地下城详情。", state.level)
+    elseif hiddenCompletedCount == levelMatchedCount then
+      emptyTitle = "|cff00ff00[提示] 当前等级适龄副本任务已全部完成|r"
+      emptyBody = string.format("Lv.%d 适龄地下城的任务已全部完成并默认隐藏。可点击上方「看无限服新本」或「显示全部副本」查看全部地下城详情。", state.level)
+    else
+      emptyTitle = "|cffffd100[提示] 未找到符合搜索条件的适龄副本|r"
+      emptyBody = string.format("当前搜索条件下没有匹配的未完成 Lv.%d 适龄副本，请清空或调整搜索关键词。", state.level)
+    end
     local emptyCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       emptyCard, y,
-      "|cff00ff00[提示] 当前等级适龄副本任务已全部完成|r",
-      string.format("Lv.%d 适龄地下城的任务已全部完成并默认隐藏。可点击上方「看无限服新本」或「显示全部副本」查看全部地下城详情。", state.level),
+      emptyTitle,
+      emptyBody,
       { 0.2, 0.85, 0.4, 0.85 },
       { 0.06, 0.12, 0.09, 0.92 }
     )
