@@ -182,6 +182,15 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
 ];
 
 /**
+ * 为插件下载链接附加版本查询参数，避免浏览器或 CDN 返回旧版本缓存
+ */
+function withVersionQuery(url: string, version: string): string {
+  if (!version) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${encodeURIComponent(version)}`;
+}
+
+/**
  * 下载精选插件压缩包并在安装前执行必要的动态同步（如 WoWF Companion 实时同步 wowf.io 数据）
  */
 export async function fetchCuratedAddonZip(
@@ -190,12 +199,12 @@ export async function fetchCuratedAddonZip(
 ): Promise<ArrayBuffer> {
   const candidates: string[] = [];
   if (addon.downloadUrl.startsWith('http')) {
-    candidates.push(addon.downloadUrl);
+    candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
   } else {
     if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
-      candidates.push(addon.downloadUrl);
+      candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
     }
-    candidates.push(`https://wow.lich.tech${addon.downloadUrl}`);
+    candidates.push(withVersionQuery(`https://wow.lich.tech${addon.downloadUrl}`, addon.latestVersion));
   }
 
   let arrayBuffer: ArrayBuffer | null = null;
@@ -203,7 +212,7 @@ export async function fetchCuratedAddonZip(
 
   for (const url of candidates) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { cache: 'no-cache' });
       lastStatus = response.status;
       if (!response.ok) continue;
       const contentType = response.headers.get('content-type') || '';
