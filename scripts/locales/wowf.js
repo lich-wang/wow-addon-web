@@ -2109,7 +2109,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     return {
       ...cachedDataset,
       professions: professionsList,
-      foreverSystems: cachedDataset.foreverSystems || FOREVER_SYSTEMS_DATA,
+      foreverSystems: FOREVER_SYSTEMS_DATA,
     };
   }
 
