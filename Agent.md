@@ -181,3 +181,25 @@ git push origin feat/add-addon-search
 ### 3. CI 提示 "PR 未在描述中关联任何 Issue"？
 - 检查 PR 描述（Description）是否含有有效的 Issue 编号（例如 `Fixes #12`）。注意：写在标题中不会生效。
 - 亦可在 PR 右侧边栏的 **Development** 分组中，手动搜索并勾选对应的 Issue。修改后重新触发工作流即可通过。
+
+---
+
+## 八、PR 提交、审核跟踪与合并标准流程
+
+所有代码或配置改动均应通过 PR 合入 `main`，默认执行以下闭环流程（使用 `gh` CLI）：
+
+1. **确认/创建关联 Issue**：
+   - 若暂无对应 Issue，先执行 `gh issue create --title "<标题>" --body "<说明>"` 获取 Issue 编号。
+2. **切分支与本地验证**：
+   - 从最新 `main` 切出工作分支（如 `fix/<topic>` 或 `feat/<topic>`），禁止直接向 `main` 提交或推送。
+   - 提交前执行本地校验（前端改动运行 `npm run lint && npm run build`）。
+3. **推送分支并创建 PR**：
+   - 推送分支并执行 `gh pr create`，**必须在 PR 描述（Description）中包含 `Fixes #<Issue编号>`**（写在标题中无效），以通过 `检查是否关联 Issue` 门禁。
+4. **持续跟踪 CI 与 CodeRabbit 审核**：
+   - 使用 `gh pr checks <PR编号> --watch --interval 5` 跟踪 `检查是否关联 Issue` 和 `CodeRabbit` 状态直至全部通过。
+   - 若存在失败项或审核意见，使用 `gh pr view <PR编号> --json state,mergeable,statusCheckRollup,reviewDecision,comments,reviews` 查看详情；若 CodeRabbit 发起 Request Changes 或存在未解决的对话，须逐项修复并解决对应评审对话，等待重新审查通过。
+5. **合并与部署确认**：
+   - 所有检查通过且评审无阻塞后，执行 `gh pr merge <PR编号> --squash --delete-branch` 完成合并并清理远程分支。
+   - 切回本地主干并同步：`git checkout main && git pull`。
+   - 涉及网页或静态资源发布时，执行 `gh run list --workflow=deploy.yml --limit 1` 确认 `Build & Deploy to Cloudflare Pages` 触发及执行状态。
+
