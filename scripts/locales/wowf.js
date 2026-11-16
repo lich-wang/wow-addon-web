@@ -1164,6 +1164,127 @@ function transformBand(b, classKey = 'WARRIOR') {
 }
 
 /**
+ * 同等级区间平行/备选练级区域目录（解决单图任务不足以支撑整个等级段的问题）
+ */
+const ALT_ZONE_CATALOG = {
+  alliance: [
+    { zone: '艾尔文森林', hub: '闪金镇', from: 5, to: 11, x: 42.4, y: 66.0, note: '人类经典起始区，迪菲亚/霍格任务线' },
+    { zone: '丹莫罗', hub: '卡拉诺斯', from: 5, to: 11, x: 46.3, y: 51.7, note: '矮人/侏儒起始区，任务紧凑' },
+    { zone: '泰达希尔', hub: '多兰纳尔', from: 5, to: 11, x: 55.9, y: 58.2, note: '暗夜精灵起始区，自然与熊怪任务' },
+    { zone: '西部荒野', hub: '哨兵岭', from: 12, to: 19, x: 55.9, y: 48.7, note: '迪菲亚兄弟会主线，直通死亡矿井(Lv.15-20)' },
+    { zone: '洛克莫丹', hub: '塞尔萨玛', from: 12, to: 19, x: 35.1, y: 48.1, note: '莫格罗什要塞与矮人狩猎任务密集' },
+    { zone: '黑海岸', hub: '奥伯丁', from: 11, to: 20, x: 36.3, y: 45.6, note: '海岸线一条龙，任务数量极多可轻松升到20级' },
+    { zone: '赤脊山', hub: '湖畔镇', from: 16, to: 25, x: 23.9, y: 47.0, note: '黑石兽人主线与湖畔镇精英任务' },
+    { zone: '湿地', hub: '米奈希尔港', from: 20, to: 28, x: 9.5, y: 59.7, note: '港口/黑铁矮人任务，衔接新本【挖掘场：湿地】' },
+    { zone: '灰谷', hub: '阿斯特兰纳', from: 19, to: 28, x: 34.4, y: 48.0, note: '卡利姆多主力练级区，衔接黑暗深渊(Lv.20-27)' },
+    { zone: '暮色森林', hub: '夜色镇', from: 21, to: 31, x: 75.2, y: 46.8, note: '摩拉迪姆、斯塔文与藏尸者经典长任务链' },
+    { zone: '石爪山脉', hub: '石爪峰', from: 20, to: 27, x: 36.4, y: 7.2, note: '风剪废墟与焦炭谷补给任务' },
+    { zone: '希尔斯布莱德丘陵', hub: '南海镇', from: 24, to: 32, x: 49.3, y: 52.3, note: '南海镇渔人/辛迪加任务，海龟肉与通缉令' },
+    { zone: '凄凉之地', hub: '尼耶尔前哨站', from: 32, to: 37, x: 66.5, y: 10.7, note: '半人马声望、科多兽墓地与玛拉顿前置' },
+    { zone: '荆棘谷', hub: '反抗军营地', from: 30, to: 38, x: 38.2, y: 4.0, note: '北部奈辛瓦里狩猎+反抗军营地，30-38必刷' },
+    { zone: '千针石林', hub: '沙漠赛道', from: 30, to: 37, x: 78.8, y: 77.1, note: '闪光平原赛车场一圈十余个任务，经验极集中' },
+    { zone: '阿拉希高地', hub: '避难谷地', from: 30, to: 39, x: 45.7, y: 46.1, note: '激流堡与高地元素/迅猛龙任务，顺路开鸟点' },
+    { zone: '尘泥沼泽', hub: '塞拉摩', from: 35, to: 42, x: 67.5, y: 51.3, note: '35级起可接大量港口与沼泽任务，经验丰厚' },
+    { zone: '河林', hub: '克罗多克要塞', from: 32, to: 45, x: 48.6, y: 26.3, note: '无限服新大区，任务密集且含40-45五人本' },
+    { zone: '荒芜之地', hub: '埃格蒙德的营地', from: 38, to: 41, x: 51.3, y: 73.3, note: '奥达曼前置、土元素与龙类任务' },
+    { zone: '荆棘谷', hub: '藏宝海湾', from: 38, to: 46, x: 27.4, y: 76.7, note: '海盗、血帆、风险投资公司与狩猎大师后续' },
+    { zone: '悲伤沼泽', hub: '斯通纳德周边', from: 36, to: 43, x: 46.1, y: 54.8, note: '流放者与沉没的神庙前置任务' },
+    { zone: '辛特兰', hub: '鹰巢山', from: 42, to: 48, x: 11.1, y: 46.0, note: '狮鹫、巨魔与绿龙神庙前置任务' },
+    { zone: '菲拉斯', hub: '羽月要塞', from: 42, to: 49, x: 30.2, y: 43.2, note: '雪人、娜迦、戈杜尼食人魔与厄运之槌外围' },
+    { zone: '塔纳利斯', hub: '加基森', from: 43, to: 51, x: 51.7, y: 27.4, note: '热砂港海盗、祖尔法拉克副本任务与沙漠虫巢' },
+    { zone: '灼热峡谷', hub: '瑟银哨塔', from: 46, to: 53, x: 37.9, y: 30.9, note: '黑铁矮人与瑟银兄弟会任务链，顺接黑石深渊' },
+    { zone: '艾萨拉', hub: '塔伦迪斯营地', from: 47, to: 54, x: 11.9, y: 77.6, note: '娜迦、血精灵与海达克西斯公爵声望' },
+    { zone: '费伍德森林', hub: '翡翠圣地', from: 48, to: 55, x: 51.5, y: 82.2, note: '木喉要塞声望、腐化元素与恶魔清剿' },
+    { zone: '安戈洛环形山', hub: '马绍尔营地', from: 50, to: 55, x: 44.3, y: 8.3, note: '一圈接满20+任务，效率极高的50级圣地' },
+    { zone: '诅咒之地', hub: '守望堡', from: 49, to: 56, x: 65.5, y: 24.4, note: '野生野兽属性Buff任务与黑暗之门外围' },
+    { zone: '燃烧平原', hub: '摩根的岗哨', from: 53, to: 60, x: 84.3, y: 68.3, note: '黑石山双本(黑石塔/黑石深渊)前置与黑龙门任务' },
+    { zone: '西瘟疫之地', hub: '寒风营地', from: 54, to: 60, x: 42.9, y: 83.8, note: '瘟疫锅、通灵学院前置与弗丁任务线' },
+    { zone: '东瘟疫之地', hub: '圣光之愿礼拜堂', from: 55, to: 60, x: 71.5, y: 49.2, note: '银色黎明声望、爱与家庭、斯坦索姆前置' },
+    { zone: '冬泉谷', hub: '永望镇', from: 54, to: 60, x: 61.3, y: 38.6, note: '霜刃豹、熊怪、蓝龙与55+高收益任务' },
+    { zone: '希利苏斯', hub: '塞纳里奥要塞', from: 55, to: 60, x: 51.2, y: 38.2, note: '塞纳里奥议会声望与暮光营地任务' },
+    { zone: '海加尔山', hub: '海加尔山', from: 55, to: 60, x: 68.6, y: 44.1, note: '无限服开放的高阶练级区与20人团本【海加尔峰】' },
+  ],
+  horde: [
+    { zone: '杜隆塔尔', hub: '剃刀岭', from: 5, to: 11, x: 51.6, y: 43.4, note: '兽人/巨魔起始区，怒焰裂谷前置' },
+    { zone: '提瑞斯法林地', hub: '布瑞尔', from: 5, to: 11, x: 60.0, y: 51.6, note: '亡灵起始区，血色修道院方向' },
+    { zone: '莫高雷', hub: '血蹄村', from: 5, to: 11, x: 46.9, y: 63.2, note: '牛头人起始区，草原狩猎任务' },
+    { zone: '贫瘠之地', hub: '十字路口', from: 12, to: 22, x: 51.8, y: 30.9, note: '部落核心大地图，任务极多且直通哀嚎洞穴' },
+    { zone: '银松森林', hub: '瑟伯切尔', from: 12, to: 20, x: 43.2, y: 40.9, note: '影牙城堡前置与被遗忘者任务线' },
+    { zone: '石爪山脉', hub: '烈日石居', from: 15, to: 26, x: 45.1, y: 59.8, note: '紧邻贫瘠之地，焦炭谷与伐木场任务密集' },
+    { zone: '贫瘠之地', hub: '陶拉祖营地', from: 18, to: 25, x: 44.4, y: 59.2, note: '贫瘠之地南部野猪人/雷霆蜥蜴，直通剃刀沼泽' },
+    { zone: '灰谷', hub: '佐拉姆加前哨站', from: 19, to: 26, x: 12.2, y: 33.8, note: '海岸线娜迦与黑暗深渊副本任务' },
+    { zone: '灰谷', hub: '碎木岗哨', from: 24, to: 30, x: 73.2, y: 61.6, note: '碎木岗哨伐木场与萨特清剿' },
+    { zone: '希尔斯布莱德丘陵', hub: '塔伦米尔', from: 22, to: 31, x: 62.1, y: 19.9, note: '东部王国部落主力，奥特兰克雪人与血色前置' },
+    { zone: '千针石林', hub: '乱风岗', from: 25, to: 32, x: 45.1, y: 49.1, note: '部落专属风巢/半人马任务，直通闪光平原' },
+    { zone: '千针石林', hub: '沙漠赛道', from: 30, to: 37, x: 78.8, y: 77.1, note: '闪光平原赛车场一圈十余个任务，经验极集中' },
+    { zone: '荆棘谷', hub: '格罗姆高营地', from: 31, to: 40, x: 32.5, y: 29.4, note: '格罗姆高+奈辛瓦里狩猎，任务密度全服最高' },
+    { zone: '阿拉希高地', hub: '落锤镇', from: 30, to: 39, x: 73.0, y: 32.7, note: '激流堡、枯须巨魔与高地要素任务' },
+    { zone: '凄凉之地', hub: '葬影村', from: 32, to: 38, x: 21.6, y: 74.1, note: '半人马声望、科多兽与玛拉顿前置' },
+    { zone: '尘泥沼泽', hub: '蕨墙村', from: 35, to: 42, x: 35.6, y: 31.9, note: '35级起可接蕨墙村大量沼泽与龙类任务' },
+    { zone: '河林', hub: '克罗多克要塞', from: 32, to: 45, x: 48.6, y: 26.3, note: '无限服新大区，任务密集且含40-45五人本' },
+    { zone: '荒芜之地', hub: '卡加斯', from: 38, to: 42, x: 5.1, y: 46.8, note: '奥达曼前置、卡加斯大量任务与石元素' },
+    { zone: '悲伤沼泽', hub: '斯通纳德', from: 36, to: 43, x: 46.1, y: 54.8, note: '斯通纳德部落营地+沉没的神庙前置' },
+    { zone: '荆棘谷', hub: '藏宝海湾', from: 38, to: 46, x: 27.4, y: 76.7, note: '藏宝海湾全套高经验任务与风险投资公司' },
+    { zone: '辛特兰', hub: '恶齿村', from: 42, to: 49, x: 81.7, y: 81.8, note: '恶齿村部落营地、巨魔与辛萨罗精英任务' },
+    { zone: '菲拉斯', hub: '莫沙彻营地', from: 44, to: 50, x: 75.1, y: 43.1, note: '戈杜尼食人魔、雪人与厄运之槌外围' },
+    { zone: '塔纳利斯', hub: '加基森', from: 44, to: 52, x: 51.6, y: 25.4, note: '热砂港海盗、祖尔法拉克副本任务与沙漠虫巢' },
+    { zone: '灼热峡谷', hub: '瑟银哨塔', from: 46, to: 53, x: 37.9, y: 30.9, note: '黑铁矮人与瑟银兄弟会任务链，顺接黑石深渊' },
+    { zone: '艾萨拉', hub: '瓦罗莫克', from: 47, to: 54, x: 22.0, y: 49.6, note: '娜迦、血精灵与海达克西斯公爵声望' },
+    { zone: '费伍德森林', hub: '血毒河', from: 48, to: 55, x: 34.4, y: 54.0, note: '木喉要塞声望、腐化元素与恶魔清剿' },
+    { zone: '安戈洛环形山', hub: '马绍尔营地', from: 50, to: 55, x: 44.3, y: 8.3, note: '一圈接满20+任务，效率极高的50级圣地' },
+    { zone: '燃烧平原', hub: '烈焰峰', from: 53, to: 60, x: 65.7, y: 24.2, note: '黑石山双本(黑石塔/黑石深渊)前置与黑龙门任务' },
+    { zone: '西瘟疫之地', hub: '亡灵壁垒', from: 54, to: 59, x: 83.2, y: 69.2, note: '瘟疫锅、通灵学院前置与弗丁任务线' },
+    { zone: '东瘟疫之地', hub: '圣光之愿礼拜堂', from: 55, to: 60, x: 70.5, y: 47.6, note: '银色黎明声望、爱与家庭、斯坦索姆前置' },
+    { zone: '冬泉谷', hub: '永望镇', from: 54, to: 60, x: 61.3, y: 38.6, note: '霜刃豹、熊怪、蓝龙与55+高收益任务' },
+    { zone: '希利苏斯', hub: '塞纳里奥要塞', from: 55, to: 60, x: 51.2, y: 38.2, note: '塞纳里奥议会声望与暮光营地任务' },
+    { zone: '海加尔山', hub: '海加尔山', from: 55, to: 60, x: 68.6, y: 44.1, note: '无限服开放的高阶练级区与20人团本【海加尔峰】' },
+  ],
+};
+
+/**
+ * 为所有路线的每个等级阶段自动补全同级备选/平行练级区域 (altZones)
+ */
+function enrichRoutesWithAltZones(routesData) {
+  if (!routesData || typeof routesData !== 'object') return;
+  for (const route of Object.values(routesData)) {
+    if (!route || !Array.isArray(route.bands)) continue;
+    const faction = route.faction === 'horde' ? 'horde' : 'alliance';
+    const catalog = ALT_ZONE_CATALOG[faction] || [];
+    for (const band of route.bands) {
+      const bFrom = Number(band.from) || 1;
+      const bTo = Number(band.to) || bFrom;
+      if (bTo <= 5) {
+        band.altZones = [];
+        continue;
+      }
+      const primaryZone = String(band.zone || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+      const scored = [];
+      const seenZones = new Set();
+      for (const az of catalog) {
+        if (az.zone === primaryZone) continue;
+        const overlapStart = Math.max(bFrom, az.from);
+        const overlapEnd = Math.min(bTo, az.to);
+        const overlap = overlapEnd - overlapStart + 1;
+        if (overlap < 2 && !(bFrom === bTo && az.from <= bFrom && az.to >= bTo)) continue;
+        if (seenZones.has(az.zone)) continue;
+        seenZones.add(az.zone);
+        scored.push({ az, overlap });
+      }
+      scored.sort((a, b) => b.overlap - a.overlap || a.az.from - b.az.from);
+      band.altZones = scored.slice(0, 5).map(item => ({
+        zone: item.az.zone,
+        hub: item.az.hub,
+        from: item.az.from,
+        to: item.az.to,
+        x: item.az.x,
+        y: item.az.y,
+        note: item.az.note,
+      }));
+    }
+  }
+}
+
+/**
  * 精简并转换路线时间轴步骤 (主城副本任务备战、推荐进本等级、关键跨区交通与航线)
  */
 function transformTimelineSteps(timeline, dungeons) {
@@ -2843,6 +2964,8 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     }
   }
 
+  enrichRoutesWithAltZones(routesData);
+
   const dataset = {
     meta: {
       site: 'https://wowf.io/zh',
@@ -4311,6 +4434,28 @@ local function GetBandTimelineSteps(route, fromLvl, toLvl)
   return steps
 end
 
+local function FormatAltZonesBlock(band, headerLabel)
+  if not band or not band.altZones or #band.altZones == 0 then
+    return nil
+  end
+  local altLines = {}
+  for _, az in ipairs(band.altZones) do
+    local ac = (az.x and az.y) and FormatCoordLink(az.zone, (az.hub and az.hub ~= "") and az.hub or az.zone, az.x, az.y) or ""
+    local hubPart = (az.hub and az.hub ~= "") and (az.hub .. " ") or ""
+    local noteStr = (az.note and az.note ~= "") and (" — " .. az.note) or ""
+    table.insert(altLines, string.format(
+      "  · |cff00ffcc%s|r (%sLv.%d-%d)%s%s",
+      az.zone or "",
+      hubPart,
+      az.from or band.from or 1,
+      az.to or band.to or 60,
+      ac,
+      noteStr
+    ))
+  end
+  return string.format("|cffffd100%s:|r\n%s", headerLabel or "同级备选/平行练级区", table.concat(altLines, "\n"))
+end
+
 local function MatchesSearch(text)
   if not state.searchQuery or state.searchQuery == "" then
     return true
@@ -4638,6 +4783,11 @@ local function RenderTabSmartMatch()
     local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
     local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
     table.insert(bandLines, string.format("|cffffd100主推练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
+
+    local altBlock = FormatAltZonesBlock(band, "同级备选/平行练级区 (单图任务不够时穿插)")
+    if altBlock then
+      table.insert(bandLines, altBlock)
+    end
 
     if band.hubs and #band.hubs > 1 then
       local subHubs = {}
@@ -5006,11 +5156,21 @@ local function RenderTabRoutes()
     local matchedTrainer = GetBandTrainer(b, state.classKey, state.faction)
     local matchedQuests = GetBandQuests(b, state.classKey)
     local searchBlob = (b.zone or "") .. " " .. (hubName or "") .. " " .. ((matchedTrainer and matchedTrainer.name) or "")
+    if b.altZones then
+      for _, az in ipairs(b.altZones) do
+        searchBlob = searchBlob .. " " .. (az.zone or "") .. " " .. (az.hub or "")
+      end
+    end
 
     if MatchesSearch(searchBlob) then
       local lines = {
         string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordText),
       }
+
+      local altBlock = FormatAltZonesBlock(b, "同级平行/备选练级区 (单图任务不够时切换/穿插)")
+      if altBlock then
+        table.insert(lines, altBlock)
+      end
 
       if b.hubs and #b.hubs > 1 then
         local subHubs = {}
@@ -6010,6 +6170,13 @@ local function CreateMinimapButton()
     if band and band.hub and band.hub.name ~= "" then
       GameTooltip:AddLine(string.format("驻扎营地: |cffffd100%s|r", band.hub.name))
     end
+    if band and band.altZones and #band.altZones > 0 then
+      local altNames = {}
+      for i = 1, math.min(3, #band.altZones) do
+        table.insert(altNames, band.altZones[i].zone or "")
+      end
+      GameTooltip:AddLine(string.format("同级备选: |cff99e6ff%s|r", table.concat(altNames, " / ")))
+    end
     if step then
       GameTooltip:AddLine(string.format("本级天赋: |cffffd100[%s] %s (%d/%d)|r", step.tree, step.name, step.rank, step.max))
     end
@@ -6128,6 +6295,7 @@ end
 export async function buildWoWFAddon(outputDir, cacheDir, getHeaders) {
   console.log('Synchronizing live data from https://wowf.io/zh for WoWF Companion...');
   const dataset = await buildWoWFDataset(cacheDir, getHeaders);
+  enrichRoutesWithAltZones(dataset.routes);
   const fullVersion = dataset.meta.version || `${WOWF_VERSION} + DB v2026.11.15`;
 
   const zip = new JSZip();
