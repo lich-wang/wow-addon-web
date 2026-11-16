@@ -908,8 +908,9 @@ function formatRichSegments(segments) {
     if (typeof seg === 'string') {
       out += seg;
     } else if (seg && typeof seg === 'object') {
-      const name = seg.name || (seg.tip && seg.tip.name) || '';
-      if (!name) continue;
+      const rawName = seg.name || (seg.tip && seg.tip.name) || '';
+      if (!rawName) continue;
+      const name = WOWF_EN_TO_ZH[rawName] || rawName;
       if (seg.kind === 'spell') {
         out += `|cff71d5ff[${name}]|r`;
       } else if (seg.kind === 'talent') {
@@ -1287,6 +1288,203 @@ function enrichRoutesWithAltZones(routesData) {
       band.altZones = picked;
     }
   }
+}
+
+/**
+ * 补全上游 API 未翻译的英文 NPC、飞行管理员、副本任务与 40 级骑术文案
+ */
+const WOWF_EN_TO_ZH = {
+  // 飞行管理员
+  Daelyshia: '达莉希亚',
+  Baldruc: '巴尔德鲁克',
+  'Bera Stonehammer': '贝拉·石锤',
+  'Bibilfaz Featherwhistle': '比比法兹·羽哨',
+  Bragok: '布拉高克',
+  Brakkar: '布拉卡',
+  'Bulkrek Ragefist': '布尔克雷克·怒拳',
+  'Caylais Moonfeather': '凯莱斯·月羽',
+  Devrak: '德弗拉克',
+  'Fyldren Moonfeather': '菲尔德伦·月羽',
+  Georgia: '乔治亚',
+  Gryfe: '格莱夫',
+  Jarrodenus: '加罗迪努斯',
+  'Khaelyn Steelwing': '凯琳·钢翼',
+  'Michael Garrett': '迈克尔·加勒特',
+  Nyse: '奈斯',
+  'Omusa Thunderhorn': '欧姆萨·雷角',
+  Shardi: '沙尔迪',
+  Shyn: '希恩',
+  Thalon: '萨隆',
+  Thyssiana: '赛希亚娜',
+  Vahgruk: '瓦格鲁克',
+  Vesprystus: '维斯普里斯图斯',
+  Vhulgra: '乌尔格拉',
+  // 任务名与指引文本
+  'A Bit of Wet Work': '涉水行动',
+  'A Little Payback': '小小的报复',
+  'A Lost Memento': '失落的纪念品',
+  'A Token of Vengeance': '复仇的信物',
+  "An'she's Radiance": '安瑟之光',
+  'Ancient Equine Spirit': '远古圣马之魂',
+  'Battered Dwarven Skeleton': '残破的矮人骷髅',
+  'Blackmaw Pouches': '黑喉皮袋',
+  'Blood Red Bandanas': '血红面罩',
+  'Brazier of Everfount': '永泉火盆',
+  'Brazier of the Dormant Flame': '沉睡之焰火盆',
+  'Call of Air': '空气的召唤',
+  'Call of Fire': '火焰的召唤',
+  'Crumpled Map': '揉皱的地图',
+  'Crystalline Elements': '晶化元素',
+  'Curios of Curiosity': '奇珍异宝',
+  'Elemental Aid': '元素之助',
+  'Enter the Alcaz Prison and find Commander Folkar.': '进入奥卡兹监狱并找到指挥官福尔卡。',
+  'Eye of Mugg': '穆格之眼',
+  'Eyes on the Sky': '仰望苍穹',
+  'Fragment of the Firelands': '火焰之地碎片',
+  'Get to the Roots of It': '追根溯源',
+  'Heed My Call': '响应我的召唤',
+  'Key Ingredients': '关键原料',
+  "Krol'dok Moulding": '克罗多克模具',
+  'Lingering Essence': '残留精华',
+  'More Valuable Than Gold': '比黄金更珍贵',
+  'No Orc Left Behind': '不抛弃任何兽人',
+  'Our Man in Theramore': '我们在塞拉摩的线人',
+  'Return to Sully McCleary in Dustwallow Marsh.': '返回尘泥沼泽向萨利·麦克莱里复命。',
+  'Right Place, Wrong Time': '时运不济',
+  "Rizzle's Unguarded Plans": '里兹尔的计划书',
+  'Rot and Regret': '腐朽与悔恨',
+  'Somber News': '沉重的消息',
+  'Storm, Earth, and Fire': '风暴、大地与火焰',
+  "Talvash's Scrying Bowl": '塔尔瓦什的占卜之碗',
+  'Taming the Beast': '驯服野兽',
+  'The Discs of Norgannon': '诺甘农圆盘',
+  'The Elite of the Elite': '精锐中的精锐',
+  'The Man in the Iron Chains': '铁链中的男子',
+  'The Missing Kor\'kron': '失踪的库卡隆',
+  'The Return of the King?': '王者归来？',
+  'The Secret Prison': '秘密监狱',
+  "The Tempest's Weapons": '风暴武器',
+  'Tome of Twilight': '暮光魔典',
+  'Training the Beast': '训练野兽',
+  'Twilight Mementos': '暮光纪念物',
+  'Use the note provided by Mason Connery to find his hidden treasure.': '利用梅森·康纳利提供的字条寻找他藏匿的宝藏。',
+  'Watch Yer Back': '小心背后',
+  'With Wind Beneath Your Wings': '乘风破浪',
+  Woodwyrd: '林灵秘语',
+  "Zum'rah's Head": '祖姆拉的头颅',
+  // NPC 与任务物品名
+  'Agent Kearnen': '特工凯尔南',
+  'Alba Fairmoon': '阿尔芭·明月',
+  'Alphonse Dumas': '阿尔方斯·杜马斯',
+  Andruk: '安德鲁克',
+  'Ashe Amberhall': '艾什·安伯霍尔',
+  'Astarii Starseeker': '阿斯塔莉·逐星',
+  'Braldir Ashmantle': '布拉尔迪尔·灰袍',
+  'Brother Joshua': '约书亚修士',
+  'Commander Demar Brant': '指挥官德马尔·布兰特',
+  "Da'grosh": '达格罗什',
+  'Daphne Stilwell': '达芙妮·斯蒂尔维尔',
+  'Dargh Trueaim': '达尔格·准星',
+  'Doan Karhan': '杜安·卡汉',
+  'Doc Mixilpixil': '米克希尔皮克希尔医生',
+  'Earthseer Farsen': '大地先知法尔森',
+  Ekkal: '艾卡尔',
+  'Father Lankester': '兰克斯特神父',
+  'Gazin Tenorm': '加津·特诺姆',
+  'Gimrizz Shadowcog': '吉姆里兹·影轮',
+  'Godrick Farsan': '戈德里克·法尔桑',
+  'Gorzeeki Wildeyes': '戈尔泽基·狂眼',
+  'Henze Faulk': '亨泽·福克',
+  'High Priest Rohan': '高阶祭司罗汉',
+  'Image of Archmage Modera': '大法师莫德拉的影像',
+  Impsy: '小鬼伊姆普西',
+  'Jannos Lighthoof': '詹诺斯·光蹄',
+  'Jasper Fel': '贾斯珀·菲尔',
+  'John Turner': '约翰·特纳',
+  'Jorah Annison': '乔拉·安尼森',
+  'Jordan Stilwell': '乔丹·斯蒂尔维尔',
+  Kurgul: '库尔古尔',
+  'Lago Blackwrench': '拉戈·黑扳手',
+  'Magus Wordeen Voidglare': '魔导师沃丁·虚视',
+  'Mason Connery': '梅森·康纳利',
+  "Mazu'kon": '玛祖康',
+  "Mor'zul Bloodbringer": '莫苏尔·血使',
+  'Muiredon Battleforge': '穆雷顿·战炉',
+  'Narm Faulk': '纳尔姆·福克',
+  'Niby the Almighty': '全能的尼比',
+  'Onin MacHammar': '奥宁·麦哈默',
+  'Sergeant Ulka': '乌尔卡中士',
+  'Spackle Thornberry': '斯帕克·荆棘',
+  'Stephanie Turner': '斯蒂芬妮·特纳',
+  'Strahad Farsan': '斯特拉哈德·法尔桑',
+  'Sully McCleary': '萨利·麦克莱里',
+  'Sutara Plainstalker': '苏塔拉·平原行者',
+  'Takar the Seer': '先知塔卡尔',
+  'Toldren Deepiron': '托德伦·深铁',
+  "Un'Thuwa": '温图瓦',
+  'Veyric Thunderhame': '维里克·雷锤',
+  'Wilma Ranthal': '威尔玛·兰萨尔',
+  Zayus: '扎尤斯',
+};
+
+const WOWF_SKIP_NORMALIZE_KEYS = new Set([
+  'id',
+  'slug',
+  'deployId',
+  'site',
+  'url',
+  'key',
+  'color',
+  'faction',
+  'kind',
+  'via',
+  'wowRaceKeys',
+  'version',
+  'dbVersion',
+  'updatedAt',
+  'spellId',
+  'icon',
+  'race',
+]);
+
+function normalizeWowfString(str) {
+  if (typeof str !== 'string') return str;
+  if (WOWF_EN_TO_ZH[str]) return WOWF_EN_TO_ZH[str];
+  if (str.includes('20金币') && str.includes('坐骑')) {
+    return '提前攒好100金币学习初级骑术，本种族坐骑会免费赠送。';
+  }
+  return str.replace(/\[([A-Za-z0-9\s':,\-.!?()/]+)\]/g, (full, inner) => {
+    const zh = WOWF_EN_TO_ZH[inner];
+    return zh ? `[${zh}]` : full;
+  });
+}
+
+function normalizeWowfDatasetText(dataset) {
+  if (!dataset || typeof dataset !== 'object') return;
+  const walk = node => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        if (typeof node[i] === 'string') {
+          node[i] = normalizeWowfString(node[i]);
+        } else {
+          walk(node[i]);
+        }
+      }
+      return;
+    }
+    for (const [k, v] of Object.entries(node)) {
+      if (WOWF_SKIP_NORMALIZE_KEYS.has(k)) continue;
+      if (typeof v === 'string') {
+        node[k] = normalizeWowfString(v);
+      } else {
+        walk(v);
+      }
+    }
+  };
+  walk(dataset.routes);
+  walk(dataset.dungeons);
+  walk(dataset.classes);
 }
 
 /**
@@ -4824,7 +5022,7 @@ local function RenderTabSmartMatch()
       table.insert(bandLines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
     end
 
-    if band.hubs and #band.hubs > 1 then
+    if not zonesBlock and band.hubs and #band.hubs > 1 then
       local subHubs = {}
       for _, h in ipairs(band.hubs) do
         local hc = (h.x and h.y) and FormatCoordLink(band.zone, h.name, h.x, h.y) or ""
@@ -5206,7 +5404,7 @@ local function RenderTabRoutes()
         table.insert(lines, string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordText))
       end
 
-      if b.hubs and #b.hubs > 1 then
+      if not zonesBlock and b.hubs and #b.hubs > 1 then
         local subHubs = {}
         for _, h in ipairs(b.hubs) do
           local hc = (h.x and h.y) and FormatCoordLink(b.zone, h.name, h.x, h.y) or ""
@@ -6335,6 +6533,7 @@ export async function buildWoWFAddon(outputDir, cacheDir, getHeaders) {
   console.log('Synchronizing live data from https://wowf.io/zh for WoWF Companion...');
   const dataset = await buildWoWFDataset(cacheDir, getHeaders);
   enrichRoutesWithAltZones(dataset.routes);
+  normalizeWowfDatasetText(dataset);
   const fullVersion = dataset.meta.version || `${WOWF_VERSION} + DB v2026.11.15`;
 
   const zip = new JSZip();
