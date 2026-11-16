@@ -503,10 +503,10 @@ local DEFAULTS = {
 }
 
 local COLORS = {
-    Alliance = { r = 0.24, g = 0.64, b = 1.00, hex = "3da3ff", label = "联盟" },
-    Horde    = { r = 1.00, g = 0.30, b = 0.24, hex = "ff4d3d", label = "部落" },
-    Neutral  = { r = 0.22, g = 0.86, b = 0.56, hex = "38db8f", label = "中立" },
-    Tram     = { r = 0.68, g = 0.56, b = 1.00, hex = "ad8fff", label = "地铁" },
+    Alliance = { r = 0.24, g = 0.64, b = 1.00, tr = 0.45, tg = 0.78, tb = 1.00, hex = "3da3ff", label = "联盟" },
+    Horde    = { r = 1.00, g = 0.30, b = 0.24, tr = 1.00, tg = 0.46, tb = 0.40, hex = "ff4d3d", label = "部落" },
+    Neutral  = { r = 0.22, g = 0.86, b = 0.56, tr = 0.36, tg = 0.94, tb = 0.68, hex = "38db8f", label = "中立" },
+    Tram     = { r = 0.68, g = 0.56, b = 1.00, tr = 0.78, tg = 0.68, tb = 1.00, hex = "ad8fff", label = "地铁" },
 }
 
 local KIND_LABELS = {
@@ -643,7 +643,8 @@ local function AcquireLabel()
     local pill = labelPool[labelUsed]
     if not pill then
         pill = CreateFrame("Frame", nil, overlayFrame)
-        pill:SetFrameLevel((overlayFrame:GetFrameLevel() or 1) + 5)
+        pill:SetFrameStrata("HIGH")
+        pill:SetFrameLevel(200)
 
         local bg = pill:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints()
@@ -703,6 +704,8 @@ local function AcquirePin()
     local pin = pinPool[pinUsed]
     if not pin then
         pin = CreateFrame("Button", nil, overlayFrame)
+        pin:SetFrameStrata("HIGH")
+        pin:SetFrameLevel(210)
         pin:EnableMouse(true)
 
         local border = pin:CreateTexture(nil, "BACKGROUND")
@@ -1021,7 +1024,6 @@ function ForeverTransit_Redraw()
     -- 绘制站点标记与防重叠文字标签
     for _, entry in ipairs(sortedNodes) do
         local pin = AcquirePin()
-        pin:SetFrameLevel((overlay:GetFrameLevel() or 1) + 10)
         pin:SetSize(pinSize, pinSize)
         pin:ClearAllPoints()
         pin:SetPoint("CENTER", overlay, "TOPLEFT", entry.x, entry.y)
@@ -1043,7 +1045,7 @@ function ForeverTransit_Redraw()
             if labelText then
                 local pill = AcquireLabel()
                 pill.text:SetText(labelText)
-                pill.text:SetTextColor(0.96, 0.98, 1.0, 1.0)
+                pill.text:SetTextColor(color.tr or color.r, color.tg or color.g, color.tb or color.b, 1.0)
                 pill.accent:SetColorTexture(color.r, color.g, color.b, 1)
 
                 local rawW = math.max(24, (pill.text:GetStringWidth() or 20) + 10)

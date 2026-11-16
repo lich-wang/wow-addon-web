@@ -16,7 +16,7 @@
     "source": "https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip"
   },
   "forever-transit": {
-    "version": "v1.0.3",
+    "version": "v1.0.4",
     "source": "builtin://forever-transit"
   },
   "icehud": {
