@@ -4896,7 +4896,7 @@ local function RenderTabSmartMatch()
     local cBand = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     y = LayoutCard(
       cBand, y,
-      string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · %s · %s)|r", band.from, band.to, band.zone or "", route and route.name or ""),
+      string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · |r%s|cffffd100 · %s)|r", band.from, band.to, FormatBandZonesTitle(band), route and route.name or ""),
       table.concat(bandLines, "\n"),
       { 0.9, 0.75, 0.2, 0.9 },
       { 0.11, 0.10, 0.06, 0.92 },
