@@ -3474,14 +3474,27 @@ local function IsQuestCompleted(q)
   return IsQuestCompletedById(q.id or q.questId)
 end
 
-local function IsDungeonAllQuestsCompleted(d, faction)
+local function MatchesQuestClass(q, classKey)
+  if type(q) ~= "table" or type(q.classes) ~= "table" or #q.classes == 0 then
+    return true
+  end
+  local targetClass = classKey or state.classKey
+  for _, ck in ipairs(q.classes) do
+    if ck == targetClass then
+      return true
+    end
+  end
+  return false
+end
+
+local function IsDungeonAllQuestsCompleted(d, faction, classKey)
   if type(d) ~= "table" or type(d.quests) ~= "table" or #d.quests == 0 then
     return false
   end
   local f = faction or state.faction or "alliance"
   local total = 0
   for _, q in ipairs(d.quests) do
-    if q.faction == "both" or q.faction == f then
+    if (q.faction == "both" or q.faction == f) and MatchesQuestClass(q, classKey) then
       total = total + 1
       if not IsQuestCompleted(q) then
         return false
@@ -3523,18 +3536,6 @@ local CLASS_NAMES_ZH = {
   WARLOCK = "术士",
   DRUID = "德鲁伊",
 }
-
-local function MatchesQuestClass(q)
-  if type(q) ~= "table" or type(q.classes) ~= "table" or #q.classes == 0 then
-    return true
-  end
-  for _, ck in ipairs(q.classes) do
-    if ck == state.classKey then
-      return true
-    end
-  end
-  return false
-end
 
 local function FormatQuestClassTag(q)
   if type(q) ~= "table" or type(q.classes) ~= "table" or #q.classes == 0 then
