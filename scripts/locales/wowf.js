@@ -4510,6 +4510,131 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
   return primary, nil
 end
 
+local function GroupQuestsBySharedPrefix(quests)
+  local groups = {}
+  local used = {}
+  for i, q in ipairs(quests or {}) do
+    if not used[i] then
+      local hasSteps = (type(q.steps) == "table" and #q.steps >= 2)
+      local matchedIdx = nil
+      local minPrefix = nil
+      if hasSteps then
+        local cTag1 = FormatQuestClassTag(q)
+        for j = i + 1, #quests do
+          local q2 = quests[j]
+          if (not used[j]) and type(q2.steps) == "table" and #q2.steps >= 2 and q2.faction == q.faction and FormatQuestClassTag(q2) == cTag1 then
+            local k = 0
+            local maxK = math.min(#q.steps - 1, #q2.steps - 1)
+            while k < maxK do
+              local id1 = tonumber(q.steps[k + 1].id)
+              local id2 = tonumber(q2.steps[k + 1].id)
+              if id1 and id1 > 0 and id2 and id2 > 0 and id1 == id2 then
+                k = k + 1
+              else
+                break
+              end
+            end
+            local function hasSuffixReqAll(steps, startIdx)
+              for idx = startIdx, #steps do
+                local st = steps[idx]
+                if type(st.reqAll) == "table" and #st.reqAll > 1 then
+                  return true
+                end
+              end
+              return false
+            end
+            if k >= 1 and (not hasSuffixReqAll(q.steps, k + 1)) and (not hasSuffixReqAll(q2.steps, k + 1)) then
+              if not matchedIdx then
+                matchedIdx = { i, j }
+                minPrefix = k
+              else
+                table.insert(matchedIdx, j)
+                if k < minPrefix then minPrefix = k end
+              end
+            end
+          end
+        end
+      end
+      if matchedIdx and #matchedIdx >= 2 and minPrefix and minPrefix >= 1 then
+        local grp = {}
+        for _, idx in ipairs(matchedIdx) do
+          used[idx] = true
+          table.insert(grp, quests[idx])
+        end
+        table.insert(groups, { quests = grp, prefixLen = minPrefix })
+      else
+        used[i] = true
+        table.insert(groups, { quests = { q }, prefixLen = 0 })
+      end
+    end
+  end
+  return groups
+end
+
+local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseIndent)
+  local quests = grp.quests
+  local k = grp.prefixLen
+  local q1 = quests[1]
+  local prefixSteps = {}
+  for idx = 1, k do
+    table.insert(prefixSteps, q1.steps[idx])
+  end
+  local lastPre = prefixSteps[k]
+  local q1Zone = (q1.zone and q1.zone ~= "") and q1.zone or fallbackZone
+  local preZone = (lastPre.zone and lastPre.zone ~= "") and lastPre.zone or q1Zone
+  local prefixQuest = {
+    id = lastPre.id,
+    name = lastPre.name,
+    faction = q1.faction,
+    level = lastPre.level or q1.level,
+    minLevel = q1.minLevel or fallbackLevel,
+    npc = (lastPre.npc and lastPre.npc ~= "") and lastPre.npc or q1.npc,
+    zone = preZone,
+    place = (lastPre.place and lastPre.place ~= "") and lastPre.place or q1.place,
+    x = (lastPre.x ~= nil) and lastPre.x or q1.x,
+    y = (lastPre.y ~= nil) and lastPre.y or q1.y,
+    steps = prefixSteps,
+  }
+  local prefixInline, prefixTree = FormatQuestWithSteps(prefixQuest, q1.minLevel or fallbackLevel, q1Zone, baseIndent)
+  local branchIndent = prefixTree and (baseIndent .. "    ") or baseIndent
+  local outLines = {}
+  if prefixTree then
+    table.insert(outLines, prefixTree)
+  end
+  for bi, bq in ipairs(quests) do
+    local isLast = (bi == #quests)
+    local bPrefix = branchIndent .. "|cff99e6ff" .. (isLast and "└─ " or "├─ ") .. "|r"
+    local suffixLinks = {}
+    local bDone = IsQuestCompleted(bq)
+    local bZone = (bq.zone and bq.zone ~= "") and bq.zone or fallbackZone
+    local bPrimaryId = tonumber(bq.id or bq.questId)
+    for si = k + 1, #bq.steps do
+      local st = bq.steps[si]
+      local sid = tonumber(st.id)
+      if sid and sid > 0 then
+        local stZone = (st.zone and st.zone ~= "") and st.zone or bZone
+        local isPrimary = (sid == bPrimaryId)
+        local stepObj = {
+          id = sid,
+          faction = bq.faction,
+          name = st.name or bq.name,
+          level = st.level or bq.level or bq.minLevel or fallbackLevel,
+          npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and bq.npc or ""),
+          zone = stZone,
+          place = (st.place and st.place ~= "") and st.place or (isPrimary and bq.place or ""),
+          x = st.x or (isPrimary and bq.x or nil),
+          y = st.y or (isPrimary and bq.y or nil),
+        }
+        local link = FormatQuestLink(stepObj, fallbackLevel, stZone, bDone)
+        table.insert(suffixLinks, isPrimary and link or ("|cff99e6ff" .. link .. "|r"))
+      end
+    end
+    table.insert(outLines, bPrefix .. table.concat(suffixLinks, " |cff99e6ff->|r "))
+  end
+  local headerPrefix = prefixTree and "" or (prefixInline .. " ")
+  return headerPrefix, table.concat(outLines, "\n")
+end
+
 local function GetDungeonByIdOrName(id, name)
   for _, d in ipairs(Data.dungeons or {}) do
     if (id and d.id == id) or (name and d.name == name) then
@@ -5388,19 +5513,30 @@ local function RenderTabSmartMatch()
         "|cffff8000[%s]|r (Lv.%d-%d · 推荐 %d 级进本 · %s%s)%s",
         d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", entCoord, newTag
       ))
-      local qCount = 0
+      local matchedDunQuests = {}
       for _, q in ipairs(d.quests or {}) do
         if (q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q) and (not IsQuestCompleted(q)) then
-          qCount = qCount + 1
-          if qCount <= 8 then
-            local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
-            local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内接取)" or "")
-            local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
-            local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "        ")
-            local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
-            table.insert(dLines, string.format("    └ 任务: %s%s%s — %s %s%s", qLink, acceptTag, chainTag, q.zone or "", q.npc or "", qc))
-            if qTree then table.insert(dLines, qTree) end
-          end
+          table.insert(matchedDunQuests, q)
+        end
+      end
+      local qCount = 0
+      for _, grp in ipairs(GroupQuestsBySharedPrefix(matchedDunQuests)) do
+        if qCount >= 8 then break end
+        qCount = qCount + #grp.quests
+        local q = grp.quests[1]
+        local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
+        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内接取)" or "")
+        local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
+        if #grp.quests > 1 and grp.prefixLen >= 1 then
+          local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "        ")
+          local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
+          table.insert(dLines, string.format("    └ 任务: %s%s%s — %s %s%s", headerPrefix, branchTag, acceptTag, q.zone or "", q.npc or "", qc))
+          table.insert(dLines, treeBody)
+        else
+          local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
+          local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "        ")
+          table.insert(dLines, string.format("    └ 任务: %s%s%s — %s %s%s", qLink, acceptTag, chainTag, q.zone or "", q.npc or "", qc))
+          if qTree then table.insert(dLines, qTree) end
         end
       end
     end
@@ -5958,16 +6094,24 @@ local function RenderTabDungeons()
         end
         if #filteredQuests > 0 then
           table.insert(lines, "|cffffd100必接副本任务 (" .. #filteredQuests .. "个):|r")
-          for _, q in ipairs(filteredQuests) do
+          for _, grp in ipairs(GroupQuestsBySharedPrefix(filteredQuests)) do
+            local q = grp.quests[1]
             local fTag = q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")
             local cTag = state.dungeonFilter ~= "MATCH" and FormatQuestClassTag(q) or ""
             local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
             local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
-            local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
-            local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "      ")
             local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
-            table.insert(lines, string.format("  - %s%s%s%s%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, qLink, acceptTag, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
-            if qTree then table.insert(lines, qTree) end
+            if #grp.quests > 1 and grp.prefixLen >= 1 then
+              local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "      ")
+              local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
+              table.insert(lines, string.format("  - %s%s%s%s%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, headerPrefix, branchTag, acceptTag, q.zone or "", q.place or "", q.npc or "", qc))
+              table.insert(lines, treeBody)
+            else
+              local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
+              local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "      ")
+              table.insert(lines, string.format("  - %s%s%s%s%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, qLink, acceptTag, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+              if qTree then table.insert(lines, qTree) end
+            end
           end
         end
       end
