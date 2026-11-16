@@ -1768,13 +1768,13 @@ async function loadQuestiePrereqs(cacheDir) {
     const getOrCreate = qid => {
       let entry = dbMap.get(qid);
       if (!entry) {
-        entry = { preSingle: null, preGroup: null, name: '', level: 0, minLevel: 0 };
+        entry = { preSingle: null, preGroup: null, breadcrumbs: null, name: '', level: 0, minLevel: 0 };
         dbMap.set(qid, entry);
       }
       return entry;
     };
     for (const line of toc.split(/\r?\n/)) {
-      const m = line.match(/^## X-Quest-(\d+)-(12|13|S):\s*(.+)$/);
+      const m = line.match(/^## X-Quest-(\d+)-(12|13|28|S):\s*(.+)$/);
       if (!m) continue;
       const qid = Number(m[1]);
       const field = m[2];
@@ -1786,6 +1786,8 @@ async function loadQuestiePrereqs(cacheDir) {
           getOrCreate(qid).preSingle = val.map(Number).filter(Boolean);
         } else if (field === '12' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).preGroup = val.map(Number).filter(Boolean);
+        } else if (field === '28' && Array.isArray(val) && val.length > 0) {
+          getOrCreate(qid).breadcrumbs = val.map(Number).filter(Boolean);
         } else if (field === 'S' && val && typeof val === 'object') {
           const entry = getOrCreate(qid);
           if (typeof val[1] === 'string') entry.name = val[1];
@@ -1824,7 +1826,33 @@ function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = nu
           },
         ];
 
-  const visited = new Set(sourceSteps.map(st => st?.id).filter(Boolean));
+  // 过滤掉仅作为可选引导（breadcrumb）的前置步骤：无需前置即可直接接取的任务不展示前置链
+  let workingSteps = sourceSteps;
+  let cutIdx = 0;
+  const selfIdx = workingSteps.findIndex(st => st?.self || st?.id === mainQuest.id);
+  if (selfIdx > 0) {
+    for (let j = selfIdx; j > 0; j--) {
+      const curId = workingSteps[j]?.id;
+      const prevId = workingSteps[j - 1]?.id;
+      if (!curId || !prevId) break;
+      const info = questiePrereqs.get(curId);
+      if (!info) break;
+      const bc = Array.isArray(info.breadcrumbs) ? info.breadcrumbs : [];
+      const preS = Array.isArray(info.preSingle) ? info.preSingle : [];
+      const preG = Array.isArray(info.preGroup) ? info.preGroup : [];
+      if (bc.includes(prevId) && !preS.includes(prevId) && !preG.includes(prevId)) {
+        if (preS.length === 0 && preG.length === 0) {
+          cutIdx = j;
+          break;
+        }
+      }
+    }
+    if (cutIdx > 0) {
+      workingSteps = workingSteps.slice(cutIdx);
+    }
+  }
+
+  const visited = new Set(workingSteps.map(st => st?.id).filter(Boolean));
   const addedSteps = [];
   const mergedFlow = [];
 
@@ -1858,7 +1886,7 @@ function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = nu
     }
   };
 
-  for (const st of sourceSteps) {
+  for (const st of workingSteps) {
     if (st?.id) {
       const missingBeforeStep = [];
       collectPrereqs(st.id, 0, missingBeforeStep);
@@ -1867,9 +1895,10 @@ function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = nu
     mergedFlow.push(st);
   }
 
-  if (addedSteps.length === 0) return baseFlow;
+  const fallbackFlow = cutIdx > 0 ? workingSteps : baseFlow;
+  if (addedSteps.length === 0) return fallbackFlow;
   if (questCache && addedSteps.some(st => !questCache[String(st.id)]?.name)) {
-    return baseFlow;
+    return fallbackFlow;
   }
   return mergedFlow;
 }
@@ -3662,6 +3691,29 @@ local function IsQuestCompletedById(qid)
   return false
 end
 
+local function IsQuestActiveById(qid)
+  local id = tonumber(qid)
+  if not id or id <= 0 then return false end
+  if C_QuestLog and C_QuestLog.IsOnQuest then
+    local ok, res = pcall(C_QuestLog.IsOnQuest, id)
+    if ok and res == true then return true end
+  end
+  if C_QuestLog and C_QuestLog.GetLogIndexForQuestID then
+    local ok, idx = pcall(C_QuestLog.GetLogIndexForQuestID, id)
+    if ok and idx and idx > 0 then return true end
+  end
+  if GetNumQuestLogEntries and GetQuestLogTitle then
+    local numEntries = GetNumQuestLogEntries() or 0
+    for i = 1, numEntries do
+      local _, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(i)
+      if not isHeader and questID == id then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 local function IsQuestCompleted(q)
   if type(q) ~= "table" then return false end
   if type(q.steps) == "table" and #q.steps > 0 then
@@ -3673,6 +3725,26 @@ local function IsQuestCompleted(q)
     return IsQuestCompletedById(lastStepId)
   end
   return IsQuestCompletedById(q.id or q.questId)
+end
+
+local function IsQuestLineStarted(q)
+  if type(q) ~= "table" then return false end
+  if type(q.steps) == "table" and #q.steps > 0 then
+    for _, st in ipairs(q.steps) do
+      local sid = tonumber(st and st.id)
+      if sid and sid > 0 then
+        if IsQuestActiveById(sid) or IsQuestCompletedById(sid) then
+          return true
+        end
+      end
+    end
+    return false
+  end
+  local qid = tonumber(q.id or q.questId)
+  if qid and qid > 0 then
+    return IsQuestActiveById(qid) or IsQuestCompletedById(qid)
+  end
+  return false
 end
 
 local function MatchesQuestClass(q, classKey)
@@ -3716,7 +3788,8 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, 
   if qid and qid > 0 then
     local completed = completedOverride
     if completed == nil then completed = IsQuestCompletedById(qid) end
-    local color = completed and "|cff888888" or "|cffffff00"
+    local active = (not completed) and IsQuestActiveById(qid)
+    local color = completed and "|cff888888" or (active and "|cff00ff00" or "|cffffff00")
     if q.faction == "alliance" or q.faction == "horde" then
       return string.format("%s|Hwowfquest:%d:%d:%s|h[%s]|h|r", color, qid, qLevel, q.faction, qName)
     end
@@ -4486,12 +4559,17 @@ local function RenderTabSmartMatch()
     if band.dungeonQuests and #band.dungeonQuests > 0 then
       local dqList = {}
       for _, dq in ipairs(band.dungeonQuests) do
-        local dqZone = (dq.zone and dq.zone ~= "") and dq.zone or (dq.place or band.zone)
-        local dqc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
-        local dqLink = FormatQuestLink(dq, dq.level or lvl, dqZone)
-        table.insert(dqList, string.format("  - |cffff8000[%s]|r %s (Lv.%d) — 接取: %s %s%s", dq.dungeon, dqLink, dq.level or lvl, dq.place or "", dq.npc or "", dqc))
+        if not IsQuestCompleted(dq) then
+          local dqZone = (dq.zone and dq.zone ~= "") and dq.zone or (dq.place or band.zone)
+          local dqc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
+          local dqLink = FormatQuestLink(dq, dq.level or lvl, dqZone)
+          local acceptTag = (not IsQuestLineStarted(dq)) and string.format(" (可接 Lv.%d)", dq.level or lvl) or ""
+          table.insert(dqList, string.format("  - |cffff8000[%s]|r %s%s — 接取: %s %s%s", dq.dungeon, dqLink, acceptTag, dq.place or "", dq.npc or "", dqc))
+        end
       end
-      table.insert(bandLines, "|cffffa500本阶段顺路必接副本任务:|r\n" .. table.concat(dqList, "\n"))
+      if #dqList > 0 then
+        table.insert(bandLines, "|cffffa500本阶段顺路必接副本任务:|r\n" .. table.concat(dqList, "\n"))
+      end
     end
 
     local cBand = AcquireCard(cardIdx); cardIdx = cardIdx + 1
@@ -4617,14 +4695,15 @@ local function RenderTabSmartMatch()
       ))
       local qCount = 0
       for _, q in ipairs(d.quests or {}) do
-        if (q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q) then
+        if (q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q) and (not IsQuestCompleted(q)) then
           qCount = qCount + 1
           if qCount <= 8 then
             local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
             local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内接取)" or "")
             local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
             local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
-            table.insert(dLines, string.format("    └ 任务: %s (可接 Lv.%d)%s — %s %s%s", qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.npc or "", qc))
+            local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
+            table.insert(dLines, string.format("    └ 任务: %s%s%s — %s %s%s", qLink, acceptTag, chainTag, q.zone or "", q.npc or "", qc))
           end
         end
       end
@@ -5165,7 +5244,7 @@ local function RenderTabDungeons()
       if d.quests and #d.quests > 0 then
         local filteredQuests = {}
         for _, q in ipairs(d.quests) do
-          if state.dungeonFilter ~= "MATCH" or ((q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q)) then
+          if (not IsQuestCompleted(q)) and (state.dungeonFilter ~= "MATCH" or ((q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q))) then
             table.insert(filteredQuests, q)
           end
         end
@@ -5178,7 +5257,8 @@ local function RenderTabDungeons()
             local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
             local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
             local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
-            table.insert(lines, string.format("  - %s%s%s (可接 Lv.%d)%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+            local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
+            table.insert(lines, string.format("  - %s%s%s%s%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, qLink, acceptTag, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
           end
         end
       end
@@ -5783,7 +5863,9 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
-pcall(eventFrame.RegisterEvent, eventFrame, "QUEST_TURNED_IN")
+for _, questEv in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_LOG_UPDATE" }) do
+  pcall(eventFrame.RegisterEvent, eventFrame, questEv)
+end
 for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
