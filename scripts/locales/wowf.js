@@ -1810,14 +1810,25 @@ function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = nu
   const baseFlow = Array.isArray(sideData?.flow) ? [...sideData.flow] : [];
   if (!questiePrereqs || questiePrereqs.size === 0) return baseFlow;
 
-  const existingIds = new Set(baseFlow.map(st => st?.id).filter(Boolean));
-  const headId = baseFlow.length > 0 ? baseFlow[0].id : mainQuest.id;
-  if (!headId) return baseFlow;
+  const sourceSteps =
+    baseFlow.length > 0
+      ? baseFlow
+      : [
+          {
+            id: mainQuest.id,
+            name: mainQuest.name,
+            level: mainQuest.level || 1,
+            minLevel: mainQuest.minLevel || mainQuest.level || 1,
+            faction: mainQuest.faction || 'both',
+            self: true,
+          },
+        ];
 
-  const prepended = [];
-  const visited = new Set([headId, ...existingIds]);
+  const visited = new Set(sourceSteps.map(st => st?.id).filter(Boolean));
+  const addedSteps = [];
+  const mergedFlow = [];
 
-  const collectPrereqs = (questId, depth) => {
+  const collectPrereqs = (questId, depth, outSteps) => {
     if (depth >= 12) return;
     const info = questiePrereqs.get(questId);
     if (!info) return;
@@ -1832,39 +1843,35 @@ function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = nu
     for (const preId of directPreIds) {
       if (!preId || visited.has(preId)) continue;
       visited.add(preId);
-      collectPrereqs(preId, depth + 1);
+      collectPrereqs(preId, depth + 1, outSteps);
       const preInfo = questiePrereqs.get(preId);
-      prepended.push({
+      const stepObj = {
         id: preId,
         name: preInfo?.name || `Quest ${preId}`,
         level: preInfo?.level || mainQuest.level || 1,
         minLevel: preInfo?.minLevel || mainQuest.minLevel || 1,
         faction: mainQuest.faction || 'both',
         self: false,
-      });
+      };
+      outSteps.push(stepObj);
+      addedSteps.push(stepObj);
     }
   };
 
-  collectPrereqs(headId, 0);
+  for (const st of sourceSteps) {
+    if (st?.id) {
+      const missingBeforeStep = [];
+      collectPrereqs(st.id, 0, missingBeforeStep);
+      mergedFlow.push(...missingBeforeStep);
+    }
+    mergedFlow.push(st);
+  }
 
-  if (prepended.length === 0) return baseFlow;
-  if (questCache && prepended.some(st => !questCache[String(st.id)]?.name)) {
+  if (addedSteps.length === 0) return baseFlow;
+  if (questCache && addedSteps.some(st => !questCache[String(st.id)]?.name)) {
     return baseFlow;
   }
-  if (baseFlow.length === 0) {
-    return [
-      ...prepended,
-      {
-        id: mainQuest.id,
-        name: mainQuest.name,
-        level: mainQuest.level || 1,
-        minLevel: mainQuest.minLevel || mainQuest.level || 1,
-        faction: mainQuest.faction || 'both',
-        self: true,
-      },
-    ];
-  }
-  return [...prepended, ...baseFlow];
+  return mergedFlow;
 }
 
 /**
