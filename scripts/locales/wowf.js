@@ -2232,28 +2232,29 @@ function annotateQuestStepsPrereqs(steps, questiePrereqs) {
 
 function annotateDatasetPrereqs(dataset, questiePrereqs) {
   if (!dataset || !questiePrereqs || questiePrereqs.size === 0) return dataset;
-  for (const d of dataset.dungeons || []) {
-    for (const q of d.quests || []) {
-      if (Array.isArray(q.steps) && q.steps.length > 1) {
+  const annotateQuestList = list => {
+    for (const q of list || []) {
+      if (Array.isArray(q?.steps) && q.steps.length > 1) {
         q.steps = annotateQuestStepsPrereqs(q.steps, questiePrereqs);
       }
     }
+  };
+  for (const d of dataset.dungeons || []) {
+    annotateQuestList(d.quests);
   }
   for (const r of Object.values(dataset.routes || {})) {
-    for (const b of r.levelBands || []) {
-      for (const q of b.quests || []) {
-        if (Array.isArray(q.steps) && q.steps.length > 1) {
-          q.steps = annotateQuestStepsPrereqs(q.steps, questiePrereqs);
-        }
+    for (const b of r.bands || r.levelBands || []) {
+      annotateQuestList(b.quests);
+      for (const classQuests of Object.values(b.questsByClass || {})) {
+        annotateQuestList(classQuests);
       }
+    }
+    for (const classRuns of Object.values(r.classRunsByClass || {})) {
+      annotateQuestList(classRuns);
     }
   }
   for (const c of Object.values(dataset.classes || {})) {
-    for (const cr of c.classRuns || []) {
-      if (Array.isArray(cr.steps) && cr.steps.length > 1) {
-        cr.steps = annotateQuestStepsPrereqs(cr.steps, questiePrereqs);
-      }
-    }
+    annotateQuestList(c.classRuns);
   }
   return dataset;
 }
@@ -4417,6 +4418,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
   if hasReqAll and lastStepId and stepById[lastStepId] then
     local baseIndent = treeIndent or "    "
     local treeLines = {}
+    local coveredSteps = {}
     local function buildTreeLines(targetId, indent, isSubBranch, branchPrefix, childIndent, activeSet)
       if not targetId or activeSet[targetId] or not stepById[targetId] then return end
       local segIds = {}
@@ -4424,6 +4426,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
       while curId and not activeSet[curId] and stepById[curId] do
         table.insert(segIds, 1, curId)
         activeSet[curId] = true
+        coveredSteps[curId] = true
         local curSt = stepById[curId].step
         if type(curSt.reqAll) == "table" and #curSt.reqAll > 1 then
           break
@@ -4485,7 +4488,14 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
     end
 
     buildTreeLines(lastStepId, baseIndent, false, "", "", {})
-    if #treeLines > 0 then
+    local allCovered = true
+    for sid in pairs(stepById) do
+      if not coveredSteps[sid] then
+        allCovered = false
+        break
+      end
+    end
+    if #treeLines > 0 and allCovered then
       return primary, table.concat(treeLines, "\n")
     end
   end
