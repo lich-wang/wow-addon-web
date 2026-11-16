@@ -1473,19 +1473,29 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
     const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
     for (const q of incomingQuests) {
       const key = `${q.name}:${q.npc}`;
-      if (questIndexByKey.has(key)) {
-        const idx = questIndexByKey.get(key);
+      let idx = questIndexByKey.get(key);
+      if (idx !== undefined) {
         const prevQuest = existing.quests[idx];
+        if (q.id && prevQuest?.id && q.id !== prevQuest.id) {
+          const sameIdIdx = existing.quests.findIndex(item => item.id === q.id);
+          if (sameIdIdx >= 0) {
+            idx = sameIdIdx;
+          } else {
+            existing.quests.push(q);
+            continue;
+          }
+        }
+        const targetPrev = existing.quests[idx];
         const mergedFaction =
-          prevQuest?.faction === 'both' ||
+          targetPrev?.faction === 'both' ||
           q.faction === 'both' ||
-          (prevQuest?.faction && q.faction && prevQuest.faction !== q.faction)
+          (targetPrev?.faction && q.faction && targetPrev.faction !== q.faction)
             ? 'both'
-            : q.faction || prevQuest?.faction || 'both';
+            : q.faction || targetPrev?.faction || 'both';
         existing.quests[idx] = {
           ...q,
-          id: q.id || prevQuest?.id || null,
-          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : prevQuest?.steps,
+          id: q.id || targetPrev?.id || null,
+          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : targetPrev?.steps,
           faction: mergedFaction,
         };
       } else {
@@ -2971,7 +2981,51 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
   end
 end
 
-local function FormatQuestLink(q, fallbackLevel, fallbackZone)
+local function IsQuestCompletedById(qid)
+  local id = tonumber(qid)
+  if not id or id <= 0 then return false end
+  if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then
+    local ok, res = pcall(C_QuestLog.IsQuestFlaggedCompleted, id)
+    if ok then return res == true end
+  end
+  if IsQuestFlaggedCompleted then
+    local ok, res = pcall(IsQuestFlaggedCompleted, id)
+    if ok then return res == true end
+  end
+  return false
+end
+
+local function IsQuestCompleted(q)
+  if type(q) ~= "table" then return false end
+  if type(q.steps) == "table" and #q.steps > 0 then
+    local lastStep = q.steps[#q.steps]
+    local lastStepId = tonumber(lastStep and lastStep.id)
+    if not lastStepId or lastStepId <= 0 then
+      return false
+    end
+    return IsQuestCompletedById(lastStepId)
+  end
+  return IsQuestCompletedById(q.id or q.questId)
+end
+
+local function IsDungeonAllQuestsCompleted(d, faction)
+  if type(d) ~= "table" or type(d.quests) ~= "table" or #d.quests == 0 then
+    return false
+  end
+  local f = faction or state.faction or "alliance"
+  local total = 0
+  for _, q in ipairs(d.quests) do
+    if q.faction == "both" or q.faction == f then
+      total = total + 1
+      if not IsQuestCompleted(q) then
+        return false
+      end
+    end
+  end
+  return total > 0
+end
+
+local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, completedOverride)
   if type(q) ~= "table" then
     return "|cffffd100[" .. tostring(q or "未知任务") .. "]|r"
   end
@@ -2980,16 +3034,23 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone)
   local qName = (q.name and q.name ~= "") and q.name or (qid and ("任务 #" .. qid) or "未知任务")
   local qLevel = tonumber(q.level or q.minLevel or fallbackLevel) or state.level or 1
   if qid and qid > 0 then
-    return string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", qid, qLevel, qName)
+    local completed = completedOverride
+    if completed == nil then completed = IsQuestCompletedById(qid) end
+    local color = completed and "|cff888888" or "|cffffff00"
+    local doneTag = (completed and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
+    return string.format("%s|Hquest:%d:%d|h[%s]|h|r%s", color, qid, qLevel, qName, doneTag)
   end
-  return string.format("|cffffd100[%s]|r", qName)
+  local color = (completedOverride == true) and "|cff888888" or "|cffffd100"
+  local doneTag = (completedOverride == true and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
+  return string.format("%s[%s]|r%s", color, qName, doneTag)
 end
 
 local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
-  local primary = FormatQuestLink(q, fallbackLevel, fallbackZone)
   if type(q) ~= "table" or type(q.steps) ~= "table" or #q.steps <= 1 then
-    return primary
+    return FormatQuestLink(q, fallbackLevel, fallbackZone)
   end
+  local chainDone = IsQuestCompleted(q)
+  local primary = FormatQuestLink(q, fallbackLevel, fallbackZone, chainDone)
   local primaryId = tonumber(q.id or q.questId)
   local parentZone = (q.zone and q.zone ~= "") and q.zone or (fallbackZone or "")
   local chainLinks = {}
@@ -3028,14 +3089,15 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
           }, fallbackLevel, primaryZone)
         end
       else
-        table.insert(chainLinks, FormatQuestLink(stepObj, fallbackLevel, stZone))
+        table.insert(chainLinks, FormatQuestLink(stepObj, fallbackLevel, stZone, chainDone))
       end
     end
   end
   if #chainLinks > 0 then
-    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r"
+    local suffix = chainDone and " |cff00ff00[已经完成]|r" or ""
+    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r" .. suffix
   end
-  return primary
+  return primary .. (chainDone and " |cff00ff00[已经完成]|r" or "")
 end
 
 local function GetDungeonByIdOrName(id, name)
@@ -3216,11 +3278,13 @@ local function GetMatchedTalentStep(spec, level)
   return nil
 end
 
-local function GetMatchedDungeons(level)
+local function GetMatchedDungeons(level, includeCompleted)
   local list = {}
   for _, d in ipairs(Data.dungeons or {}) do
     if level >= (d.minLevel - 3) and level <= (d.maxLevel + 3) then
-      table.insert(list, d)
+      if includeCompleted or not IsDungeonAllQuestsCompleted(d, state.faction) then
+        table.insert(list, d)
+      end
     end
   end
   return list
@@ -3387,6 +3451,9 @@ local function OnCardHyperlinkEnter(self, link)
       if meta.x and meta.y then
         GameTooltip:AddLine(string.format("坐标: |cff00ff00%.1f, %.1f|r", meta.x, meta.y))
       end
+    end
+    if qid and IsQuestCompletedById(qid) then
+      GameTooltip:AddLine("状态: |cff00ff00已经完成|r")
     end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("|cff00ff00左键 / Shift+左键:|r 发送任务链接到聊天框")
@@ -4238,7 +4305,7 @@ local function RenderTabClassAndTalents()
         local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
         local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
         local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
-        local crLink = FormatQuestLink(cr, cr.level, firstZone)
+        local crLink = FormatQuestLink(cr, cr.level, firstZone, nil, IsQuestCompleted(cr))
         table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
         for idx, st in ipairs(cr.steps or {}) do
           local stZone = (st.zone and st.zone ~= "") and st.zone or st.place
@@ -4337,15 +4404,27 @@ local function RenderTabDungeons()
     end
   )
 
+  local shownCount = 0
+  local levelMatchedCount = 0
+  local hiddenCompletedCount = 0
   for _, d in ipairs(Data.dungeons or {}) do
     local passFilter = true
+    local allDone = IsDungeonAllQuestsCompleted(d, state.faction)
     if state.dungeonFilter == "MATCH" then
-      passFilter = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3))
+      local levelOk = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3))
+      if levelOk then
+        levelMatchedCount = levelMatchedCount + 1
+        if allDone then
+          hiddenCompletedCount = hiddenCompletedCount + 1
+        end
+      end
+      passFilter = levelOk and (not allDone)
     elseif state.dungeonFilter == "NEW" then
       passFilter = d.isNew and true or false
     end
 
     if passFilter and MatchesSearch((d.name or "") .. " " .. (d.zone or "") .. " " .. (d.summary or "")) then
+      shownCount = shownCount + 1
       local lines = {}
       if d.entranceX and d.entranceY then
         local entLink = FormatCoordLink(d.entranceZone or d.zone, d.name .. "副本入口", d.entranceX, d.entranceY)
@@ -4380,17 +4459,40 @@ local function RenderTabDungeons()
       local isLevelMatch = (state.level >= d.minLevel and state.level <= d.maxLevel)
       local newBadge = d.isNew and " |cff00ffcc[★无限服新增]|r" or ""
       local matchBadge = isLevelMatch and " |cff00ff00[当前适龄]|r" or ""
+      local doneBadge = allDone and " |cff00ff00[任务已全部完成]|r" or ""
 
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
       y = LayoutCard(
         card, y,
-        string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge),
+        string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge, doneBadge),
         table.concat(lines, "\n"),
         d.isNew and { 0.0, 0.85, 0.7, 0.9 } or (isLevelMatch and { 0.2, 0.85, 0.4, 0.9 } or { 0.3, 0.35, 0.45, 0.85 }),
         d.isNew and { 0.05, 0.13, 0.14, 0.94 } or { 0.08, 0.10, 0.14, 0.92 },
         string.format("Lv.%d-%d", d.minLevel, d.maxLevel)
       )
     end
+  end
+
+  if shownCount == 0 and state.dungeonFilter == "MATCH" then
+    local emptyTitle, emptyBody
+    if levelMatchedCount == 0 then
+      emptyTitle = "|cffffd100[提示] 当前等级暂无适龄地下城|r"
+      emptyBody = string.format("Lv.%d 暂无适龄地下城，可点击上方「看无限服新本」或「显示全部副本」查看全部地下城详情。", state.level)
+    elseif hiddenCompletedCount == levelMatchedCount then
+      emptyTitle = "|cff00ff00[提示] 当前等级适龄副本任务已全部完成|r"
+      emptyBody = string.format("Lv.%d 适龄地下城的任务已全部完成并默认隐藏。可点击上方「看无限服新本」或「显示全部副本」查看全部地下城详情。", state.level)
+    else
+      emptyTitle = "|cffffd100[提示] 未找到符合搜索条件的适龄副本|r"
+      emptyBody = string.format("当前搜索条件下没有匹配的未完成 Lv.%d 适龄副本，请清空或调整搜索关键词。", state.level)
+    end
+    local emptyCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+    y = LayoutCard(
+      emptyCard, y,
+      emptyTitle,
+      emptyBody,
+      { 0.2, 0.85, 0.4, 0.85 },
+      { 0.06, 0.12, 0.09, 0.92 }
+    )
   end
 
   HideUnusedCards(cardIdx)
@@ -4954,6 +5056,7 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+pcall(eventFrame.RegisterEvent, eventFrame, "QUEST_TURNED_IN")
 for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
