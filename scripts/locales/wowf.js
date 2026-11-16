@@ -684,7 +684,7 @@ const FOREVER_SYSTEMS_DATA = [
         step: 1,
         zone: '经典旧世树 · 冒险分支',
         title: '[冒险] 冒险树（练级首选推荐优先点满）',
-        detail: '提供野外道路移动速度提升、炉石冷却时间大幅缩短、灵魂医者虚弱时间减免、探索新地图经验奖励翻倍以及飞行路径速度提升。',
+        detail: '提供休息经验加成、战斗后恢复、高度警戒、露营设施冷却缩减、绷带虚弱时间减免、天赋点解锁以及飞行路径加速。',
       },
       {
         step: 2,
@@ -3741,43 +3741,52 @@ local function BuildLegacyRecommendationLines(lvl, profs, compact)
   local planTitle, planDesc, steps
   if isMax then
     planTitle = "满级综合推荐 (充裕 9 点 + 专业 5 点 + 冒险 2 点)"
-    planDesc = "60 级以声望、金币收益与双采/制造效率为核心，优先点出【充裕树】与【专业树】关键节点。"
+    planDesc = "60 级以声望外交、材料/金币节省与双采/制造效率为核心，优先点出【充裕树】与【专业树】关键节点。"
     steps = {
-      { pts = "第 1–5 点", tree = "充裕", text = "阵营声望获取加成 & 邮寄瞬间到达（冲声望、主小号倒腾物资必点）" },
-      { pts = "第 6–9 点", tree = "充裕", text = "任务金币与怪物掉落银币提升（稳定增加日常/刷本金币收益）" },
-      { pts = "第 10–14 点", tree = "专业", text = hasDualHerbMine and "矿物与草药双追踪 + 采集暴击产出 + 制造技能加成（已学双采极高收益）" or "采集/制造读条加速 + 采集额外暴击产出 & 制造技能点加成" },
-      { pts = "第 15–16 点", tree = "冒险", text = "炉石冷却时间缩减 & 道路移动速度提升（日常进出副本便利）" },
+      { fromPt = 1, toPt = 5, pts = "第 1–5 点", tree = "充裕", text = "外交官（声望加成）& 讨价还价/材料节省（冲声望与降低消耗必点）" },
+      { fromPt = 6, toPt = 9, pts = "第 6–9 点", tree = "充裕", text = "恒久（食物/药水持续）& 美食家（降低日常与团本补给开销）" },
+      { fromPt = 10, toPt = 14, pts = "第 10–14 点", tree = "专业", text = hasDualHerbMine and "加班加点（采集/制造技能提升）& 专研（已学双采高收益）" or "加班加点（专业技能提升）& 专研/大师级厨师（提高制造与副业效率）" },
+      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 战地医疗（日常赶路与续航便利）" },
     }
   elseif hasGather then
     planTitle = "练级+采集推荐 (冒险 10 点 + 专业 4 点 + 充裕 2 点)"
-    planDesc = "当前角色已学采集专业，推荐优先点满【冒险树】跑图提速，并尽早点出【专业树】双追踪与采集加速。"
+    planDesc = "当前角色已学采集专业，推荐优先点出【冒险树】休息经验与续航节点，并搭配【专业树】提升采集与制造技能增长。"
     steps = {
-      { pts = "第 1–4 点", tree = "冒险", text = "野外道路移动速度提升 & 飞行路径速度提升（练级跑图效率最大化）" },
-      { pts = "第 5–7 点", tree = "冒险", text = "炉石冷却大幅缩减 & 灵魂医者虚弱时间减免（频繁交任务必备）" },
-      { pts = "第 8–10 点", tree = "冒险", text = "探索新地图经验奖励翻倍（顺路开图白嫖大量升级经验）" },
-      { pts = "第 11–14 点", tree = "专业", text = hasDualHerbMine and "矿物与草药双追踪 + 采集读条加速（采矿+草药双采神技）" or "采集/制造读条加速 & 采集额外暴击产出（练级顺手攒材料）" },
-      { pts = "第 15–16 点", tree = "充裕", text = "邮寄瞬间到达 & 任务金币/掉落银币提升（轻松攒够 40 级小马钱）" },
+      { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
+      { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
+      { fromPt = 8, toPt = 10, pts = "第 8–10 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快跨图赶路与战斗能力）" },
+      { fromPt = 11, toPt = 14, pts = "第 11–14 点", tree = "专业", text = hasDualHerbMine and "加班加点 & 专研（提升采矿/草药技能点获取与采集效率）" or "加班加点 & 专研（提升采集/制造技能点获取与副业效率）" },
+      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "材料节省 & 讨价还价（减少消耗品与修理/购买开销）" },
     }
   else
     planTitle = "纯练级通用推荐 (冒险 11 点 + 充裕 5 点)"
-    planDesc = "练级期跑图与任务效率收益最高，推荐优先点满【冒险树】，剩余点数投入【充裕树】加速攒钱与邮寄。"
+    planDesc = "练级期休息经验、战后恢复与飞行加速收益最高，推荐优先投入【冒险树】，剩余点数投入【充裕树】节省消耗并铺垫声望。"
     steps = {
-      { pts = "第 1–4 点", tree = "冒险", text = "野外道路移动速度提升 & 飞行路径速度提升（练级跑图效率最大化）" },
-      { pts = "第 5–7 点", tree = "冒险", text = "炉石冷却大幅缩减 & 灵魂医者虚弱时间减免（频繁跨图交任务必备）" },
-      { pts = "第 8–11 点", tree = "冒险", text = "探索新地图经验奖励翻倍（顺路开图白嫖大量升级经验）" },
-      { pts = "第 12–14 点", tree = "充裕", text = "邮寄瞬间到达 & 任务金币/怪物掉落银币提升（轻松攒够 40 级小马钱）" },
-      { pts = "第 15–16 点", tree = "充裕", text = "阵营声望获取加成 & 背包减负（为满级声望提前铺垫）" },
+      { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
+      { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
+      { fromPt = 8, toPt = 11, pts = "第 8–11 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快鸟点飞行并强化实战）" },
+      { fromPt = 12, toPt = 14, pts = "第 12–14 点", tree = "充裕", text = "材料节省 & 讨价还价（降低技能/施法材料与补给开销）" },
+      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "外交官（声望获取加成，为满级声望提前铺垫）" },
     }
   end
 
   if compact then
+    local merged = {}
+    for _, st in ipairs(steps) do
+      local last = merged[#merged]
+      if last and last.tree == st.tree then
+        last.toPt = st.toPt
+      else
+        table.insert(merged, { tree = st.tree, fromPt = st.fromPt, toPt = st.toPt })
+      end
+    end
+    local seqParts = {}
+    for _, m in ipairs(merged) do
+      table.insert(seqParts, string.format("[%s] 第 %d–%d 点", m.tree, m.fromPt, m.toPt))
+    end
     return {
       string.format(">> |cff00ff00当前推荐方案:|r |cffffd100%s|r", planTitle),
-      string.format("|cff99e6ff加点顺序:|r %s -> %s -> %s",
-        string.format("[%s] %s", steps[1].tree, steps[1].pts),
-        string.format("[%s] %s", steps[2].tree, steps[2].pts),
-        string.format("[%s] %s", steps[3].tree, steps[3].pts)
-      ),
+      "|cff99e6ff加点顺序:|r " .. table.concat(seqParts, " -> "),
       "|cffaaaaaa(详细 1–16 点逐阶分配方案见 [专业&无限特色] 页)|r",
     }
   end
@@ -6074,7 +6083,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
-  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" then
+  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
     SyncPlayerCharacter()
     RefreshUI(true)
   else
