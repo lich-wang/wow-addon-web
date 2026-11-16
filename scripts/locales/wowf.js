@@ -4439,26 +4439,56 @@ local function GetBandTimelineSteps(route, fromLvl, toLvl)
   return steps
 end
 
-local function FormatAltZonesBlock(band, headerLabel)
+local function FormatBandZonesTitle(band)
+  if not band then return "" end
+  local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
+  if not band.altZones or #band.altZones == 0 then
+    return string.format("|cff00ffcc%s|r (%s)", band.zone or "", hubName or "")
+  end
+  local names = {}
+  if band.zone and band.zone ~= "" then
+    table.insert(names, band.zone)
+  end
+  for _, az in ipairs(band.altZones) do
+    if az.zone and az.zone ~= "" then
+      table.insert(names, az.zone)
+    end
+  end
+  return string.format("|cff00ffcc%s|r", table.concat(names, " / "))
+end
+
+local function FormatBandZonesBlock(band, headerLabel)
   if not band or not band.altZones or #band.altZones == 0 then
     return nil
   end
-  local altLines = {}
+  local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or ""
+  local hubCoord = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, (hubName ~= "") and hubName or band.zone, band.hub.x, band.hub.y) or ""
+  local hubPart = (hubName ~= "") and (hubName .. " ") or ""
+  local zoneLines = {
+    string.format(
+      "  · |cff00ffcc%s|r (%sLv.%d-%d)%s",
+      band.zone or "",
+      hubPart,
+      band.from or 1,
+      band.to or 60,
+      hubCoord
+    )
+  }
   for _, az in ipairs(band.altZones) do
     local ac = (az.x and az.y) and FormatCoordLink(az.zone, (az.hub and az.hub ~= "") and az.hub or az.zone, az.x, az.y) or ""
-    local hubPart = (az.hub and az.hub ~= "") and (az.hub .. " ") or ""
+    local azHubPart = (az.hub and az.hub ~= "") and (az.hub .. " ") or ""
     local noteStr = (az.note and az.note ~= "") and (" — " .. az.note) or ""
-    table.insert(altLines, string.format(
+    table.insert(zoneLines, string.format(
       "  · |cff00ffcc%s|r (%sLv.%d-%d)%s%s",
       az.zone or "",
-      hubPart,
+      azHubPart,
       az.from or band.from or 1,
       az.to or band.to or 60,
       ac,
       noteStr
     ))
   end
-  return string.format("|cffffd100%s:|r\n%s", headerLabel or "同级备选/平行练级区", table.concat(altLines, "\n"))
+  return string.format("|cffffd100%s:|r\n%s", headerLabel or "适龄练级区域 (可自由切换/穿插)", table.concat(zoneLines, "\n"))
 end
 
 local function MatchesSearch(text)
@@ -4787,11 +4817,11 @@ local function RenderTabSmartMatch()
     local bandLines = {}
     local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
     local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
-    table.insert(bandLines, string.format("|cffffd100主推练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
-
-    local altBlock = FormatAltZonesBlock(band, "同级备选/平行练级区 (单图任务不够时穿插)")
-    if altBlock then
-      table.insert(bandLines, altBlock)
+    local zonesBlock = FormatBandZonesBlock(band, "当前适龄练级区域 (平级推荐，可自由切换)")
+    if zonesBlock then
+      table.insert(bandLines, zonesBlock)
+    else
+      table.insert(bandLines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
     end
 
     if band.hubs and #band.hubs > 1 then
@@ -5168,13 +5198,12 @@ local function RenderTabRoutes()
     end
 
     if MatchesSearch(searchBlob) then
-      local lines = {
-        string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordText),
-      }
-
-      local altBlock = FormatAltZonesBlock(b, "同级平行/备选练级区 (单图任务不够时切换/穿插)")
-      if altBlock then
-        table.insert(lines, altBlock)
+      local lines = {}
+      local zonesBlock = FormatBandZonesBlock(b, "本阶段适龄练级区域 (平级推荐，可自由切换)")
+      if zonesBlock then
+        table.insert(lines, zonesBlock)
+      else
+        table.insert(lines, string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordText))
       end
 
       if b.hubs and #b.hubs > 1 then
@@ -5308,7 +5337,7 @@ local function RenderTabRoutes()
       local titlePrefix = isCurrent and "|cff00ff00▶ [当前角色所在阶段]|r " or string.format("|cff8899aa[第%d步]|r ", stepIdx)
       y = LayoutCard(
         card, y,
-        string.format("%s|cffffd100Lv.%d – %d|r  ·  |cff00ffcc%s|r (%s)", titlePrefix, b.from, b.to, b.zone or "", hubName or ""),
+        string.format("%s|cffffd100Lv.%d – %d|r  ·  %s", titlePrefix, b.from, b.to, FormatBandZonesTitle(b)),
         table.concat(lines, "\n"),
         isCurrent and { 0.1, 0.95, 0.4, 0.95 } or { 0.25, 0.35, 0.45, 0.85 },
         isCurrent and { 0.06, 0.16, 0.10, 0.95 } or { 0.08, 0.10, 0.14, 0.92 },
@@ -6171,16 +6200,21 @@ local function CreateMinimapButton()
 
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cff00ffccWoWF Companion|r |cffffd100(wowf.io 无限服百科)|r")
-    GameTooltip:AddLine(string.format("当前角色: |cffffffffLv.%d|r  ·  推荐区域: |cff00ffcc%s|r", state.level, band and band.zone or "未知"))
-    if band and band.hub and band.hub.name ~= "" then
-      GameTooltip:AddLine(string.format("驻扎营地: |cffffd100%s|r", band.hub.name))
+    local zoneList = {}
+    if band and band.zone and band.zone ~= "" then
+      table.insert(zoneList, band.zone)
     end
-    if band and band.altZones and #band.altZones > 0 then
-      local altNames = {}
+    if band and band.altZones then
       for i = 1, math.min(3, #band.altZones) do
-        table.insert(altNames, band.altZones[i].zone or "")
+        if band.altZones[i].zone and band.altZones[i].zone ~= "" then
+          table.insert(zoneList, band.altZones[i].zone)
+        end
       end
-      GameTooltip:AddLine(string.format("同级备选: |cff99e6ff%s|r", table.concat(altNames, " / ")))
+    end
+    local zoneText = (#zoneList > 0) and table.concat(zoneList, " / ") or "未知"
+    GameTooltip:AddLine(string.format("当前角色: |cffffffffLv.%d|r  ·  适龄区域: |cff00ffcc%s|r", state.level, zoneText))
+    if band and band.hub and band.hub.name ~= "" then
+      GameTooltip:AddLine(string.format("参考据点: |cffffd100%s|r", band.hub.name))
     end
     if step then
       GameTooltip:AddLine(string.format("本级天赋: |cffffd100[%s] %s (%d/%d)|r", step.tree, step.name, step.rank, step.max))
