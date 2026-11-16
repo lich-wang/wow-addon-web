@@ -149,7 +149,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSendingChat || !chatInput.trim()) return;
+    if (voiceState.status !== 'connected' || isSendingChat || !chatInput.trim()) return;
     const text = chatInput;
     setRoomError(null);
     setIsSendingChat(true);
@@ -626,13 +626,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               maxLength={500}
-              disabled={isSendingChat}
-              placeholder="发送文字消息..."
-              className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-xs text-slate-100 placeholder-slate-600 disabled:opacity-60"
+              placeholder={voiceState.status === 'connected' ? '发送文字消息...' : '正在连接频道...'}
+              className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-xs text-slate-100 placeholder-slate-600"
             />
             <button
               type="submit"
-              disabled={isSendingChat || !chatInput.trim()}
+              disabled={voiceState.status !== 'connected' || isSendingChat || !chatInput.trim()}
               className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-bold text-xs cursor-pointer transition-colors"
               aria-label="发送消息"
             >
