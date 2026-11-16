@@ -4525,10 +4525,25 @@ local function GroupQuestsBySharedPrefix(quests)
           if (not used[j]) and type(q2.steps) == "table" and #q2.steps >= 2 and q2.faction == q.faction and FormatQuestClassTag(q2) == cTag1 then
             local k = 0
             local maxK = math.min(#q.steps - 1, #q2.steps - 1)
-            while k < maxK and tonumber(q.steps[k + 1].id) == tonumber(q2.steps[k + 1].id) do
-              k = k + 1
+            while k < maxK do
+              local id1 = tonumber(q.steps[k + 1].id)
+              local id2 = tonumber(q2.steps[k + 1].id)
+              if id1 and id1 > 0 and id2 and id2 > 0 and id1 == id2 then
+                k = k + 1
+              else
+                break
+              end
             end
-            if k >= 1 then
+            local function hasSuffixReqAll(steps, startIdx)
+              for idx = startIdx, #steps do
+                local st = steps[idx]
+                if type(st.reqAll) == "table" and #st.reqAll > 1 then
+                  return true
+                end
+              end
+              return false
+            end
+            if k >= 1 and (not hasSuffixReqAll(q.steps, k + 1)) and (not hasSuffixReqAll(q2.steps, k + 1)) then
               if not matchedIdx then
                 matchedIdx = { i, j }
                 minPrefix = k
@@ -4566,17 +4581,18 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
   end
   local lastPre = prefixSteps[k]
   local q1Zone = (q1.zone and q1.zone ~= "") and q1.zone or fallbackZone
+  local preZone = (lastPre.zone and lastPre.zone ~= "") and lastPre.zone or q1Zone
   local prefixQuest = {
     id = lastPre.id,
     name = lastPre.name,
     faction = q1.faction,
     level = lastPre.level or q1.level,
     minLevel = q1.minLevel or fallbackLevel,
-    npc = q1.npc,
-    zone = q1Zone,
-    place = q1.place,
-    x = q1.x,
-    y = q1.y,
+    npc = (lastPre.npc and lastPre.npc ~= "") and lastPre.npc or q1.npc,
+    zone = preZone,
+    place = (lastPre.place and lastPre.place ~= "") and lastPre.place or q1.place,
+    x = (lastPre.x ~= nil) and lastPre.x or q1.x,
+    y = (lastPre.y ~= nil) and lastPre.y or q1.y,
     steps = prefixSteps,
   }
   local prefixInline, prefixTree = FormatQuestWithSteps(prefixQuest, q1.minLevel or fallbackLevel, q1Zone, baseIndent)
