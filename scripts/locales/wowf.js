@@ -1678,6 +1678,203 @@ async function fetchQuestDetail(questId, questCache, getHeaders) {
 }
 
 /**
+ * 极简 CBOR 解码器（用于解析 QuestieDB_Forever.toc 中的 Base64+CBOR 任务前置元数据）
+ */
+function decodeCborValue(buf, state = { offset: 0 }) {
+  if (state.offset >= buf.length) return null;
+  const b = buf[state.offset++];
+  const major = b >> 5;
+  const info = b & 0x1f;
+  const readLen = () => {
+    if (info < 24) return info;
+    if (info === 24) return buf[state.offset++];
+    if (info === 25) {
+      const v = buf.readUInt16BE(state.offset);
+      state.offset += 2;
+      return v;
+    }
+    if (info === 26) {
+      const v = buf.readUInt32BE(state.offset);
+      state.offset += 4;
+      return v;
+    }
+    if (info === 27) {
+      const v = Number(buf.readBigUInt64BE(state.offset));
+      state.offset += 8;
+      return v;
+    }
+    return 0;
+  };
+  if (major === 0) return readLen();
+  if (major === 1) return -1 - readLen();
+  if (major === 2) {
+    const len = readLen();
+    const out = buf.slice(state.offset, state.offset + len);
+    state.offset += len;
+    return out;
+  }
+  if (major === 3) {
+    const len = readLen();
+    const out = buf.toString('utf8', state.offset, state.offset + len);
+    state.offset += len;
+    return out;
+  }
+  if (major === 4) {
+    const len = readLen();
+    const arr = [];
+    for (let i = 0; i < len; i++) arr.push(decodeCborValue(buf, state));
+    return arr;
+  }
+  if (major === 5) {
+    const len = readLen();
+    const obj = {};
+    for (let i = 0; i < len; i++) {
+      const k = decodeCborValue(buf, state);
+      obj[k] = decodeCborValue(buf, state);
+    }
+    return obj;
+  }
+  if (major === 7) {
+    if (info === 20) return false;
+    if (info === 21) return true;
+    if (info === 22) return null;
+    if (info === 26) {
+      const v = buf.readFloatBE(state.offset);
+      state.offset += 4;
+      return v;
+    }
+    if (info === 27) {
+      const v = buf.readDoubleBE(state.offset);
+      state.offset += 8;
+      return v;
+    }
+  }
+  return null;
+}
+
+/**
+ * 从本地缓存的 questie-db-forever.zip 读取无限服官方 QuestieDB 的任务前置关系 (preQuestSingle / preQuestGroup)
+ * 用于补全 wowf.io 网页端遗漏的前置任务链
+ */
+async function loadQuestiePrereqs(cacheDir) {
+  const dbMap = new Map();
+  const zipPath = path.join(cacheDir, 'questie-db-forever.zip');
+  if (!fs.existsSync(zipPath)) return dbMap;
+  try {
+    const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
+    const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
+    if (!tocFile) return dbMap;
+    const toc = await tocFile.async('string');
+    const getOrCreate = qid => {
+      let entry = dbMap.get(qid);
+      if (!entry) {
+        entry = { preSingle: null, preGroup: null, name: '', level: 0, minLevel: 0 };
+        dbMap.set(qid, entry);
+      }
+      return entry;
+    };
+    for (const line of toc.split(/\r?\n/)) {
+      const m = line.match(/^## X-Quest-(\d+)-(12|13|S):\s*(.+)$/);
+      if (!m) continue;
+      const qid = Number(m[1]);
+      const field = m[2];
+      const raw = m[3].trim();
+      if (!raw || raw.startsWith('~')) continue;
+      try {
+        const val = decodeCborValue(Buffer.from(raw, 'base64'));
+        if (field === '13' && Array.isArray(val) && val.length > 0) {
+          getOrCreate(qid).preSingle = val.map(Number).filter(Boolean);
+        } else if (field === '12' && Array.isArray(val) && val.length > 0) {
+          getOrCreate(qid).preGroup = val.map(Number).filter(Boolean);
+        } else if (field === 'S' && val && typeof val === 'object') {
+          const entry = getOrCreate(qid);
+          if (typeof val[1] === 'string') entry.name = val[1];
+          if (typeof val[4] === 'number') entry.minLevel = val[4];
+          if (typeof val[5] === 'number') entry.level = val[5];
+        }
+      } catch {
+        // 忽略单条损坏的 CBOR 记录
+      }
+    }
+  } catch {
+    // 无缓存或读取失败时静默降级
+  }
+  return dbMap;
+}
+
+/**
+ * 基于 QuestieDB 向前追溯缺失的前置任务，返回补全后的任务链步骤列表
+ * 若传入 questCache，则仅当所有新增前置步骤均已抓到详情时才使用补全流程，否则回退到 sideData.flow
+ */
+function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = null) {
+  const baseFlow = Array.isArray(sideData?.flow) ? [...sideData.flow] : [];
+  if (!questiePrereqs || questiePrereqs.size === 0) return baseFlow;
+
+  const sourceSteps =
+    baseFlow.length > 0
+      ? baseFlow
+      : [
+          {
+            id: mainQuest.id,
+            name: mainQuest.name,
+            level: mainQuest.level || 1,
+            minLevel: mainQuest.minLevel || mainQuest.level || 1,
+            faction: mainQuest.faction || 'both',
+            self: true,
+          },
+        ];
+
+  const visited = new Set(sourceSteps.map(st => st?.id).filter(Boolean));
+  const addedSteps = [];
+  const mergedFlow = [];
+
+  const collectPrereqs = (questId, depth, outSteps) => {
+    if (depth >= 12) return;
+    const info = questiePrereqs.get(questId);
+    if (!info) return;
+
+    let directPreIds = [];
+    if (Array.isArray(info.preSingle) && info.preSingle.length === 1) {
+      directPreIds = [info.preSingle[0]];
+    } else if (Array.isArray(info.preGroup) && info.preGroup.length > 0) {
+      directPreIds = info.preGroup;
+    }
+
+    for (const preId of directPreIds) {
+      if (!preId || visited.has(preId)) continue;
+      visited.add(preId);
+      collectPrereqs(preId, depth + 1, outSteps);
+      const preInfo = questiePrereqs.get(preId);
+      const stepObj = {
+        id: preId,
+        name: preInfo?.name || `Quest ${preId}`,
+        level: preInfo?.level || mainQuest.level || 1,
+        minLevel: preInfo?.minLevel || mainQuest.minLevel || 1,
+        faction: mainQuest.faction || 'both',
+        self: false,
+      };
+      outSteps.push(stepObj);
+      addedSteps.push(stepObj);
+    }
+  };
+
+  for (const st of sourceSteps) {
+    if (st?.id) {
+      const missingBeforeStep = [];
+      collectPrereqs(st.id, 0, missingBeforeStep);
+      mergedFlow.push(...missingBeforeStep);
+    }
+    mergedFlow.push(st);
+  }
+
+  if (addedSteps.length === 0) return baseFlow;
+  if (questCache && addedSteps.some(st => !questCache[String(st.id)]?.name)) {
+    return baseFlow;
+  }
+  return mergedFlow;
+}
+
+/**
  * 从 wowf.io/zh/dungeons/<id> 与 /zh/quests/<id> 补全所有副本的双阵营任务与前置任务链
  */
 async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cachedDungeons = []) {
@@ -1798,13 +1995,17 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     if (!detail) hasWebEnrichFailure = true;
   });
 
+  // 加载无限服 QuestieDB 前置任务关系，补全 wowf.io 网页端缺失的前置链
+  const questiePrereqs = await loadQuestiePrereqs(cacheDir);
+
   // 第二轮：抓取前置/后续任务链步骤的详情以补全各步 NPC 与坐标
   const stepQuestIds = new Set();
   for (const qid of allMainQuestIds) {
     const q = questCache[String(qid)];
     if (!q?.sides) continue;
     for (const sideData of Object.values(q.sides)) {
-      for (const st of sideData?.flow || []) {
+      const effectiveFlow = buildEffectiveFlow(q, sideData, questiePrereqs);
+      for (const st of effectiveFlow) {
         if (st?.id && !questCache[String(st.id)]?.v) {
           stepQuestIds.add(st.id);
         }
@@ -1835,7 +2036,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     const seenFlowKey = new Set();
 
     const buildEntry = (q, sideData, factionOverride) => {
-      const flow = Array.isArray(sideData?.flow) ? sideData.flow : [];
+      const flow = buildEffectiveFlow(q, sideData, questiePrereqs, questCache);
       const selfIdx = flow.findIndex(st => st.self || st.id === q.id);
       const hasPrereq = selfIdx > 0;
 
