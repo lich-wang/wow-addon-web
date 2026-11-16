@@ -2231,6 +2231,7 @@ local state = {
   routeFilter = "MATCH", -- "MATCH" | "ALL"
   talentFilter = "MATCH", -- "MATCH" | "ALL"
   dungeonFilter = "MATCH", -- "MATCH" | "NEW" | "ALL"
+  featureFilter = "MATCH", -- "MATCH" | "ALL"
   searchQuery = "",
 }
 
@@ -4464,38 +4465,75 @@ end
 local function RenderTabForeverAndNews()
   local cardIdx = 1
   local y = 6
+  local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
   local recProfs = (spec and spec.recommendedProfs) or ""
+  local isMatchMode = (state.featureFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
+  local toggleBtnLabel = state.featureFilter == "MATCH" and "查看全部特色与专业" or "仅看当前角色匹配"
+  local modeDesc = state.featureFilter == "MATCH"
+    and string.format("当前筛选: 匹配当前角色 (Lv.%d %s · %s)", state.level, cls and cls.name or state.classKey, spec and spec.name or "默认专精")
+    or "当前筛选: 全部无限服特色玩法与 12 大专业"
+
+  local filterCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    filterCard, y,
+    "|cff00ffcc[特色&专业] 无限服专属玩法与 1-300 专业指南 (" .. modeDesc .. ")|r",
+    "包含《魔兽世界：无限服》专属玩法（露营帐篷、舒适睡袋、经典旧世树、遭劫的板条箱等）、12 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营的特色玩法，以及当前专精推荐专业与生活副业。",
+    { 0.0, 0.85, 0.7, 0.9 },
+    { 0.05, 0.12, 0.14, 0.94 },
+    nil,
+    toggleBtnLabel,
+    function()
+      if state.featureFilter == "MATCH" then
+        state.featureFilter = "ALL"
+      else
+        state.featureFilter = "MATCH"
+      end
+      RefreshUI()
+    end
+  )
 
   -- 1. 无限服专属玩法攻略（露营、睡袋、经典旧世之树、物资箱等）
   for _, sys in ipairs(Data.foreverSystems or {}) do
-    if MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
+    local levelMatch = (not isMatchMode) or (not sys.minLevel) or (state.level >= sys.minLevel)
+    if levelMatch and MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
       local lines = { LinkifyInlineCoords(sys.summary or "", "", sys.title or "") }
       local firstCoord = nil
       for _, st in ipairs(sys.steps or {}) do
-        if st.coord and not firstCoord then
-          firstCoord = { zone = st.zone, title = st.title, x = st.coord.x, y = st.coord.y }
+        local stepTitle = st.title or ""
+        local factionMatch = true
+        if isMatchMode then
+          if string.find(stepTitle, "^联盟：") and state.faction == "horde" then
+            factionMatch = false
+          elseif string.find(stepTitle, "^部落：") and state.faction == "alliance" then
+            factionMatch = false
+          end
         end
-        local stepHeader = "|cffffd100" .. (st.title or "") .. "|r"
-        if st.questId and st.questName then
-          local qObj = {
-            id = st.questId,
-            name = st.questName,
-            level = st.questLevel or 14,
-            zone = st.zone or "",
-            x = st.coord and st.coord.x or nil,
-            y = st.coord and st.coord.y or nil,
-          }
-          stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
+        if factionMatch then
+          if st.coord and not firstCoord then
+            firstCoord = { zone = st.zone, title = st.title, x = st.coord.x, y = st.coord.y }
+          end
+          local stepHeader = "|cffffd100" .. stepTitle .. "|r"
+          if st.questId and st.questName then
+            local qObj = {
+              id = st.questId,
+              name = st.questName,
+              level = st.questLevel or 14,
+              zone = st.zone or "",
+              x = st.coord and st.coord.x or nil,
+              y = st.coord and st.coord.y or nil,
+            }
+            stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
+          end
+          if st.coord then
+            stepHeader = stepHeader .. FormatCoordLink(st.zone or "", st.title or "", st.coord.x, st.coord.y)
+          end
+          if st.altCoord then
+            stepHeader = stepHeader .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or st.title or "", st.altCoord.x, st.altCoord.y, false)
+          end
+          local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", st.title or "")
+          table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
         end
-        if st.coord then
-          stepHeader = stepHeader .. FormatCoordLink(st.zone or "", st.title or "", st.coord.x, st.coord.y)
-        end
-        if st.altCoord then
-          stepHeader = stepHeader .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or st.title or "", st.altCoord.x, st.altCoord.y, false)
-        end
-        local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", st.title or "")
-        table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
       end
 
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
@@ -4517,9 +4555,10 @@ local function RenderTabForeverAndNews()
   -- 2. 12 大专业 1-300 冲级与无限服特色指南 (同步自 wowf.io/zh/professions)
   if Data.professions and #Data.professions > 0 then
     for _, prof in ipairs(Data.professions) do
+      local isRec = (recProfs ~= "" and string.find(recProfs, prof.name or "", 1, true) ~= nil)
+      local passProfFilter = (not isMatchMode) or (recProfs == "") or isRec or (prof.type == "secondary")
       local searchText = (prof.name or "") .. " " .. (prof.brackets or "") .. " " .. (prof.foreverNote or "")
-      if MatchesSearch(searchText) then
-        local isRec = (recProfs ~= "" and string.find(recProfs, prof.name or "", 1, true) ~= nil)
+      if passProfFilter and MatchesSearch(searchText) then
         local pLines = {}
         if prof.pairs and #prof.pairs > 0 then
           table.insert(pLines, "|cff00ff96最佳搭配专业:|r " .. table.concat(prof.pairs, " / "))
@@ -4701,6 +4740,7 @@ local function CreateMainWindow()
       state.routeFilter = "MATCH"
       state.talentFilter = "MATCH"
       state.dungeonFilter = "MATCH"
+      state.featureFilter = "MATCH"
       SyncPlayerCharacter()
     end
     RefreshUI()
@@ -4717,6 +4757,7 @@ local function CreateMainWindow()
     state.routeFilter = "MATCH"
     state.talentFilter = "MATCH"
     state.dungeonFilter = "MATCH"
+    state.featureFilter = "MATCH"
     SyncPlayerCharacter()
     RefreshUI()
   end)
@@ -5046,6 +5087,7 @@ SlashCmdList["WOWF"] = function(msg)
     state.talentFilter = "MATCH"
     ToggleMainWindow(3)
   elseif cmd == "news" or cmd == "forever" or cmd == "prof" or cmd == "professions" then
+    state.featureFilter = "MATCH"
     ToggleMainWindow(6)
   else
     ToggleMainWindow(1)
