@@ -3503,15 +3503,13 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, 
     local completed = completedOverride
     if completed == nil then completed = IsQuestCompletedById(qid) end
     local color = completed and "|cff888888" or "|cffffff00"
-    local doneTag = (completed and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
     if q.faction == "alliance" or q.faction == "horde" then
-      return string.format("%s|Hwowfquest:%d:%d:%s|h[%s]|h|r%s", color, qid, qLevel, q.faction, qName, doneTag)
+      return string.format("%s|Hwowfquest:%d:%d:%s|h[%s]|h|r", color, qid, qLevel, q.faction, qName)
     end
-    return string.format("%s|Hquest:%d:%d|h[%s]|h|r%s", color, qid, qLevel, qName, doneTag)
+    return string.format("%s|Hquest:%d:%d|h[%s]|h|r", color, qid, qLevel, qName)
   end
   local color = (completedOverride == true) and "|cff888888" or "|cffffd100"
-  local doneTag = (completedOverride == true and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
-  return string.format("%s[%s]|r%s", color, qName, doneTag)
+  return string.format("%s[%s]|r", color, qName)
 end
 
 local CLASS_NAMES_ZH = {
@@ -3612,14 +3610,12 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
   end
   -- 若主任务前面存在前置步骤（primaryIdx > 1），按“前置1 -> 前置2 -> 主任务 -> 后续”正序展示
   if primaryIdx and primaryIdx > 1 and #orderedLinks > 1 then
-    local suffix = chainDone and " |cff00ff00[已经完成]|r" or ""
-    return table.concat(orderedLinks, " |cff99e6ff->|r ") .. suffix
+    return table.concat(orderedLinks, " |cff99e6ff->|r ")
   end
   if #chainLinks > 0 then
-    local suffix = chainDone and " |cff00ff00[已经完成]|r" or ""
-    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r" .. suffix
+    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r"
   end
-  return primary .. (chainDone and " |cff00ff00[已经完成]|r" or "")
+  return primary
 end
 
 local function GetDungeonByIdOrName(id, name)
@@ -3961,6 +3957,9 @@ local function OnCardHyperlinkEnter(self, link)
       GameTooltip:ClearLines()
       GameTooltip:AddLine((meta and meta.name) or ("任务 #" .. tostring(qid or "")), 1, 0.82, 0)
     end
+    if qid and IsQuestCompletedById(qid) then
+      GameTooltip:AddLine("已经完成", 0.1, 1.0, 0.1)
+    end
     if meta then
       GameTooltip:AddLine(" ")
       if meta.dungeon and meta.dungeon ~= "" then
@@ -3976,9 +3975,6 @@ local function OnCardHyperlinkEnter(self, link)
       if meta.x and meta.y then
         GameTooltip:AddLine(string.format("坐标: |cff00ff00%.1f, %.1f|r", meta.x, meta.y))
       end
-    end
-    if qid and IsQuestCompletedById(qid) then
-      GameTooltip:AddLine("状态: |cff00ff00已经完成|r")
     end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("|cff00ff00左键 / Shift+左键:|r 发送任务链接到聊天框")
