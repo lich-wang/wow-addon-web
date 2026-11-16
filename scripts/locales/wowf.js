@@ -1768,7 +1768,7 @@ async function loadQuestiePrereqs(cacheDir) {
     const getOrCreate = qid => {
       let entry = dbMap.get(qid);
       if (!entry) {
-        entry = { preSingle: null, preGroup: null, breadcrumbs: null, name: '', level: 0, minLevel: 0 };
+        entry = { preSingle: null, preGroup: null, breadcrumbs: null, repeatable: false, name: '', level: 0, minLevel: 0 };
         dbMap.set(qid, entry);
       }
       return entry;
@@ -1793,6 +1793,7 @@ async function loadQuestiePrereqs(cacheDir) {
           if (typeof val[1] === 'string') entry.name = val[1];
           if (typeof val[4] === 'number') entry.minLevel = val[4];
           if (typeof val[5] === 'number') entry.level = val[5];
+          if (Number(val[24]) & 1) entry.repeatable = true;
         }
       } catch {
         // 忽略单条损坏的 CBOR 记录
@@ -1922,6 +1923,22 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       .filter(d => d && d.id != null)
       .map(d => [d.id, d])
   );
+  const dedupeDungeonQuests = quests => {
+    const list = Array.isArray(quests) ? quests : [];
+    return list.filter((entry, idx) => {
+      if (!entry) return false;
+      const ids = entry.steps && entry.steps.length > 0 ? entry.steps.map(s => s.id) : [entry.id];
+      return !list.some((other, oIdx) => {
+        if (oIdx === idx || !other) return false;
+        if (other.faction !== entry.faction && other.faction !== 'both') return false;
+        const oIds = other.steps && other.steps.length > 0 ? other.steps.map(s => s.id) : [other.id];
+        if (oIds.length >= ids.length) return false;
+        const offset = ids.length - oIds.length;
+        return oIds.every((id, k) => id === ids[offset + k]);
+      });
+    });
+  };
+
   const webBuiltDungeonIds = new Set();
   const restoreCachedQuestsForDungeon = dId => {
     const dungeon = dungeonMap.get(dId);
@@ -1938,7 +1955,10 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       if (item.id) {
         if (seenKeys.has(questIdentityKey(item))) continue;
         const inSteps = merged.some(
-          mq => mq.faction === item.faction && Array.isArray(mq.steps) && mq.steps.some(st => st.id === item.id)
+          mq =>
+            (mq.faction === item.faction || mq.faction === 'both' || item.faction === 'both') &&
+            Array.isArray(mq.steps) &&
+            mq.steps.some(st => st.id === item.id)
         );
         if (!inSteps) {
           merged.push(item);
@@ -1948,7 +1968,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
         merged.push(item);
       }
     }
-    dungeon.quests = merged;
+    dungeon.quests = dedupeDungeonQuests(merged);
   };
 
   const dungeonIds = [...dungeonMap.keys()];
@@ -2090,6 +2110,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
                 place: '',
                 x: stSide?.x ?? null,
                 y: stSide?.y ?? null,
+                ...(questiePrereqs.get(st.id)?.repeatable ? { repeatable: true } : {}),
               };
             })
           : undefined;
@@ -2140,24 +2161,30 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       }
     }
 
-    if (builtQuests.length > 0) {
+    // 去重：若同一阵营下存在另一条任务链（如剥离了可选引导前置后）恰好是某条链的严格后缀，则保留更精简的那条
+    const dedupedQuests = dedupeDungeonQuests(builtQuests);
+
+    if (dedupedQuests.length > 0) {
       webBuiltDungeonIds.add(dId);
-      // 保留原有数据中按 ID 未被网页覆盖的补充任务
+      // 保留原有数据中按 ID 未被网页覆盖的补充任务（基于去重前的 builtQuests 判定，避免被剥离的引导任务被旧数据回填）
       const seenKeys = new Set(builtQuests.filter(q => q?.id).map(q => `${q.id}:${q.faction || ''}`));
       for (const prev of dungeon.quests || []) {
         if (prev.id) {
           if (seenKeys.has(`${prev.id}:${prev.faction || ''}`)) continue;
           const inSteps = builtQuests.some(
-            bq => bq.faction === prev.faction && Array.isArray(bq.steps) && bq.steps.some(st => st.id === prev.id)
+            bq =>
+              (bq.faction === prev.faction || bq.faction === 'both' || prev.faction === 'both') &&
+              Array.isArray(bq.steps) &&
+              bq.steps.some(st => st.id === prev.id)
           );
           if (!inSteps) {
-            builtQuests.push(prev);
+            dedupedQuests.push(prev);
           }
-        } else if (!builtQuests.some(bq => bq.name === prev.name && bq.faction === prev.faction)) {
-          builtQuests.push(prev);
+        } else if (!builtQuests.some(bq => bq.name === prev.name && (bq.faction === prev.faction || bq.faction === 'both'))) {
+          dedupedQuests.push(prev);
         }
       }
-      dungeon.quests = builtQuests;
+      dungeon.quests = dedupeDungeonQuests(dedupedQuests);
     } else {
       restoreCachedQuestsForDungeon(dId);
     }
@@ -3722,7 +3749,26 @@ local function IsQuestCompleted(q)
     if not lastStepId or lastStepId <= 0 then
       return false
     end
-    return IsQuestCompletedById(lastStepId)
+    if IsQuestCompletedById(lastStepId) then
+      return true
+    end
+    -- 若最后一步为可重复任务（如“再次使用超级清洁器”），只要前面最近一个非重复步骤已完成且当前未接取该重复任务，即视为任务线已完成
+    if lastStep.repeatable then
+      if IsQuestActiveById(lastStepId) then
+        return false
+      end
+      for i = #q.steps - 1, 1, -1 do
+        local st = q.steps[i]
+        if st and not st.repeatable then
+          local sid = tonumber(st.id)
+          if sid and sid > 0 then
+            return IsQuestCompletedById(sid)
+          end
+          break
+        end
+      end
+    end
+    return false
   end
   return IsQuestCompletedById(q.id or q.questId)
 end
