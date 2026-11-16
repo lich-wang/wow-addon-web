@@ -1,9 +1,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 
 const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
-const WOWF_VERSION = 'v1.2.1';
+
+function getAutoWowfVersion() {
+  try {
+    const raw = execFileSync(
+      'git',
+      ['rev-list', '--count', 'HEAD', '--', 'scripts/locales/wowf.js'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    ).trim();
+    const count = Number.parseInt(raw, 10);
+    if (Number.isFinite(count) && count > 0) {
+      return `v1.2.${count}`;
+    }
+  } catch {
+    // 非 Git 环境下回退到默认版本号
+  }
+  return 'v1.2.1';
+}
+
+const WOWF_VERSION = getAutoWowfVersion();
 
 const CLASS_CONFIGS = [
   { key: 'WARRIOR', slug: 'warrior', name: '战士', color: 'c79c6e', allianceRace: 'human', hordeRace: 'orc' },
