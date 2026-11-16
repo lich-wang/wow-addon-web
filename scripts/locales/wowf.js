@@ -1454,23 +1454,29 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
     const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
     for (const q of incomingQuests) {
       const key = `${q.name}:${q.npc}`;
-      if (questIndexByKey.has(key)) {
-        const idx = questIndexByKey.get(key);
+      let idx = questIndexByKey.get(key);
+      if (idx !== undefined) {
         const prevQuest = existing.quests[idx];
         if (q.id && prevQuest?.id && q.id !== prevQuest.id) {
-          existing.quests.push(q);
-          continue;
+          const sameIdIdx = existing.quests.findIndex(item => item.id === q.id);
+          if (sameIdIdx >= 0) {
+            idx = sameIdIdx;
+          } else {
+            existing.quests.push(q);
+            continue;
+          }
         }
+        const targetPrev = existing.quests[idx];
         const mergedFaction =
-          prevQuest?.faction === 'both' ||
+          targetPrev?.faction === 'both' ||
           q.faction === 'both' ||
-          (prevQuest?.faction && q.faction && prevQuest.faction !== q.faction)
+          (targetPrev?.faction && q.faction && targetPrev.faction !== q.faction)
             ? 'both'
-            : q.faction || prevQuest?.faction || 'both';
+            : q.faction || targetPrev?.faction || 'both';
         existing.quests[idx] = {
           ...q,
-          id: q.id || prevQuest?.id || null,
-          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : prevQuest?.steps,
+          id: q.id || targetPrev?.id || null,
+          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : targetPrev?.steps,
           faction: mergedFaction,
         };
       } else {
