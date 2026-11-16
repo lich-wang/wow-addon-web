@@ -1878,7 +1878,10 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
 
     for (const qid of qids) {
       const q = questCache[String(qid)];
-      if (!q || !q.name) continue;
+      if (!q || !q.name) {
+        failedDungeonIds.add(dId);
+        continue;
+      }
       if (q.sides?.one) {
         const entry = buildEntry(q, q.sides.one, q.faction);
         if (entry) builtQuests.push(entry);
@@ -3375,18 +3378,36 @@ local function LinkifyInlineCoords(text, defaultZone, defaultLabel)
 end
 
 local questMetaById = {}
+local questMetaByKey = {}
+
+local function GetQuestMetaKey(qid, faction)
+  if qid and (faction == "alliance" or faction == "horde") then
+    return tostring(qid) .. ":" .. faction
+  end
+  return nil
+end
+
+local function LookupQuestMeta(qid, faction)
+  local key = GetQuestMetaKey(qid, faction)
+  if key and questMetaByKey[key] then
+    return questMetaByKey[key]
+  end
+  return qid and questMetaById[qid] or nil
+end
 
 local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
   if type(q) ~= "table" then return end
   local qid = tonumber(q.id or q.questId)
   if not qid or qid <= 0 then return end
-  local prev = questMetaById[qid] or {}
+  local metaKey = GetQuestMetaKey(qid, q.faction)
+  local prev = (metaKey and questMetaByKey[metaKey]) or questMetaById[qid] or {}
   local resolvedZone = (q.zone and q.zone ~= "") and q.zone or (q.place and q.place ~= "" and q.place) or fallbackZone or prev.zone or ""
   local sameZone = (not prev.zone or prev.zone == "" or resolvedZone == prev.zone)
   local qx = tonumber(q.x)
   local qy = tonumber(q.y)
-  questMetaById[qid] = {
+  local entry = {
     id = qid,
+    faction = q.faction or prev.faction,
     name = (q.name and q.name ~= "") and q.name or prev.name or ("任务 #" .. qid),
     level = tonumber(q.level or q.minLevel or fallbackLevel) or prev.level or state.level or 1,
     npc = (q.npc and q.npc ~= "") and q.npc or prev.npc or "",
@@ -3398,6 +3419,10 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
     teaches = (q.teaches and q.teaches ~= "") and q.teaches or prev.teaches or "",
     steps = q.steps or prev.steps,
   }
+  questMetaById[qid] = entry
+  if metaKey then
+    questMetaByKey[metaKey] = entry
+  end
   if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
     pcall(C_QuestLog.RequestLoadQuestByID, qid)
   end
@@ -3460,6 +3485,9 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, 
     if completed == nil then completed = IsQuestCompletedById(qid) end
     local color = completed and "|cff888888" or "|cffffff00"
     local doneTag = (completed and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
+    if q.faction == "alliance" or q.faction == "horde" then
+      return string.format("%s|Hwowfquest:%d:%d:%s|h[%s]|h|r%s", color, qid, qLevel, q.faction, qName, doneTag)
+    end
     return string.format("%s|Hquest:%d:%d|h[%s]|h|r%s", color, qid, qLevel, qName, doneTag)
   end
   local color = (completedOverride == true) and "|cff888888" or "|cffffd100"
@@ -3527,6 +3555,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
       local stZone = (st.zone and st.zone ~= "") and st.zone or parentZone
       local stepObj = {
         id = sid,
+        faction = q.faction,
         name = st.name or q.name,
         level = st.level or q.level or q.minLevel or fallbackLevel,
         npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
@@ -3547,6 +3576,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
           local zoneChanged = hasStepZone and (effectiveParentZone ~= "") and (st.zone ~= effectiveParentZone)
           RegisterQuestMeta({
             id = sid,
+            faction = q.faction,
             name = st.name or q.name,
             level = st.level or q.level or q.minLevel or fallbackLevel,
             npc = (st.npc and st.npc ~= "") and st.npc or q.npc,
@@ -3901,10 +3931,13 @@ local function OnCardHyperlinkEnter(self, link)
     GameTooltip:AddLine("|cff00ff00左键点击:|r 打开世界地图并标记坐标")
     GameTooltip:AddLine("|cff00ff00Shift+左键:|r 插入地图链接到聊天框")
     GameTooltip:Show()
-  elseif linkType == "quest" then
-    local qid = tonumber(string.match(payload or "", "^(%d+)"))
-    local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
-    local meta = qid and questMetaById[qid] or nil
+  elseif linkType == "quest" or linkType == "wowfquest" then
+    local qidStr, lvlStr, fKey = string.match(payload or "", "^(%d+):?(%d*):?(.*)$")
+    local qid = tonumber(qidStr)
+    local qLevel = tonumber(lvlStr) or 1
+    local stdLink = qid and string.format("quest:%d:%d", qid, qLevel) or link
+    local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, stdLink)
+    local meta = LookupQuestMeta(qid, fKey)
     if not ok then
       GameTooltip:ClearLines()
       GameTooltip:AddLine((meta and meta.name) or ("任务 #" .. tostring(qid or "")), 1, 0.82, 0)
@@ -3964,20 +3997,22 @@ local function OnCardHyperlinkClick(self, link, text, button)
     else
       OpenMapAndSetWaypoint(zText, lText, nx, ny, mid)
     end
-  elseif linkType == "quest" then
-    local qid = tonumber(string.match(payload or "", "^(%d+)"))
-    local meta = qid and questMetaById[qid] or nil
+  elseif linkType == "quest" or linkType == "wowfquest" then
+    local qidStr, lvlStr, fKey = string.match(payload or "", "^(%d+):?(%d*):?(.*)$")
+    local qid = tonumber(qidStr)
+    local qLevel = tonumber(lvlStr) or 1
+    local meta = LookupQuestMeta(qid, fKey)
     if button == "RightButton" and meta and meta.x and meta.y then
       OpenMapAndSetWaypoint(meta.zone ~= "" and meta.zone or meta.place, meta.npc ~= "" and meta.npc or meta.name, meta.x, meta.y)
       return
     end
     local chatLink = (GetQuestLink and qid) and GetQuestLink(qid) or nil
     if not chatLink or chatLink == "" then
-      if text and string.find(text, "|Hquest:", 1, true) then
+      if linkType == "quest" and text and string.find(text, "|Hquest:", 1, true) then
         chatLink = text
       else
         local qName = (meta and meta.name) or ("任务 #" .. tostring(qid or ""))
-        chatLink = string.format("|cffffff00|H%s|h[%s]|h|r", link, qName)
+        chatLink = string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", qid or 0, qLevel, qName)
       end
     end
     InsertLinkToChat(chatLink)
