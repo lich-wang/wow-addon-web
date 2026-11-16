@@ -1933,6 +1933,8 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
         if (other.faction !== entry.faction && other.faction !== 'both') return false;
         const oIds = other.steps && other.steps.length > 0 ? other.steps.map(s => s.id) : [other.id];
         if (oIds.length >= ids.length) return false;
+        const otherStartsRepeatable = (other.steps && other.steps[0]?.repeatable) || questiePrereqs?.get(oIds[0])?.repeatable;
+        if (otherStartsRepeatable) return false;
         const offset = ids.length - oIds.length;
         return oIds.every((id, k) => id === ids[offset + k]);
       });
@@ -1956,7 +1958,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
         if (seenKeys.has(questIdentityKey(item))) continue;
         const inSteps = merged.some(
           mq =>
-            (mq.faction === item.faction || mq.faction === 'both' || item.faction === 'both') &&
+            (mq.faction === item.faction || mq.faction === 'both') &&
             Array.isArray(mq.steps) &&
             mq.steps.some(st => st.id === item.id)
         );
@@ -2173,7 +2175,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
           if (seenKeys.has(`${prev.id}:${prev.faction || ''}`)) continue;
           const inSteps = builtQuests.some(
             bq =>
-              (bq.faction === prev.faction || bq.faction === 'both' || prev.faction === 'both') &&
+              (bq.faction === prev.faction || bq.faction === 'both') &&
               Array.isArray(bq.steps) &&
               bq.steps.some(st => st.id === prev.id)
           );
