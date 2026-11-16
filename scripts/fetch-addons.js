@@ -8,6 +8,7 @@ import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import { patchMapzeroth } from './locales/mapzeroth.js';
 import { buildWoWFAddon } from './locales/wowf.js';
+import { buildForeverTransitAddon } from './locales/foreverTransit.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -637,6 +638,14 @@ async function processWoWF() {
   recordBundledVersion('wowf', await readTocVersion(zip, 'WoWF/WoWF.toc'), source);
 }
 
+// ---------------------------------------------------------------------------
+// 12. ForeverTransit (World Map Boat/Zeppelin/Tram Routes for WoW Forever)
+// ---------------------------------------------------------------------------
+async function processForeverTransit() {
+  const { zip, source } = await buildForeverTransitAddon(OUTPUT_DIR);
+  recordBundledVersion('forever-transit', await readTocVersion(zip, 'ForeverTransit/ForeverTransit.toc'), source);
+}
+
 async function ensureClientBinaries() {
   const downloadsDir = path.resolve('public/downloads');
   if (!fs.existsSync(downloadsDir)) {
@@ -680,6 +689,11 @@ async function main() {
     writeBundledVersions();
     return;
   }
+  if (onlyArg === 'forever-transit') {
+    await processForeverTransit();
+    writeBundledVersions();
+    return;
+  }
 
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await ensureClientBinaries();
@@ -694,8 +708,9 @@ async function main() {
   await processMapzeroth();
   await processSpellActivationOverlay();
   await processWoWF();
+  await processForeverTransit();
   writeBundledVersions();
-  console.log('=== All 11 Addons successfully bundled & localized into public/addons/ ===');
+  console.log('=== All 12 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {

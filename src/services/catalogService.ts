@@ -179,6 +179,20 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     gameFlavors: ['forever'],
     isForeverRecommended: true,
   },
+  {
+    id: 'forever-transit',
+    name: 'ForeverTransit (无限服船只与飞艇航线图)',
+    description: '专为《魔兽世界：无限服》打造的船只、飞艇与矿道地铁大地图航线显示插件！在世界地图、大陆及区域地图直观绘制所有航线（含暴风城-奥伯丁、奥伯丁-米奈希尔-南海镇单向环线、热砂港-引信港、塞弗拉斯岛航线等），默认根据当前角色阵营自动过滤并保留中立航线，支持跨大陆出港方向标识与悬停详情。',
+    author: 'lich.tech',
+    category: 'QoL',
+    icon: 'MapPin',
+    defaultFolderName: 'ForeverTransit',
+    latestVersion: bundledVersion('forever-transit', 'v1.0.1'),
+    downloadUrl: '/addons/forever-transit.zip',
+    homeUrl: 'https://github.com/lich-wang/wow-addon-web',
+    gameFlavors: ['forever'],
+    isForeverRecommended: true,
+  },
 ];
 
 /**
