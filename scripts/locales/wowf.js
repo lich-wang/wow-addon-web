@@ -1,9 +1,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 
 const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
-const WOWF_VERSION = 'v1.2.0';
+
+function getAutoWowfVersion() {
+  try {
+    const raw = execFileSync(
+      'git',
+      ['rev-list', '--count', 'HEAD', '--', 'scripts/locales/wowf.js'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    ).trim();
+    const count = Number.parseInt(raw, 10);
+    if (Number.isFinite(count) && count > 0) {
+      return `v1.2.${count}`;
+    }
+  } catch {
+    // 非 Git 环境下回退到默认版本号
+  }
+  return 'v1.2.1';
+}
+
+const WOWF_VERSION = getAutoWowfVersion();
 
 const CLASS_CONFIGS = [
   { key: 'WARRIOR', slug: 'warrior', name: '战士', color: 'c79c6e', allianceRace: 'human', hordeRace: 'orc' },
@@ -1454,19 +1473,29 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
     const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
     for (const q of incomingQuests) {
       const key = `${q.name}:${q.npc}`;
-      if (questIndexByKey.has(key)) {
-        const idx = questIndexByKey.get(key);
+      let idx = questIndexByKey.get(key);
+      if (idx !== undefined) {
         const prevQuest = existing.quests[idx];
+        if (q.id && prevQuest?.id && q.id !== prevQuest.id) {
+          const sameIdIdx = existing.quests.findIndex(item => item.id === q.id);
+          if (sameIdIdx >= 0) {
+            idx = sameIdIdx;
+          } else {
+            existing.quests.push(q);
+            continue;
+          }
+        }
+        const targetPrev = existing.quests[idx];
         const mergedFaction =
-          prevQuest?.faction === 'both' ||
+          targetPrev?.faction === 'both' ||
           q.faction === 'both' ||
-          (prevQuest?.faction && q.faction && prevQuest.faction !== q.faction)
+          (targetPrev?.faction && q.faction && targetPrev.faction !== q.faction)
             ? 'both'
-            : q.faction || prevQuest?.faction || 'both';
+            : q.faction || targetPrev?.faction || 'both';
         existing.quests[idx] = {
           ...q,
-          id: q.id || prevQuest?.id || null,
-          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : prevQuest?.steps,
+          id: q.id || targetPrev?.id || null,
+          steps: (Array.isArray(q.steps) && q.steps.length > 1) ? q.steps : targetPrev?.steps,
           faction: mergedFaction,
         };
       } else {
@@ -1651,7 +1680,7 @@ async function fetchQuestDetail(questId, questCache, getHeaders) {
 /**
  * 从 wowf.io/zh/dungeons/<id> 与 /zh/quests/<id> 补全所有副本的双阵营任务与前置任务链
  */
-async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders) {
+async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cachedDungeons = []) {
   const questCacheFile = path.join(cacheDir, 'wowf-quests-cache.json');
   let questCache = {};
   if (fs.existsSync(questCacheFile)) {
@@ -1662,9 +1691,32 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders) {
     }
   }
 
+  const cachedDungeonMap = new Map(
+    (Array.isArray(cachedDungeons) ? cachedDungeons : [])
+      .filter(d => d && d.id != null)
+      .map(d => [d.id, d])
+  );
+  const restoreCachedQuestsForDungeon = dId => {
+    const dungeon = dungeonMap.get(dId);
+    const cachedDungeon = cachedDungeonMap.get(dId);
+    if (!dungeon || !Array.isArray(cachedDungeon?.quests) || cachedDungeon.quests.length === 0) return;
+    const merged = [...cachedDungeon.quests];
+    const seenIds = new Set(merged.map(q => q.id).filter(Boolean));
+    for (const cur of dungeon.quests || []) {
+      if (cur.id && seenIds.has(cur.id)) continue;
+      const inSteps = merged.some(mq => Array.isArray(mq.steps) && mq.steps.some(st => st.id === cur.id));
+      if (!inSteps && !merged.some(mq => mq.name === cur.name && mq.faction === cur.faction)) {
+        merged.push(cur);
+      }
+    }
+    dungeon.quests = merged;
+  };
+
   const dungeonIds = [...dungeonMap.keys()];
   const dungeonQuestIdsMap = new Map();
   const allMainQuestIds = new Set();
+  const failedDungeonIds = new Set();
+  let hasWebEnrichFailure = false;
 
   await runWithConcurrency(dungeonIds, 8, async dId => {
     try {
@@ -1673,7 +1725,11 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders) {
         headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
         signal: AbortSignal.timeout(12000),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        failedDungeonIds.add(dId);
+        hasWebEnrichFailure = true;
+        return;
+      }
       const html = await res.text();
       const full = extractNextFText(html);
       const qIdx = full.indexOf('"quests":[');
@@ -1698,21 +1754,36 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders) {
             }
           }
         } catch {
-          // 忽略单个解析错误
+          failedDungeonIds.add(dId);
+          hasWebEnrichFailure = true;
         }
       }
       if (collected.length > 0) {
         dungeonQuestIdsMap.set(dId, collected);
       }
     } catch {
-      // 单副本抓取失败时保留原路线数据
+      // 单副本抓取失败时记录状态并保留已有快照数据
+      failedDungeonIds.add(dId);
+      hasWebEnrichFailure = true;
     }
   });
 
-  if (allMainQuestIds.size === 0) return;
+  if (allMainQuestIds.size === 0) {
+    if (dungeonIds.length > 0) {
+      hasWebEnrichFailure = true;
+      for (const dId of dungeonIds) {
+        failedDungeonIds.add(dId);
+        restoreCachedQuestsForDungeon(dId);
+      }
+    }
+    return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
+  }
 
   // 第一轮：抓取所有副本主任务详情
-  await runWithConcurrency([...allMainQuestIds], 12, qid => fetchQuestDetail(qid, questCache, getHeaders));
+  await runWithConcurrency([...allMainQuestIds], 12, async qid => {
+    const detail = await fetchQuestDetail(qid, questCache, getHeaders);
+    if (!detail) hasWebEnrichFailure = true;
+  });
 
   // 第二轮：抓取前置/后续任务链步骤的详情以补全各步 NPC 与坐标
   const stepQuestIds = new Set();
@@ -1728,7 +1799,10 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders) {
     }
   }
   if (stepQuestIds.size > 0) {
-    await runWithConcurrency([...stepQuestIds], 12, qid => fetchQuestDetail(qid, questCache, getHeaders));
+    await runWithConcurrency([...stepQuestIds], 12, async qid => {
+      const detail = await fetchQuestDetail(qid, questCache, getHeaders);
+      if (!detail) hasWebEnrichFailure = true;
+    });
   }
 
   // 落盘任务详情缓存
@@ -1832,9 +1906,15 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders) {
         }
       }
       dungeon.quests = builtQuests;
+    } else {
+      restoreCachedQuestsForDungeon(dId);
     }
   }
+  for (const dId of failedDungeonIds) {
+    restoreCachedQuestsForDungeon(dId);
+  }
   console.log(`[WoWF] Enriched ${dungeonQuestIdsMap.size} dungeons with ${Object.keys(questCache).length} web quests.`);
+  return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
 }
 
 /**
@@ -2472,15 +2552,28 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   // 如果完全断网导致没有抓到实时路由数据，返回已有完整缓存并补齐新增的内置专业与无限服特色指南字段
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
+    const cachedDbVersion = cachedDataset.meta?.dbVersion || '2026.11.15';
     return {
       ...cachedDataset,
+      meta: {
+        ...cachedDataset.meta,
+        version: `${WOWF_VERSION} + DB v${cachedDbVersion}`,
+      },
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
     };
   }
 
   // 4. 从 wowf.io 副本与任务详情页补全全阵营副本任务与前置任务链
-  await enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders);
+  const webEnrichResult = await enrichDungeonsWithWebQuests(
+    dungeonMap,
+    cacheDir,
+    getHeaders,
+    cachedDataset?.dungeons
+  );
+  if (webEnrichResult?.hasWebEnrichFailure) {
+    hasPartialFailure = true;
+  }
 
   const dungeonsList = [...dungeonMap.values()].sort((a, b) => a.minLevel - b.minLevel || a.visit - b.visit);
   const itemsList = [...notableItemsMap.values()].sort((a, b) => a.reqLevel - b.reqLevel);
@@ -2594,6 +2687,7 @@ local state = {
   routeFilter = "MATCH", -- "MATCH" | "ALL"
   talentFilter = "MATCH", -- "MATCH" | "ALL"
   dungeonFilter = "MATCH", -- "MATCH" | "NEW" | "ALL"
+  featureFilter = "MATCH", -- "MATCH" | "ALL"
   searchQuery = "",
 }
 
@@ -3309,7 +3403,51 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
   end
 end
 
-local function FormatQuestLink(q, fallbackLevel, fallbackZone)
+local function IsQuestCompletedById(qid)
+  local id = tonumber(qid)
+  if not id or id <= 0 then return false end
+  if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then
+    local ok, res = pcall(C_QuestLog.IsQuestFlaggedCompleted, id)
+    if ok then return res == true end
+  end
+  if IsQuestFlaggedCompleted then
+    local ok, res = pcall(IsQuestFlaggedCompleted, id)
+    if ok then return res == true end
+  end
+  return false
+end
+
+local function IsQuestCompleted(q)
+  if type(q) ~= "table" then return false end
+  if type(q.steps) == "table" and #q.steps > 0 then
+    local lastStep = q.steps[#q.steps]
+    local lastStepId = tonumber(lastStep and lastStep.id)
+    if not lastStepId or lastStepId <= 0 then
+      return false
+    end
+    return IsQuestCompletedById(lastStepId)
+  end
+  return IsQuestCompletedById(q.id or q.questId)
+end
+
+local function IsDungeonAllQuestsCompleted(d, faction)
+  if type(d) ~= "table" or type(d.quests) ~= "table" or #d.quests == 0 then
+    return false
+  end
+  local f = faction or state.faction or "alliance"
+  local total = 0
+  for _, q in ipairs(d.quests) do
+    if q.faction == "both" or q.faction == f then
+      total = total + 1
+      if not IsQuestCompleted(q) then
+        return false
+      end
+    end
+  end
+  return total > 0
+end
+
+local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, completedOverride)
   if type(q) ~= "table" then
     return "|cffffd100[" .. tostring(q or "未知任务") .. "]|r"
   end
@@ -3318,9 +3456,15 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone)
   local qName = (q.name and q.name ~= "") and q.name or (qid and ("任务 #" .. qid) or "未知任务")
   local qLevel = tonumber(q.level or q.minLevel or fallbackLevel) or state.level or 1
   if qid and qid > 0 then
-    return string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", qid, qLevel, qName)
+    local completed = completedOverride
+    if completed == nil then completed = IsQuestCompletedById(qid) end
+    local color = completed and "|cff888888" or "|cffffff00"
+    local doneTag = (completed and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
+    return string.format("%s|Hquest:%d:%d|h[%s]|h|r%s", color, qid, qLevel, qName, doneTag)
   end
-  return string.format("|cffffd100[%s]|r", qName)
+  local color = (completedOverride == true) and "|cff888888" or "|cffffd100"
+  local doneTag = (completedOverride == true and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
+  return string.format("%s[%s]|r%s", color, qName, doneTag)
 end
 
 local CLASS_NAMES_ZH = {
@@ -3359,10 +3503,11 @@ local function FormatQuestClassTag(q)
 end
 
 local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
-  local primary = FormatQuestLink(q, fallbackLevel, fallbackZone)
   if type(q) ~= "table" or type(q.steps) ~= "table" or #q.steps <= 1 then
-    return primary
+    return FormatQuestLink(q, fallbackLevel, fallbackZone)
   end
+  local chainDone = IsQuestCompleted(q)
+  local primary = FormatQuestLink(q, fallbackLevel, fallbackZone, chainDone)
   local primaryId = tonumber(q.id or q.questId)
   local parentZone = (q.zone and q.zone ~= "") and q.zone or (fallbackZone or "")
   local primaryIdx = nil
@@ -3390,7 +3535,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
         x = st.x or (isPrimary and q.x or nil),
         y = st.y or (isPrimary and q.y or nil),
       }
-      local link = FormatQuestLink(stepObj, fallbackLevel, stZone)
+      local link = FormatQuestLink(stepObj, fallbackLevel, stZone, chainDone)
       table.insert(orderedLinks, isPrimary and link or ("|cff99e6ff" .. link .. "|r"))
       if isPrimary then
         local hasStepCoords = (st.x ~= nil and st.y ~= nil)
@@ -3418,12 +3563,14 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
   end
   -- 若主任务前面存在前置步骤（primaryIdx > 1），按“前置1 -> 前置2 -> 主任务 -> 后续”正序展示
   if primaryIdx and primaryIdx > 1 and #orderedLinks > 1 then
-    return table.concat(orderedLinks, " |cff99e6ff->|r ")
+    local suffix = chainDone and " |cff00ff00[已经完成]|r" or ""
+    return table.concat(orderedLinks, " |cff99e6ff->|r ") .. suffix
   end
   if #chainLinks > 0 then
-    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r"
+    local suffix = chainDone and " |cff00ff00[已经完成]|r" or ""
+    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r" .. suffix
   end
-  return primary
+  return primary .. (chainDone and " |cff00ff00[已经完成]|r" or "")
 end
 
 local function GetDungeonByIdOrName(id, name)
@@ -3604,11 +3751,13 @@ local function GetMatchedTalentStep(spec, level)
   return nil
 end
 
-local function GetMatchedDungeons(level)
+local function GetMatchedDungeons(level, includeCompleted)
   local list = {}
   for _, d in ipairs(Data.dungeons or {}) do
     if level >= (d.minLevel - 3) and level <= (d.maxLevel + 3) then
-      table.insert(list, d)
+      if includeCompleted or not IsDungeonAllQuestsCompleted(d, state.faction) then
+        table.insert(list, d)
+      end
     end
   end
   return list
@@ -3775,6 +3924,9 @@ local function OnCardHyperlinkEnter(self, link)
       if meta.x and meta.y then
         GameTooltip:AddLine(string.format("坐标: |cff00ff00%.1f, %.1f|r", meta.x, meta.y))
       end
+    end
+    if qid and IsQuestCompletedById(qid) then
+      GameTooltip:AddLine("状态: |cff00ff00已经完成|r")
     end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("|cff00ff00左键 / Shift+左键:|r 发送任务链接到聊天框")
@@ -4627,7 +4779,7 @@ local function RenderTabClassAndTalents()
         local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
         local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
         local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
-        local crLink = FormatQuestLink(cr, cr.level, firstZone)
+        local crLink = FormatQuestLink(cr, cr.level, firstZone, nil, IsQuestCompleted(cr))
         table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
         for idx, st in ipairs(cr.steps or {}) do
           local stZone = (st.zone and st.zone ~= "") and st.zone or st.place
@@ -4726,15 +4878,27 @@ local function RenderTabDungeons()
     end
   )
 
+  local shownCount = 0
+  local levelMatchedCount = 0
+  local hiddenCompletedCount = 0
   for _, d in ipairs(Data.dungeons or {}) do
     local passFilter = true
+    local allDone = IsDungeonAllQuestsCompleted(d, state.faction)
     if state.dungeonFilter == "MATCH" then
-      passFilter = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3))
+      local levelOk = (state.level >= (d.minLevel - 3) and state.level <= (d.maxLevel + 3))
+      if levelOk then
+        levelMatchedCount = levelMatchedCount + 1
+        if allDone then
+          hiddenCompletedCount = hiddenCompletedCount + 1
+        end
+      end
+      passFilter = levelOk and (not allDone)
     elseif state.dungeonFilter == "NEW" then
       passFilter = d.isNew and true or false
     end
 
     if passFilter and MatchesSearch((d.name or "") .. " " .. (d.zone or "") .. " " .. (d.summary or "")) then
+      shownCount = shownCount + 1
       local lines = {}
       if d.entranceX and d.entranceY then
         local entLink = FormatCoordLink(d.entranceZone or d.zone, d.name .. "副本入口", d.entranceX, d.entranceY)
@@ -4770,17 +4934,40 @@ local function RenderTabDungeons()
       local isLevelMatch = (state.level >= d.minLevel and state.level <= d.maxLevel)
       local newBadge = d.isNew and " |cff00ffcc[★无限服新增]|r" or ""
       local matchBadge = isLevelMatch and " |cff00ff00[当前适龄]|r" or ""
+      local doneBadge = allDone and " |cff00ff00[任务已全部完成]|r" or ""
 
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
       y = LayoutCard(
         card, y,
-        string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge),
+        string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge, doneBadge),
         table.concat(lines, "\n"),
         d.isNew and { 0.0, 0.85, 0.7, 0.9 } or (isLevelMatch and { 0.2, 0.85, 0.4, 0.9 } or { 0.3, 0.35, 0.45, 0.85 }),
         d.isNew and { 0.05, 0.13, 0.14, 0.94 } or { 0.08, 0.10, 0.14, 0.92 },
         string.format("Lv.%d-%d", d.minLevel, d.maxLevel)
       )
     end
+  end
+
+  if shownCount == 0 and state.dungeonFilter == "MATCH" then
+    local emptyTitle, emptyBody
+    if levelMatchedCount == 0 then
+      emptyTitle = "|cffffd100[提示] 当前等级暂无适龄地下城|r"
+      emptyBody = string.format("Lv.%d 暂无适龄地下城，可点击上方「看无限服新本」或「显示全部副本」查看全部地下城详情。", state.level)
+    elseif hiddenCompletedCount == levelMatchedCount then
+      emptyTitle = "|cff00ff00[提示] 当前等级适龄副本任务已全部完成|r"
+      emptyBody = string.format("Lv.%d 适龄地下城的任务已全部完成并默认隐藏。可点击上方「看无限服新本」或「显示全部副本」查看全部地下城详情。", state.level)
+    else
+      emptyTitle = "|cffffd100[提示] 未找到符合搜索条件的适龄副本|r"
+      emptyBody = string.format("当前搜索条件下没有匹配的未完成 Lv.%d 适龄副本，请清空或调整搜索关键词。", state.level)
+    end
+    local emptyCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+    y = LayoutCard(
+      emptyCard, y,
+      emptyTitle,
+      emptyBody,
+      { 0.2, 0.85, 0.4, 0.85 },
+      { 0.06, 0.12, 0.09, 0.92 }
+    )
   end
 
   HideUnusedCards(cardIdx)
@@ -4790,38 +4977,75 @@ end
 local function RenderTabForeverAndNews()
   local cardIdx = 1
   local y = 6
+  local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
   local recProfs = (spec and spec.recommendedProfs) or ""
+  local isMatchMode = (state.featureFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
+  local toggleBtnLabel = state.featureFilter == "MATCH" and "查看全部特色与专业" or "仅看当前角色匹配"
+  local modeDesc = state.featureFilter == "MATCH"
+    and string.format("当前筛选: 匹配当前角色 (Lv.%d %s · %s)", state.level, cls and cls.name or state.classKey, spec and spec.name or "默认专精")
+    or "当前筛选: 全部无限服特色玩法与 12 大专业"
+
+  local filterCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    filterCard, y,
+    "|cff00ffcc[特色&专业] 无限服专属玩法与 1-300 专业指南 (" .. modeDesc .. ")|r",
+    "包含《魔兽世界：无限服》专属玩法（露营帐篷、舒适睡袋、经典旧世树、遭劫的板条箱等）、12 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营的特色玩法，以及当前专精推荐专业与生活副业。",
+    { 0.0, 0.85, 0.7, 0.9 },
+    { 0.05, 0.12, 0.14, 0.94 },
+    nil,
+    toggleBtnLabel,
+    function()
+      if state.featureFilter == "MATCH" then
+        state.featureFilter = "ALL"
+      else
+        state.featureFilter = "MATCH"
+      end
+      RefreshUI()
+    end
+  )
 
   -- 1. 无限服专属玩法攻略（露营、睡袋、经典旧世之树、物资箱等）
   for _, sys in ipairs(Data.foreverSystems or {}) do
-    if MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
+    local levelMatch = (not isMatchMode) or (not sys.minLevel) or (state.level >= sys.minLevel)
+    if levelMatch and MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
       local lines = { LinkifyInlineCoords(sys.summary or "", "", sys.title or "") }
       local firstCoord = nil
       for _, st in ipairs(sys.steps or {}) do
-        if st.coord and not firstCoord then
-          firstCoord = { zone = st.zone, title = st.title, x = st.coord.x, y = st.coord.y }
+        local stepTitle = st.title or ""
+        local factionMatch = true
+        if isMatchMode then
+          if string.find(stepTitle, "^联盟：") and state.faction == "horde" then
+            factionMatch = false
+          elseif string.find(stepTitle, "^部落：") and state.faction == "alliance" then
+            factionMatch = false
+          end
         end
-        local stepHeader = "|cffffd100" .. (st.title or "") .. "|r"
-        if st.questId and st.questName then
-          local qObj = {
-            id = st.questId,
-            name = st.questName,
-            level = st.questLevel or 14,
-            zone = st.zone or "",
-            x = st.coord and st.coord.x or nil,
-            y = st.coord and st.coord.y or nil,
-          }
-          stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
+        if factionMatch then
+          if st.coord and not firstCoord then
+            firstCoord = { zone = st.zone, title = st.title, x = st.coord.x, y = st.coord.y }
+          end
+          local stepHeader = "|cffffd100" .. stepTitle .. "|r"
+          if st.questId and st.questName then
+            local qObj = {
+              id = st.questId,
+              name = st.questName,
+              level = st.questLevel or 14,
+              zone = st.zone or "",
+              x = st.coord and st.coord.x or nil,
+              y = st.coord and st.coord.y or nil,
+            }
+            stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
+          end
+          if st.coord then
+            stepHeader = stepHeader .. FormatCoordLink(st.zone or "", st.title or "", st.coord.x, st.coord.y)
+          end
+          if st.altCoord then
+            stepHeader = stepHeader .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or st.title or "", st.altCoord.x, st.altCoord.y, false)
+          end
+          local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", st.title or "")
+          table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
         end
-        if st.coord then
-          stepHeader = stepHeader .. FormatCoordLink(st.zone or "", st.title or "", st.coord.x, st.coord.y)
-        end
-        if st.altCoord then
-          stepHeader = stepHeader .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or st.title or "", st.altCoord.x, st.altCoord.y, false)
-        end
-        local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", st.title or "")
-        table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
       end
 
       local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
@@ -4843,9 +5067,10 @@ local function RenderTabForeverAndNews()
   -- 2. 12 大专业 1-300 冲级与无限服特色指南 (同步自 wowf.io/zh/professions)
   if Data.professions and #Data.professions > 0 then
     for _, prof in ipairs(Data.professions) do
+      local isRec = (recProfs ~= "" and string.find(recProfs, prof.name or "", 1, true) ~= nil)
+      local passProfFilter = (not isMatchMode) or (recProfs == "") or isRec or (prof.type == "secondary")
       local searchText = (prof.name or "") .. " " .. (prof.brackets or "") .. " " .. (prof.foreverNote or "")
-      if MatchesSearch(searchText) then
-        local isRec = (recProfs ~= "" and string.find(recProfs, prof.name or "", 1, true) ~= nil)
+      if passProfFilter and MatchesSearch(searchText) then
         local pLines = {}
         if prof.pairs and #prof.pairs > 0 then
           table.insert(pLines, "|cff00ff96最佳搭配专业:|r " .. table.concat(prof.pairs, " / "))
@@ -5027,6 +5252,7 @@ local function CreateMainWindow()
       state.routeFilter = "MATCH"
       state.talentFilter = "MATCH"
       state.dungeonFilter = "MATCH"
+      state.featureFilter = "MATCH"
       SyncPlayerCharacter()
     end
     RefreshUI()
@@ -5043,6 +5269,7 @@ local function CreateMainWindow()
     state.routeFilter = "MATCH"
     state.talentFilter = "MATCH"
     state.dungeonFilter = "MATCH"
+    state.featureFilter = "MATCH"
     SyncPlayerCharacter()
     RefreshUI()
   end)
@@ -5304,6 +5531,7 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+pcall(eventFrame.RegisterEvent, eventFrame, "QUEST_TURNED_IN")
 for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
@@ -5371,6 +5599,7 @@ SlashCmdList["WOWF"] = function(msg)
     state.talentFilter = "MATCH"
     ToggleMainWindow(3)
   elseif cmd == "news" or cmd == "forever" or cmd == "prof" or cmd == "professions" then
+    state.featureFilter = "MATCH"
     ToggleMainWindow(6)
   else
     ToggleMainWindow(1)
