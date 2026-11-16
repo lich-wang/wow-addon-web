@@ -707,6 +707,12 @@ local function AcquirePin()
         pin:SetFrameStrata("HIGH")
         pin:SetFrameLevel(210)
         pin:EnableMouse(true)
+        if pin.SetMouseClickEnabled then
+            pin:SetMouseClickEnabled(false)
+        end
+        if pin.SetMouseMotionEnabled then
+            pin:SetMouseMotionEnabled(true)
+        end
 
         local border = pin:CreateTexture(nil, "BACKGROUND")
         border:SetAllPoints()
