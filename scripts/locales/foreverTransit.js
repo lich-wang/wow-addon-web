@@ -365,7 +365,7 @@ ForeverTransit_Routes = {
         oneway = true,
         ride = 65,
         dock = 60,
-        note = "无限服单向环线 (第1段: 奥伯丁 → 米奈希尔 → 南海镇)",
+        note = "无限服单向环线 (第1段: 奥伯丁 -> 米奈希尔 -> 南海镇)",
     },
     {
         from = "DOCK_MENETHIL",
@@ -375,7 +375,7 @@ ForeverTransit_Routes = {
         oneway = true,
         ride = 135,
         dock = 60,
-        note = "无限服单向环线 (第2段: 米奈希尔 → 南海镇 → 奥伯丁)",
+        note = "无限服单向环线 (第2段: 米奈希尔 -> 南海镇 -> 奥伯丁)",
     },
     {
         from = "DOCK_SOUTHSHORE",
@@ -385,7 +385,7 @@ ForeverTransit_Routes = {
         oneway = true,
         ride = 75,
         dock = 60,
-        note = "无限服单向环线 (第3段: 南海镇 → 奥伯丁 → 米奈希尔)",
+        note = "无限服单向环线 (第3段: 南海镇 -> 奥伯丁 -> 米奈希尔)",
     },
     {
         from = "DOCK_MENETHIL_THERAMORE",
@@ -429,7 +429,7 @@ ForeverTransit_Routes = {
         faction = "Alliance",
         ride = 70,
         dock = 20,
-        note = "暴风城矮人区 ↔ 铁炉堡工匠区",
+        note = "暴风城矮人区 <-> 铁炉堡工匠区",
     },
 
     -- 部落飞艇与船只
@@ -640,15 +640,32 @@ end
 
 local function AcquireLabel()
     labelUsed = labelUsed + 1
-    local fs = labelPool[labelUsed]
-    if not fs then
-        fs = overlayFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local pill = labelPool[labelUsed]
+    if not pill then
+        pill = CreateFrame("Frame", nil, overlayFrame)
+        pill:SetFrameLevel((overlayFrame:GetFrameLevel() or 1) + 5)
+
+        local bg = pill:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0.04, 0.06, 0.10, 0.86)
+        pill.bg = bg
+
+        local accent = pill:CreateTexture(nil, "ARTWORK")
+        accent:SetWidth(2)
+        accent:SetPoint("TOPLEFT", pill, "TOPLEFT", 0, 0)
+        accent:SetPoint("BOTTOMLEFT", pill, "BOTTOMLEFT", 0, 0)
+        pill.accent = accent
+
+        local fs = pill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        fs:SetPoint("LEFT", pill, "LEFT", 5, 0)
         fs:SetShadowOffset(1, -1)
-        fs:SetShadowColor(0, 0, 0, 0.9)
-        labelPool[labelUsed] = fs
+        fs:SetShadowColor(0, 0, 0, 1)
+        pill.text = fs
+
+        labelPool[labelUsed] = pill
     end
-    fs:Show()
-    return fs
+    pill:Show()
+    return pill
 end
 
 local function ShowPinTooltip(self)
@@ -669,7 +686,7 @@ local function ShowPinTooltip(self)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("可用航线：", 1, 0.82, 0)
         for _, conn in ipairs(self.connections) do
-            local arrow = conn.oneway and (conn.outgoing and "→ (单向出发)" or "← (单向到达)") or "⇄ (往返)"
+            local arrow = conn.oneway and (conn.outgoing and "[单向出发]" or "[单向到达]") or "[往返]"
             local timeText = conn.ride and string.format(" · 航程约 %d 秒", conn.ride) or ""
             GameTooltip:AddLine(string.format("  %s |cffffffff%s|r (%s)%s", arrow, conn.peer.shortName, conn.peer.zoneName, timeText), 0.85, 0.92, 1)
             if conn.note then
@@ -855,8 +872,8 @@ local function EnsureControlButton()
         GameTooltip:AddLine("右键点击：显示/隐藏地图站点文字", 0.9, 0.9, 0.9)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("图例：", 1, 0.82, 0)
-        GameTooltip:AddLine("  |cff3da3ff●|r 联盟船只    |cffff4d3d●|r 部落飞艇/船只", 1, 1, 1)
-        GameTooltip:AddLine("  |cff38db8f●|r 中立船只    |cffad8fff●|r 矿道地铁", 1, 1, 1)
+        GameTooltip:AddLine("  |cff3da3ff[联盟]|r 船只    |cffff4d3d[部落]|r 飞艇/船只", 1, 1, 1)
+        GameTooltip:AddLine("  |cff38db8f[中立]|r 船只    |cffad8fff[地铁]|r 矿道地铁", 1, 1, 1)
         GameTooltip:Show()
     end)
     controlButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -936,8 +953,7 @@ function ForeverTransit_Redraw()
                         note = route.note,
                     })
                     if not toEntry then
-                        local prefix = route.oneway and "→ " or "⇄ "
-                        table.insert(fromEntry.outboundLabels, prefix .. toNode.shortName)
+                        table.insert(fromEntry.outboundLabels, "往" .. toNode.shortName)
                     end
                 end
 
@@ -950,7 +966,7 @@ function ForeverTransit_Redraw()
                         note = route.note,
                     })
                     if not fromEntry then
-                        local prefix = route.oneway and "← " or "⇄ "
+                        local prefix = route.oneway and "自" or "往"
                         table.insert(toEntry.outboundLabels, prefix .. fromNode.shortName)
                     end
                 end
@@ -962,9 +978,41 @@ function ForeverTransit_Redraw()
         end
     end
 
-    -- 绘制站点标记与文字标签
+    -- 按屏幕坐标排序，确保多码头标签按固定顺序防重叠排布
+    local sortedNodes = {}
     for _, entry in pairs(visibleNodes) do
+        table.insert(sortedNodes, entry)
+    end
+    table.sort(sortedNodes, function(a, b)
+        if a.y ~= b.y then
+            return a.y > b.y
+        end
+        if a.x ~= b.x then
+            return a.x < b.x
+        end
+        return a.node.id < b.node.id
+    end)
+
+    local placedBoxes = {}
+    local function overlapsAny(left, top, w, h)
+        local right = left + w
+        local bottom = top - h
+        if left < 4 or right > width - 4 or top > -4 or bottom < -height + 4 then
+            return true
+        end
+        local pad = 2 * invScale
+        for _, box in ipairs(placedBoxes) do
+            if not (right + pad <= box.left or left - pad >= box.right or bottom - pad >= box.top or top + pad <= box.bottom) then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- 绘制站点标记与防重叠文字标签
+    for _, entry in ipairs(sortedNodes) do
         local pin = AcquirePin()
+        pin:SetFrameLevel((overlay:GetFrameLevel() or 1) + 10)
         pin:SetSize(pinSize, pinSize)
         pin:ClearAllPoints()
         pin:SetPoint("CENTER", overlay, "TOPLEFT", entry.x, entry.y)
@@ -979,16 +1027,51 @@ function ForeverTransit_Redraw()
         if db.showLabels then
             local labelText
             if #entry.outboundLabels > 0 then
-                labelText = table.concat(entry.outboundLabels, " / ")
+                labelText = table.concat(entry.outboundLabels, "/")
             elseif mapFactor >= 0.95 then
                 labelText = entry.node.shortName
             end
             if labelText then
-                local fs = AcquireLabel()
-                fs:ClearAllPoints()
-                fs:SetPoint("LEFT", pin, "RIGHT", 3 * invScale, 0)
-                fs:SetText(string.format("|cff%s%s|r", color.hex, labelText))
-                fs:SetScale(invScale)
+                local pill = AcquireLabel()
+                pill.text:SetText(labelText)
+                pill.text:SetTextColor(0.96, 0.98, 1.0, 1.0)
+                pill.accent:SetColorTexture(color.r, color.g, color.b, 1)
+
+                local rawW = math.max(24, (pill.text:GetStringWidth() or 20) + 10)
+                local rawH = math.max(14, (pill.text:GetStringHeight() or 10) + 5)
+                pill:SetSize(rawW, rawH)
+                pill:SetScale(invScale)
+
+                local w = rawW * invScale
+                local h = rawH * invScale
+                local gap = pinSize * 0.55 + 3 * invScale
+                local candidates = {
+                    { entry.x + gap, entry.y + h * 0.5 },
+                    { entry.x + gap, entry.y + h * 1.65 },
+                    { entry.x + gap, entry.y - h * 0.65 },
+                    { entry.x - gap - w, entry.y + h * 0.5 },
+                    { entry.x - gap - w, entry.y + h * 1.65 },
+                    { entry.x - gap - w, entry.y - h * 0.65 },
+                    { entry.x + gap, entry.y + h * 2.8 },
+                    { entry.x + gap, entry.y - h * 1.8 },
+                }
+
+                local bestX, bestY = candidates[1][1], candidates[1][2]
+                for _, pos in ipairs(candidates) do
+                    if not overlapsAny(pos[1], pos[2], w, h) then
+                        bestX, bestY = pos[1], pos[2]
+                        break
+                    end
+                end
+
+                pill:ClearAllPoints()
+                pill:SetPoint("TOPLEFT", overlay, "TOPLEFT", bestX / invScale, bestY / invScale)
+                table.insert(placedBoxes, {
+                    left = bestX,
+                    right = bestX + w,
+                    top = bestY,
+                    bottom = bestY - h,
+                })
             end
         end
     end
