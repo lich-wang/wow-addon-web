@@ -7,6 +7,7 @@ import {
   RefreshCw,
   CheckCircle2,
   Download,
+  Headphones,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 import type { DirectoryState } from '../types/addon';
@@ -14,8 +15,8 @@ import type { AgentStatus } from '../services/agentService';
 
 interface NavbarProps {
   directoryState: DirectoryState;
-  activeTab: 'installed' | 'market';
-  setActiveTab: (tab: 'installed' | 'market') => void;
+  activeTab: 'installed' | 'market' | 'voice';
+  setActiveTab: (tab: 'installed' | 'market' | 'voice') => void;
   onPickDirectory: () => void;
   onRefreshDirectory: () => void;
   onOpenZipModal: () => void;
@@ -25,6 +26,8 @@ interface NavbarProps {
   isPicking?: boolean;
   agentStatus: AgentStatus | null;
   outdatedCount?: number;
+  voiceParticipantCount?: number;
+  isVoiceActive?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -40,6 +43,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   isPicking = false,
   agentStatus,
   outdatedCount = 0,
+  voiceParticipantCount = 0,
+  isVoiceActive = false,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800">
@@ -87,6 +92,23 @@ export const Navbar: React.FC<NavbarProps> = ({
                 {outdatedCount > 0 && (
                   <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 animate-pulse shadow-sm shadow-amber-500/50">
                     {outdatedCount} 可更新
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveTab('voice')}
+                className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer flex items-center space-x-1.5 ${
+                  activeTab === 'voice'
+                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                <Headphones className="w-3.5 h-3.5" />
+                <span>语音开黑</span>
+                {isVoiceActive && (
+                  <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>{voiceParticipantCount}</span>
                   </span>
                 )}
               </button>
