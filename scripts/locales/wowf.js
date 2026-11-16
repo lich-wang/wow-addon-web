@@ -1507,6 +1507,439 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
 }
 
 /**
+ * 提取 Next.js App Router 页面中的 __next_f 序列化文本块
+ */
+function extractNextFText(html) {
+  const chunks = [];
+  const re = /self\.__next_f\.push\(\[1,"([\s\S]*?)"\]\)/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    try {
+      chunks.push(JSON.parse('"' + m[1] + '"'));
+    } catch {
+      // 忽略异常转义片段
+    }
+  }
+  return chunks.join('');
+}
+
+/**
+ * 从指定下标开始提取括号平衡的 JSON 对象或数组字符串
+ */
+function extractBalancedJson(str, startIdx) {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = startIdx; i < str.length; i++) {
+    const c = str[i];
+    if (inStr) {
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (c === '\\') {
+        esc = true;
+        continue;
+      }
+      if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+      continue;
+    }
+    if (c === '{' || c === '[') {
+      depth++;
+    } else if (c === '}' || c === ']') {
+      depth--;
+      if (depth === 0) return str.slice(startIdx, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * 通用并发执行器
+ */
+async function runWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      results[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function normalizeWowfFaction(f) {
+  if (f === 'a' || f === 'alliance') return 'alliance';
+  if (f === 'h' || f === 'horde') return 'horde';
+  return 'both';
+}
+
+function parseQuestSideData(sideObj) {
+  if (!sideObj || typeof sideObj !== 'object') return null;
+  const stages = Array.isArray(sideObj.stages) ? sideObj.stages : [];
+  const startStage = stages.find(s => s?.key === 'start');
+  let startPlace = null;
+  if (startStage && Array.isArray(startStage.blocks)) {
+    for (const blk of startStage.blocks) {
+      if (Array.isArray(blk?.places) && blk.places[0]) {
+        startPlace = blk.places[0];
+        break;
+      }
+    }
+  }
+  const flow = Array.isArray(sideObj.flow)
+    ? sideObj.flow
+        .filter(st => st && st.id && st.name)
+        .map(st => ({
+          id: Number(st.id),
+          name: st.name,
+          level: st.lv || st.rl || 1,
+          minLevel: st.rl || st.lv || 1,
+          faction: normalizeWowfFaction(st.f),
+          self: Boolean(st.self),
+        }))
+    : [];
+  return {
+    npc: startPlace?.name || '',
+    zone: startPlace?.zone || '',
+    x: startPlace?.at?.x ?? null,
+    y: startPlace?.at?.y ?? null,
+    inside: Boolean(startPlace?.instance),
+    objective: sideObj.objective || '',
+    flow,
+  };
+}
+
+/**
+ * 抓取单个任务的详细信息（阵营、职业限定、起始 NPC 与坐标、完整前置/后续任务链）
+ */
+async function fetchQuestDetail(questId, questCache, getHeaders) {
+  const key = String(questId);
+  if (questCache[key] && questCache[key].v === 2) {
+    return questCache[key];
+  }
+  try {
+    const url = `https://wowf.io/zh/quests/${questId}`;
+    const res = await fetch(url, {
+      headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) return questCache[key] || null;
+    const html = await res.text();
+    const full = extractNextFText(html);
+    const idx = full.indexOf('"quest":{');
+    if (idx < 0) return questCache[key] || null;
+    const jsonStr = extractBalancedJson(full, idx + 8);
+    if (!jsonStr) return questCache[key] || null;
+    const q = JSON.parse(jsonStr);
+
+    let classes;
+    const clsMatch = full.slice(Math.max(0, idx - 900), idx).match(/"classes":(\[[^\]]*\])/);
+    if (clsMatch) {
+      try {
+        const arr = JSON.parse(clsMatch[1]);
+        const mapped = arr.map(s => CLASS_SLUG_TO_KEY[String(s).toLowerCase()]).filter(Boolean);
+        if (mapped.length > 0) classes = mapped;
+      } catch {
+        // 忽略无效职业数组
+      }
+    }
+
+    const sides = {};
+    if (q.sides?.one) {
+      sides.one = parseQuestSideData(q.sides.one);
+    } else {
+      if (q.sides?.alliance) sides.alliance = parseQuestSideData(q.sides.alliance);
+      if (q.sides?.horde) sides.horde = parseQuestSideData(q.sides.horde);
+    }
+
+    const detail = {
+      v: 2,
+      id: Number(q.id || questId),
+      name: q.name || '',
+      faction: normalizeWowfFaction(q.f),
+      level: q.lv || q.rl || 1,
+      minLevel: q.rl || q.lv || 1,
+      zone: q.zone || '',
+      ...(classes ? { classes } : {}),
+      sides,
+    };
+    questCache[key] = detail;
+    return detail;
+  } catch {
+    return questCache[key] || null;
+  }
+}
+
+/**
+ * 从 wowf.io/zh/dungeons/<id> 与 /zh/quests/<id> 补全所有副本的双阵营任务与前置任务链
+ */
+async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cachedDungeons = []) {
+  const questCacheFile = path.join(cacheDir, 'wowf-quests-cache.json');
+  let questCache = {};
+  if (fs.existsSync(questCacheFile)) {
+    try {
+      questCache = JSON.parse(fs.readFileSync(questCacheFile, 'utf-8')) || {};
+    } catch {
+      questCache = {};
+    }
+  }
+
+  const cachedDungeonMap = new Map(
+    (Array.isArray(cachedDungeons) ? cachedDungeons : [])
+      .filter(d => d && d.id != null)
+      .map(d => [d.id, d])
+  );
+  const webBuiltDungeonIds = new Set();
+  const restoreCachedQuestsForDungeon = dId => {
+    const dungeon = dungeonMap.get(dId);
+    const cachedDungeon = cachedDungeonMap.get(dId);
+    if (!dungeon || !Array.isArray(cachedDungeon?.quests) || cachedDungeon.quests.length === 0) return;
+    const questIdentityKey = q => `${q.id}:${q.faction || ''}`;
+    const preferCurrent = webBuiltDungeonIds.has(dId);
+    const primaryList = preferCurrent ? dungeon.quests || [] : cachedDungeon.quests;
+    const fallbackList = preferCurrent ? cachedDungeon.quests : dungeon.quests || [];
+    const merged = [...primaryList];
+    const seenKeys = new Set(merged.filter(q => q?.id).map(questIdentityKey));
+    for (const item of fallbackList) {
+      if (!item) continue;
+      if (item.id) {
+        if (seenKeys.has(questIdentityKey(item))) continue;
+        const inSteps = merged.some(
+          mq => mq.faction === item.faction && Array.isArray(mq.steps) && mq.steps.some(st => st.id === item.id)
+        );
+        if (!inSteps) {
+          merged.push(item);
+          seenKeys.add(questIdentityKey(item));
+        }
+      } else if (!merged.some(mq => mq.name === item.name && mq.faction === item.faction)) {
+        merged.push(item);
+      }
+    }
+    dungeon.quests = merged;
+  };
+
+  const dungeonIds = [...dungeonMap.keys()];
+  const dungeonQuestIdsMap = new Map();
+  const allMainQuestIds = new Set();
+  const failedDungeonIds = new Set();
+  let hasWebEnrichFailure = false;
+
+  await runWithConcurrency(dungeonIds, 8, async dId => {
+    try {
+      const url = `https://wowf.io/zh/dungeons/${dId}`;
+      const res = await fetch(url, {
+        headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!res.ok) {
+        failedDungeonIds.add(dId);
+        hasWebEnrichFailure = true;
+        return;
+      }
+      const html = await res.text();
+      const full = extractNextFText(html);
+      const qIdx = full.indexOf('"quests":[');
+      const rqIdx = full.indexOf('"rewardQuests":[');
+      const collected = [];
+      const seen = new Set();
+      for (const [labelIdx, offset] of [
+        [qIdx, 9],
+        [rqIdx, 15],
+      ]) {
+        if (labelIdx < 0) continue;
+        const arrStr = extractBalancedJson(full, labelIdx + offset);
+        if (!arrStr) continue;
+        try {
+          const arr = JSON.parse(arrStr);
+          for (const item of arr) {
+            const qid = Number(item?.id);
+            if (qid && !seen.has(qid)) {
+              seen.add(qid);
+              collected.push(qid);
+              allMainQuestIds.add(qid);
+            }
+          }
+        } catch {
+          failedDungeonIds.add(dId);
+          hasWebEnrichFailure = true;
+        }
+      }
+      if (collected.length > 0) {
+        dungeonQuestIdsMap.set(dId, collected);
+      }
+    } catch {
+      // 单副本抓取失败时记录状态并保留已有快照数据
+      failedDungeonIds.add(dId);
+      hasWebEnrichFailure = true;
+    }
+  });
+
+  if (allMainQuestIds.size === 0) {
+    if (dungeonIds.length > 0) {
+      hasWebEnrichFailure = true;
+      for (const dId of dungeonIds) {
+        failedDungeonIds.add(dId);
+        restoreCachedQuestsForDungeon(dId);
+      }
+    }
+    return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
+  }
+
+  // 第一轮：抓取所有副本主任务详情
+  await runWithConcurrency([...allMainQuestIds], 12, async qid => {
+    const detail = await fetchQuestDetail(qid, questCache, getHeaders);
+    if (!detail) hasWebEnrichFailure = true;
+  });
+
+  // 第二轮：抓取前置/后续任务链步骤的详情以补全各步 NPC 与坐标
+  const stepQuestIds = new Set();
+  for (const qid of allMainQuestIds) {
+    const q = questCache[String(qid)];
+    if (!q?.sides) continue;
+    for (const sideData of Object.values(q.sides)) {
+      for (const st of sideData?.flow || []) {
+        if (st?.id && !questCache[String(st.id)]?.v) {
+          stepQuestIds.add(st.id);
+        }
+      }
+    }
+  }
+  if (stepQuestIds.size > 0) {
+    await runWithConcurrency([...stepQuestIds], 12, async qid => {
+      const detail = await fetchQuestDetail(qid, questCache, getHeaders);
+      if (!detail) hasWebEnrichFailure = true;
+    });
+  }
+
+  // 落盘任务详情缓存
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(questCacheFile, JSON.stringify(questCache), 'utf-8');
+  } catch {
+    // 忽略缓存写入异常
+  }
+
+  // 将完整任务与前置链合并回各副本
+  for (const [dId, qids] of dungeonQuestIdsMap.entries()) {
+    const dungeon = dungeonMap.get(dId);
+    if (!dungeon) continue;
+
+    const builtQuests = [];
+    const seenFlowKey = new Set();
+
+    const buildEntry = (q, sideData, factionOverride) => {
+      const flow = Array.isArray(sideData?.flow) ? sideData.flow : [];
+      const selfIdx = flow.findIndex(st => st.self || st.id === q.id);
+      const hasPrereq = selfIdx > 0;
+
+      // 若同一副本中已有同一条任务链的条目，避免重复展示
+      if (flow.length > 1) {
+        const flowKey = `${factionOverride}:${flow.map(st => st.id).join('-')}`;
+        if (seenFlowKey.has(flowKey)) return null;
+        seenFlowKey.add(flowKey);
+      }
+
+      const steps =
+        flow.length > 1
+          ? flow.map(st => {
+              const stDetail = questCache[String(st.id)];
+              const stSide = stDetail?.sides?.[factionOverride] || stDetail?.sides?.one || null;
+              return {
+                id: st.id,
+                name: stDetail?.name || st.name,
+                level: stDetail?.level || st.level || q.level,
+                npc: stSide?.npc || '',
+                zone: stSide?.zone || stDetail?.zone || '',
+                place: '',
+                x: stSide?.x ?? null,
+                y: stSide?.y ?? null,
+              };
+            })
+          : undefined;
+
+      // 有前置任务时，将入口坐标与 NPC 指向任务链第一步，方便玩家直接前往起始点接取
+      const firstStep = steps && steps.length > 0 ? steps[0] : null;
+      const startDetail = firstStep ? questCache[String(firstStep.id)] : null;
+      const startSide = startDetail?.sides?.[factionOverride] || startDetail?.sides?.one || null;
+
+      return {
+        id: q.id,
+        name: q.name,
+        level: q.level || dungeon.minLevel,
+        minLevel: (hasPrereq && startDetail?.minLevel) || q.minLevel || dungeon.minLevel,
+        inside: hasPrereq ? Boolean(startSide?.inside) : Boolean(sideData?.inside),
+        faction: factionOverride,
+        ...(q.classes ? { classes: q.classes } : {}),
+        hasPrereq,
+        npc: (hasPrereq && firstStep?.npc) || sideData?.npc || '',
+        zone: (hasPrereq && firstStep?.zone) || sideData?.zone || q.zone || dungeon.entranceZone || dungeon.zone,
+        place: '',
+        x: hasPrereq ? (firstStep?.x ?? null) : (sideData?.x ?? null),
+        y: hasPrereq ? (firstStep?.y ?? null) : (sideData?.y ?? null),
+        stepCount: steps ? steps.length : 1,
+        steps,
+        finalObjective: sideData?.objective || '',
+      };
+    };
+
+    for (const qid of qids) {
+      const q = questCache[String(qid)];
+      if (!q || !q.name) {
+        failedDungeonIds.add(dId);
+        continue;
+      }
+      if (q.sides?.one) {
+        const entry = buildEntry(q, q.sides.one, q.faction);
+        if (entry) builtQuests.push(entry);
+      } else {
+        if (q.sides?.alliance) {
+          const entry = buildEntry(q, q.sides.alliance, 'alliance');
+          if (entry) builtQuests.push(entry);
+        }
+        if (q.sides?.horde) {
+          const entry = buildEntry(q, q.sides.horde, 'horde');
+          if (entry) builtQuests.push(entry);
+        }
+      }
+    }
+
+    if (builtQuests.length > 0) {
+      webBuiltDungeonIds.add(dId);
+      // 保留原有数据中按 ID 未被网页覆盖的补充任务
+      const seenKeys = new Set(builtQuests.filter(q => q?.id).map(q => `${q.id}:${q.faction || ''}`));
+      for (const prev of dungeon.quests || []) {
+        if (prev.id) {
+          if (seenKeys.has(`${prev.id}:${prev.faction || ''}`)) continue;
+          const inSteps = builtQuests.some(
+            bq => bq.faction === prev.faction && Array.isArray(bq.steps) && bq.steps.some(st => st.id === prev.id)
+          );
+          if (!inSteps) {
+            builtQuests.push(prev);
+          }
+        } else if (!builtQuests.some(bq => bq.name === prev.name && bq.faction === prev.faction)) {
+          builtQuests.push(prev);
+        }
+      }
+      dungeon.quests = builtQuests;
+    } else {
+      restoreCachedQuestsForDungeon(dId);
+    }
+  }
+  for (const dId of failedDungeonIds) {
+    restoreCachedQuestsForDungeon(dId);
+  }
+  console.log(`[WoWF] Enriched ${dungeonQuestIdsMap.size} dungeons with ${Object.keys(questCache).length} web quests.`);
+  return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
+}
+
+/**
  * 动态抓取 wowf.io/zh/news 最新热修与公告
  */
 async function fetchLiveNews(getHeaders) {
@@ -2151,6 +2584,17 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
     };
+  }
+
+  // 4. 从 wowf.io 副本与任务详情页补全全阵营副本任务与前置任务链
+  const webEnrichResult = await enrichDungeonsWithWebQuests(
+    dungeonMap,
+    cacheDir,
+    getHeaders,
+    cachedDataset?.dungeons
+  );
+  if (webEnrichResult?.hasWebEnrichFailure) {
+    hasPartialFailure = true;
   }
 
   const dungeonsList = [...dungeonMap.values()].sort((a, b) => a.minLevel - b.minLevel || a.visit - b.visit);
@@ -2953,18 +3397,36 @@ local function LinkifyInlineCoords(text, defaultZone, defaultLabel)
 end
 
 local questMetaById = {}
+local questMetaByKey = {}
+
+local function GetQuestMetaKey(qid, faction)
+  if qid and (faction == "alliance" or faction == "horde") then
+    return tostring(qid) .. ":" .. faction
+  end
+  return nil
+end
+
+local function LookupQuestMeta(qid, faction)
+  local key = GetQuestMetaKey(qid, faction)
+  if key and questMetaByKey[key] then
+    return questMetaByKey[key]
+  end
+  return qid and questMetaById[qid] or nil
+end
 
 local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
   if type(q) ~= "table" then return end
   local qid = tonumber(q.id or q.questId)
   if not qid or qid <= 0 then return end
-  local prev = questMetaById[qid] or {}
+  local metaKey = GetQuestMetaKey(qid, q.faction)
+  local prev = (metaKey and questMetaByKey[metaKey]) or questMetaById[qid] or {}
   local resolvedZone = (q.zone and q.zone ~= "") and q.zone or (q.place and q.place ~= "" and q.place) or fallbackZone or prev.zone or ""
   local sameZone = (not prev.zone or prev.zone == "" or resolvedZone == prev.zone)
   local qx = tonumber(q.x)
   local qy = tonumber(q.y)
-  questMetaById[qid] = {
+  local entry = {
     id = qid,
+    faction = q.faction or prev.faction,
     name = (q.name and q.name ~= "") and q.name or prev.name or ("任务 #" .. qid),
     level = tonumber(q.level or q.minLevel or fallbackLevel) or prev.level or state.level or 1,
     npc = (q.npc and q.npc ~= "") and q.npc or prev.npc or "",
@@ -2976,6 +3438,10 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
     teaches = (q.teaches and q.teaches ~= "") and q.teaches or prev.teaches or "",
     steps = q.steps or prev.steps,
   }
+  questMetaById[qid] = entry
+  if metaKey then
+    questMetaByKey[metaKey] = entry
+  end
   if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
     pcall(C_QuestLog.RequestLoadQuestByID, qid)
   end
@@ -3038,11 +3504,49 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, 
     if completed == nil then completed = IsQuestCompletedById(qid) end
     local color = completed and "|cff888888" or "|cffffff00"
     local doneTag = (completed and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
+    if q.faction == "alliance" or q.faction == "horde" then
+      return string.format("%s|Hwowfquest:%d:%d:%s|h[%s]|h|r%s", color, qid, qLevel, q.faction, qName, doneTag)
+    end
     return string.format("%s|Hquest:%d:%d|h[%s]|h|r%s", color, qid, qLevel, qName, doneTag)
   end
   local color = (completedOverride == true) and "|cff888888" or "|cffffd100"
   local doneTag = (completedOverride == true and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
   return string.format("%s[%s]|r%s", color, qName, doneTag)
+end
+
+local CLASS_NAMES_ZH = {
+  WARRIOR = "战士",
+  PALADIN = "圣骑士",
+  HUNTER = "猎人",
+  ROGUE = "潜行者",
+  PRIEST = "牧师",
+  SHAMAN = "萨满",
+  MAGE = "法师",
+  WARLOCK = "术士",
+  DRUID = "德鲁伊",
+}
+
+local function MatchesQuestClass(q)
+  if type(q) ~= "table" or type(q.classes) ~= "table" or #q.classes == 0 then
+    return true
+  end
+  for _, ck in ipairs(q.classes) do
+    if ck == state.classKey then
+      return true
+    end
+  end
+  return false
+end
+
+local function FormatQuestClassTag(q)
+  if type(q) ~= "table" or type(q.classes) ~= "table" or #q.classes == 0 then
+    return ""
+  end
+  local names = {}
+  for _, ck in ipairs(q.classes) do
+    table.insert(names, CLASS_NAMES_ZH[ck] or ck)
+  end
+  return "|cffc79c6e[" .. table.concat(names, "/") .. "]|r "
 end
 
 local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
@@ -3053,14 +3557,24 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
   local primary = FormatQuestLink(q, fallbackLevel, fallbackZone, chainDone)
   local primaryId = tonumber(q.id or q.questId)
   local parentZone = (q.zone and q.zone ~= "") and q.zone or (fallbackZone or "")
+  local primaryIdx = nil
+  for idx, st in ipairs(q.steps) do
+    if tonumber(st.id) == primaryId then
+      primaryIdx = idx
+      break
+    end
+  end
+
+  local orderedLinks = {}
   local chainLinks = {}
-  for _, st in ipairs(q.steps) do
+  for idx, st in ipairs(q.steps) do
     local sid = tonumber(st.id)
     if sid and sid > 0 then
       local isPrimary = (sid == primaryId)
       local stZone = (st.zone and st.zone ~= "") and st.zone or parentZone
       local stepObj = {
         id = sid,
+        faction = q.faction,
         name = st.name or q.name,
         level = st.level or q.level or q.minLevel or fallbackLevel,
         npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
@@ -3069,6 +3583,8 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
         x = st.x or (isPrimary and q.x or nil),
         y = st.y or (isPrimary and q.y or nil),
       }
+      local link = FormatQuestLink(stepObj, fallbackLevel, stZone, chainDone)
+      table.insert(orderedLinks, isPrimary and link or ("|cff99e6ff" .. link .. "|r"))
       if isPrimary then
         local hasStepCoords = (st.x ~= nil and st.y ~= nil)
         local hasStepZone = (st.zone ~= nil and st.zone ~= "")
@@ -3079,6 +3595,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
           local zoneChanged = hasStepZone and (effectiveParentZone ~= "") and (st.zone ~= effectiveParentZone)
           RegisterQuestMeta({
             id = sid,
+            faction = q.faction,
             name = st.name or q.name,
             level = st.level or q.level or q.minLevel or fallbackLevel,
             npc = (st.npc and st.npc ~= "") and st.npc or q.npc,
@@ -3089,9 +3606,14 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
           }, fallbackLevel, primaryZone)
         end
       else
-        table.insert(chainLinks, FormatQuestLink(stepObj, fallbackLevel, stZone, chainDone))
+        table.insert(chainLinks, link)
       end
     end
+  end
+  -- 若主任务前面存在前置步骤（primaryIdx > 1），按“前置1 -> 前置2 -> 主任务 -> 后续”正序展示
+  if primaryIdx and primaryIdx > 1 and #orderedLinks > 1 then
+    local suffix = chainDone and " |cff00ff00[已经完成]|r" or ""
+    return table.concat(orderedLinks, " |cff99e6ff->|r ") .. suffix
   end
   if #chainLinks > 0 then
     local suffix = chainDone and " |cff00ff00[已经完成]|r" or ""
@@ -3428,10 +3950,13 @@ local function OnCardHyperlinkEnter(self, link)
     GameTooltip:AddLine("|cff00ff00左键点击:|r 打开世界地图并标记坐标")
     GameTooltip:AddLine("|cff00ff00Shift+左键:|r 插入地图链接到聊天框")
     GameTooltip:Show()
-  elseif linkType == "quest" then
-    local qid = tonumber(string.match(payload or "", "^(%d+)"))
-    local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
-    local meta = qid and questMetaById[qid] or nil
+  elseif linkType == "quest" or linkType == "wowfquest" then
+    local qidStr, lvlStr, fKey = string.match(payload or "", "^(%d+):?(%d*):?(.*)$")
+    local qid = tonumber(qidStr)
+    local qLevel = tonumber(lvlStr) or 1
+    local stdLink = qid and string.format("quest:%d:%d", qid, qLevel) or link
+    local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, stdLink)
+    local meta = LookupQuestMeta(qid, fKey)
     if not ok then
       GameTooltip:ClearLines()
       GameTooltip:AddLine((meta and meta.name) or ("任务 #" .. tostring(qid or "")), 1, 0.82, 0)
@@ -3491,20 +4016,22 @@ local function OnCardHyperlinkClick(self, link, text, button)
     else
       OpenMapAndSetWaypoint(zText, lText, nx, ny, mid)
     end
-  elseif linkType == "quest" then
-    local qid = tonumber(string.match(payload or "", "^(%d+)"))
-    local meta = qid and questMetaById[qid] or nil
+  elseif linkType == "quest" or linkType == "wowfquest" then
+    local qidStr, lvlStr, fKey = string.match(payload or "", "^(%d+):?(%d*):?(.*)$")
+    local qid = tonumber(qidStr)
+    local qLevel = tonumber(lvlStr) or 1
+    local meta = LookupQuestMeta(qid, fKey)
     if button == "RightButton" and meta and meta.x and meta.y then
       OpenMapAndSetWaypoint(meta.zone ~= "" and meta.zone or meta.place, meta.npc ~= "" and meta.npc or meta.name, meta.x, meta.y)
       return
     end
     local chatLink = (GetQuestLink and qid) and GetQuestLink(qid) or nil
     if not chatLink or chatLink == "" then
-      if text and string.find(text, "|Hquest:", 1, true) then
+      if linkType == "quest" and text and string.find(text, "|Hquest:", 1, true) then
         chatLink = text
       else
         local qName = (meta and meta.name) or ("任务 #" .. tostring(qid or ""))
-        chatLink = string.format("|cffffff00|H%s|h[%s]|h|r", link, qName)
+        chatLink = string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", qid or 0, qLevel, qName)
       end
     end
     InsertLinkToChat(chatLink)
@@ -3892,13 +4419,14 @@ local function RenderTabSmartMatch()
       ))
       local qCount = 0
       for _, q in ipairs(d.quests or {}) do
-        if q.faction == "both" or q.faction == state.faction then
+        if (q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q) then
           qCount = qCount + 1
-          if qCount <= 5 then
+          if qCount <= 8 then
             local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
             local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内接取)" or "")
+            local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
             local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
-            table.insert(dLines, string.format("    └ 任务: %s (可接 Lv.%d) — %s %s%s", qLink, q.minLevel or d.minLevel, q.zone or "", q.npc or "", qc))
+            table.insert(dLines, string.format("    └ 任务: %s (可接 Lv.%d)%s — %s %s%s", qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.npc or "", qc))
           end
         end
       end
@@ -4439,7 +4967,7 @@ local function RenderTabDungeons()
       if d.quests and #d.quests > 0 then
         local filteredQuests = {}
         for _, q in ipairs(d.quests) do
-          if state.dungeonFilter ~= "MATCH" or (q.faction == "both" or q.faction == state.faction) then
+          if state.dungeonFilter ~= "MATCH" or ((q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q)) then
             table.insert(filteredQuests, q)
           end
         end
@@ -4447,11 +4975,12 @@ local function RenderTabDungeons()
           table.insert(lines, "|cffffd100必接副本任务 (" .. #filteredQuests .. "个):|r")
           for _, q in ipairs(filteredQuests) do
             local fTag = q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")
+            local cTag = state.dungeonFilter ~= "MATCH" and FormatQuestClassTag(q) or ""
             local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
             local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
-            local chainTag = (q.stepCount and q.stepCount > 1) and string.format(" [共%d步任务链]", q.stepCount) or ""
+            local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
             local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
-            table.insert(lines, string.format("  - %s%s (可接 Lv.%d)%s — %s %s |cff00ffcc%s|r%s", fTag, qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+            table.insert(lines, string.format("  - %s%s%s (可接 Lv.%d)%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, qLink, q.minLevel or d.minLevel, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
           end
         end
       end
