@@ -1233,7 +1233,7 @@ const ALT_ZONE_CATALOG = {
     { zone: '费伍德森林', hub: '血毒河', from: 48, to: 55, x: 34.4, y: 54.0, note: '木喉要塞声望、腐化元素与恶魔清剿' },
     { zone: '安戈洛环形山', hub: '马绍尔营地', from: 50, to: 55, x: 44.3, y: 8.3, note: '一圈接满20+任务，效率极高的50级圣地' },
     { zone: '燃烧平原', hub: '烈焰峰', from: 53, to: 60, x: 65.7, y: 24.2, note: '黑石山双本(黑石塔/黑石深渊)前置与黑龙门任务' },
-    { zone: '西瘟疫之地', hub: '亡灵壁垒', from: 54, to: 59, x: 83.2, y: 69.2, note: '瘟疫锅、通灵学院前置与弗丁任务线' },
+    { zone: '提瑞斯法林地', hub: '亡灵壁垒', from: 54, to: 59, x: 83.2, y: 69.2, note: '瘟疫锅、通灵学院前置与弗丁任务线' },
     { zone: '东瘟疫之地', hub: '圣光之愿礼拜堂', from: 55, to: 60, x: 70.5, y: 47.6, note: '银色黎明声望、爱与家庭、斯坦索姆前置' },
     { zone: '冬泉谷', hub: '永望镇', from: 54, to: 60, x: 61.3, y: 38.6, note: '霜刃豹、熊怪、蓝龙与55+高收益任务' },
     { zone: '希利苏斯', hub: '塞纳里奥要塞', from: 55, to: 60, x: 51.2, y: 38.2, note: '塞纳里奥议会声望与暮光营地任务' },
@@ -1259,27 +1259,32 @@ function enrichRoutesWithAltZones(routesData) {
       }
       const primaryZone = String(band.zone || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
       const scored = [];
-      const seenZones = new Set();
       for (const az of catalog) {
         if (az.zone === primaryZone) continue;
         const overlapStart = Math.max(bFrom, az.from);
         const overlapEnd = Math.min(bTo, az.to);
         const overlap = overlapEnd - overlapStart + 1;
         if (overlap < 2 && !(bFrom === bTo && az.from <= bFrom && az.to >= bTo)) continue;
-        if (seenZones.has(az.zone)) continue;
-        seenZones.add(az.zone);
         scored.push({ az, overlap });
       }
       scored.sort((a, b) => b.overlap - a.overlap || a.az.from - b.az.from);
-      band.altZones = scored.slice(0, 5).map(item => ({
-        zone: item.az.zone,
-        hub: item.az.hub,
-        from: item.az.from,
-        to: item.az.to,
-        x: item.az.x,
-        y: item.az.y,
-        note: item.az.note,
-      }));
+      const seenZones = new Set();
+      const picked = [];
+      for (const item of scored) {
+        if (seenZones.has(item.az.zone)) continue;
+        seenZones.add(item.az.zone);
+        picked.push({
+          zone: item.az.zone,
+          hub: item.az.hub,
+          from: item.az.from,
+          to: item.az.to,
+          x: item.az.x,
+          y: item.az.y,
+          note: item.az.note,
+        });
+        if (picked.length >= 5) break;
+      }
+      band.altZones = picked;
     }
   }
 }
