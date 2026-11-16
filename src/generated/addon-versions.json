@@ -15,6 +15,10 @@
     "version": "v0.2.0",
     "source": "https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip"
   },
+  "forever-transit": {
+    "version": "v1.0.1",
+    "source": "builtin://forever-transit"
+  },
   "icehud": {
     "version": "v1.17.28",
     "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.28/IceHUD-v1.17.28.zip"
