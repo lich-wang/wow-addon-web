@@ -3696,7 +3696,7 @@ local function GetPlayerProfessions()
   if GetProfessions and GetProfessionInfo then
     local ok, p1, p2 = pcall(GetProfessions)
     if ok then
-      for _, idx in ipairs({ p1, p2 }) do
+      for _, idx in pairs({ p1, p2 }) do
         if idx then
           local ok2, name = pcall(GetProfessionInfo, idx)
           if ok2 and name and name ~= "" then
