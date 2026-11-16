@@ -984,10 +984,13 @@ function ForeverTransit_Redraw()
         table.insert(sortedNodes, entry)
     end
     table.sort(sortedNodes, function(a, b)
-        if math.abs(a.y - b.y) > 1 then
+        if a.y ~= b.y then
             return a.y > b.y
         end
-        return a.x < b.x
+        if a.x ~= b.x then
+            return a.x < b.x
+        end
+        return a.node.id < b.node.id
     end)
 
     local placedBoxes = {}
