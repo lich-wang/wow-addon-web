@@ -1923,7 +1923,8 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       .filter(d => d && d.id != null)
       .map(d => [d.id, d])
   );
-  let questiePrereqs = new Map();
+  // 提前加载无限服 QuestieDB 前置与可重复任务标记，确保任何缓存恢复路径都能完整判定
+  const questiePrereqs = await loadQuestiePrereqs(cacheDir);
   const dedupeDungeonQuests = quests => {
     const list = Array.isArray(quests) ? quests : [];
     return list.filter((entry, idx) => {
@@ -2046,9 +2047,6 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     const detail = await fetchQuestDetail(qid, questCache, getHeaders);
     if (!detail) hasWebEnrichFailure = true;
   });
-
-  // 加载无限服 QuestieDB 前置任务关系，补全 wowf.io 网页端缺失的前置链
-  questiePrereqs = await loadQuestiePrereqs(cacheDir);
 
   // 第二轮：抓取前置/后续任务链步骤的详情以补全各步 NPC 与坐标
   const stepQuestIds = new Set();
