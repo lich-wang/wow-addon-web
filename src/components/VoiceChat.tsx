@@ -99,6 +99,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const triggerJoin = async (useListenOnly: boolean) => {
     setLocalError(null);
+    setRoomError(null);
     const trimmedRoom = roomId.trim();
     if (!trimmedRoom) {
       setLocalError('请输入房间号');
@@ -434,14 +435,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         </div>
       </div>
 
-      {/* Warning / Room Error Banner */}
-      {(voiceState.warning || roomError) && (
+      {/* Warning Banner */}
+      {voiceState.warning && (
         <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>{roomError || voiceState.warning}</span>
+            <span>{voiceState.warning}</span>
           </div>
-          {!roomError && voiceState.warning?.includes('自动播放') && (
+          {voiceState.warning.includes('自动播放') && (
             <button
               onClick={onResumePlayback}
               className="px-3 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold shrink-0 cursor-pointer"
@@ -449,6 +450,22 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               恢复播放
             </button>
           )}
+        </div>
+      )}
+
+      {/* Room Action Error Banner */}
+      {roomError && (
+        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{roomError}</span>
+          </div>
+          <button
+            onClick={() => setRoomError(null)}
+            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 shrink-0 cursor-pointer"
+          >
+            关闭
+          </button>
         </div>
       )}
 

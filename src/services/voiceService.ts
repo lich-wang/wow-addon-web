@@ -383,7 +383,7 @@ export class VoiceRoomManager {
           void room.addStream(this.localStream, { target: peerId }).catch(() => {});
         }
         this.emit();
-      });
+      }, { replay: true });
 
       room.onPeerLeave(({ peerId }) => {
         if (this.joinAttemptId !== attemptId) return;
@@ -418,7 +418,7 @@ export class VoiceRoomManager {
         });
         this.attachMonitor(peerId, stream);
         this.emit();
-      });
+      }, { replay: true });
 
       room.onError((roomErr) => {
         if (this.joinAttemptId !== attemptId) return;
