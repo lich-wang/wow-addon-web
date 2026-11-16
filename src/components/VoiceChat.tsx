@@ -68,10 +68,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [roomError, setRoomError] = useState<string | null>(null);
   const [copiedType, setCopiedType] = useState<'room' | 'link' | null>(null);
   const [chatInput, setChatInput] = useState('');
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const lastMessageId = voiceState.messages[voiceState.messages.length - 1]?.id;
 
   useEffect(() => {
     const loadDevices = async () => {
@@ -88,7 +90,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [voiceState.messages.length]);
+  }, [lastMessageId]);
 
   const handleJoinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,8 +104,8 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       setLocalError('请输入房间号');
       return;
     }
-    if (!password) {
-      setLocalError('请输入房间密码');
+    if (password.length < 8) {
+      setLocalError('房间密码至少需要 8 个字符');
       return;
     }
 
@@ -147,8 +149,25 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     e.preventDefault();
     if (!chatInput.trim()) return;
     const text = chatInput;
-    setChatInput('');
-    await onSendMessage(text);
+    setRoomError(null);
+    try {
+      await onSendMessage(text);
+      setChatInput('');
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : '发送消息失败，请稍后重试');
+    }
+  };
+
+  const handleSwitchMicChange = async (nextDeviceId: string) => {
+    const prevDeviceId = selectedDeviceId;
+    setRoomError(null);
+    setSelectedDeviceId(nextDeviceId);
+    try {
+      await onSwitchMicrophone(nextDeviceId);
+    } catch (err) {
+      setSelectedDeviceId(prevDeviceId);
+      setRoomError(err instanceof Error ? err.message : '切换麦克风设备失败');
+    }
   };
 
   const isInRoom = voiceState.status === 'connected' || voiceState.status === 'connecting';
@@ -252,7 +271,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     maxLength={64}
-                    placeholder="输入房间密码（队友需一致）"
+                    placeholder="至少 8 位房间密码（队友需一致）"
                     className="w-full pl-3.5 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-sm text-slate-100 placeholder-slate-600"
                   />
                   <button
@@ -415,14 +434,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         </div>
       </div>
 
-      {/* Warning Banner */}
-      {voiceState.warning && (
+      {/* Warning / Room Error Banner */}
+      {(voiceState.warning || roomError) && (
         <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>{voiceState.warning}</span>
+            <span>{roomError || voiceState.warning}</span>
           </div>
-          {voiceState.warning.includes('自动播放') && (
+          {!roomError && voiceState.warning?.includes('自动播放') && (
             <button
               onClick={onResumePlayback}
               className="px-3 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold shrink-0 cursor-pointer"
@@ -447,9 +466,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               <select
                 value={selectedDeviceId}
                 onChange={(e) => {
-                  const val = e.target.value;
-                  setSelectedDeviceId(val);
-                  void onSwitchMicrophone(val);
+                  void handleSwitchMicChange(e.target.value);
                 }}
                 className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50"
               >

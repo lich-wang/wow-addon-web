@@ -646,67 +646,63 @@ export function App() {
           />
         )}
 
-        {/* Loading Spinner */}
-        {isLoading ? (
+        {/* Voice Chat tab rendered independently of directory scanning isLoading */}
+        {activeTab === 'voice' ? (
+          <VoiceChat
+            voiceState={voiceState}
+            initialRoomId={initialVoiceRoomId}
+            onJoin={(opts) => voiceRoomManager.join(opts)}
+            onLeave={() => voiceRoomManager.leave()}
+            onToggleMute={() => voiceRoomManager.toggleMute()}
+            onToggleDeafen={() => voiceRoomManager.toggleDeafen()}
+            onSetPeerVolume={(peerId, vol) => voiceRoomManager.setPeerVolume(peerId, vol)}
+            onSwitchMicrophone={(deviceId) => voiceRoomManager.switchMicrophone(deviceId)}
+            onSendMessage={(text) => voiceRoomManager.sendChatMessage(text)}
+            onResumePlayback={() => voiceRoomManager.resumePlayback()}
+          />
+        ) : isLoading ? (
           <div className="py-20 text-center space-y-3">
             <Loader2 className="w-10 h-10 text-amber-500 animate-spin mx-auto" />
             <p className="text-sm text-slate-400 font-mono">正在扫描本地插件目录并解析 TOC 元数据...</p>
           </div>
+        ) : activeTab === 'installed' ? (
+          directoryState.isAuthorized ? (
+            <AddonList
+              addons={addons}
+              onDeleteAddon={handleDeleteAddon}
+              onSelectAddonDetail={(addon) => setSelectedAddonDetail(addon)}
+              onUpdateAddon={handleInstallCuratedAddon}
+            />
+          ) : (
+            <div className="text-center py-12 p-6 rounded-2xl bg-slate-900/40 border border-slate-800">
+              <h3 className="text-lg font-bold text-slate-300 mb-2">尚未连接魔兽世界插件目录</h3>
+              <p className="text-xs text-slate-400 mb-5">
+                您可以选择本地 AddOns 目录进行插件扫描与一键安装，或直接前往插件市场免设置下载插件 ZIP 包。
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  onClick={handlePickDirectory}
+                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg transition-all cursor-pointer"
+                >
+                  立即选择本地目录
+                </button>
+                <button
+                  onClick={handleBrowseMarket}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-bold text-xs shadow-lg transition-all cursor-pointer"
+                >
+                  免设置 · 直接去市场下载插件 ZIP
+                </button>
+              </div>
+            </div>
+          )
         ) : (
-          <>
-            {activeTab === 'voice' ? (
-              <VoiceChat
-                voiceState={voiceState}
-                initialRoomId={initialVoiceRoomId}
-                onJoin={(opts) => voiceRoomManager.join(opts)}
-                onLeave={() => voiceRoomManager.leave()}
-                onToggleMute={() => voiceRoomManager.toggleMute()}
-                onToggleDeafen={() => voiceRoomManager.toggleDeafen()}
-                onSetPeerVolume={(peerId, vol) => voiceRoomManager.setPeerVolume(peerId, vol)}
-                onSwitchMicrophone={(deviceId) => voiceRoomManager.switchMicrophone(deviceId)}
-                onSendMessage={(text) => voiceRoomManager.sendChatMessage(text)}
-                onResumePlayback={() => voiceRoomManager.resumePlayback()}
-              />
-            ) : activeTab === 'installed' ? (
-              directoryState.isAuthorized ? (
-                <AddonList
-                  addons={addons}
-                  onDeleteAddon={handleDeleteAddon}
-                  onSelectAddonDetail={(addon) => setSelectedAddonDetail(addon)}
-                  onUpdateAddon={handleInstallCuratedAddon}
-                />
-              ) : (
-                <div className="text-center py-12 p-6 rounded-2xl bg-slate-900/40 border border-slate-800">
-                  <h3 className="text-lg font-bold text-slate-300 mb-2">尚未连接魔兽世界插件目录</h3>
-                  <p className="text-xs text-slate-400 mb-5">
-                    您可以选择本地 AddOns 目录进行插件扫描与一键安装，或直接前往插件市场免设置下载插件 ZIP 包。
-                  </p>
-                  <div className="flex flex-wrap items-center justify-center gap-3">
-                    <button
-                      onClick={handlePickDirectory}
-                      className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg transition-all cursor-pointer"
-                    >
-                      立即选择本地目录
-                    </button>
-                    <button
-                      onClick={handleBrowseMarket}
-                      className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-bold text-xs shadow-lg transition-all cursor-pointer"
-                    >
-                      免设置 · 直接去市场下载插件 ZIP
-                    </button>
-                  </div>
-                </div>
-              )
-            ) : (
-              <AddonMarket
-                installedAddons={addons}
-                hasDirectory={directoryState.isAuthorized}
-                currentFlavor={directoryState.flavor}
-                onInstallAddon={handleInstallCuratedAddon}
-                onPromptPickDirectory={handlePickDirectory}
-              />
-            )}
-          </>
+          <AddonMarket
+            installedAddons={addons}
+            hasDirectory={directoryState.isAuthorized}
+            currentFlavor={directoryState.flavor}
+            onInstallAddon={handleInstallCuratedAddon}
+            onPromptPickDirectory={handlePickDirectory}
+          />
         )}
       </main>
 

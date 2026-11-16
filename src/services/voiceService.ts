@@ -29,6 +29,36 @@ interface ChatPayload {
   timestamp: number;
 }
 
+function isValidPeerMeta(data: unknown): data is PeerMetaPayload {
+  if (!data || typeof data !== 'object') return false;
+  const obj = data as Record<string, unknown>;
+  return (
+    typeof obj.nickname === 'string' &&
+    typeof obj.isMuted === 'boolean' &&
+    typeof obj.isDeafened === 'boolean' &&
+    typeof obj.hasMic === 'boolean'
+  );
+}
+
+function isValidChatPayload(data: unknown): data is ChatPayload {
+  if (!data || typeof data !== 'object') return false;
+  const obj = data as Record<string, unknown>;
+  return (
+    typeof obj.id === 'string' &&
+    typeof obj.nickname === 'string' &&
+    typeof obj.text === 'string' &&
+    typeof obj.timestamp === 'number' &&
+    Number.isFinite(obj.timestamp)
+  );
+}
+
+function createMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${performance.now().toString(36)}`;
+}
+
 interface AudioMonitor {
   source: MediaStreamAudioSourceNode;
   analyser: AnalyserNode;
@@ -77,6 +107,8 @@ export class VoiceRoomManager {
   private messages: VoiceChatMessage[] = [];
   private connectedPeerIds = new Set<string>();
   private listeners = new Set<StateListener>();
+  private joinAttemptId = 0;
+  private micSwitchChain: Promise<void> = Promise.resolve();
 
   subscribe(listener: StateListener): () => void {
     this.listeners.add(listener);
@@ -231,11 +263,13 @@ export class VoiceRoomManager {
     if (!trimmedRoom) {
       throw new Error('请输入房间号');
     }
-    if (!trimmedPassword) {
-      throw new Error('请输入房间密码');
+    if (trimmedPassword.length < 8) {
+      throw new Error('房间密码至少需要 8 个字符');
     }
 
-    await this.leave();
+    const attemptId = ++this.joinAttemptId;
+    await this.resetInternalState();
+    if (this.joinAttemptId !== attemptId) return;
 
     this.status = 'connecting';
     this.roomId = trimmedRoom;
@@ -256,7 +290,7 @@ export class VoiceRoomManager {
           throw new Error('当前浏览器不支持麦克风采集，请使用 HTTPS 或现代浏览器，或选择“仅收听模式”加入。');
         }
         try {
-          this.localStream = await navigator.mediaDevices.getUserMedia({
+          const acquiredStream = await navigator.mediaDevices.getUserMedia({
             audio: {
               deviceId: options.deviceId ? { exact: options.deviceId } : undefined,
               echoCancellation: true,
@@ -265,8 +299,16 @@ export class VoiceRoomManager {
             },
             video: false,
           });
+          if (this.joinAttemptId !== attemptId) {
+            for (const track of acquiredStream.getTracks()) {
+              track.stop();
+            }
+            return;
+          }
+          this.localStream = acquiredStream;
           this.attachMonitor('self', this.localStream);
         } catch (err) {
+          if (this.joinAttemptId !== attemptId) return;
           const domErr = err as DOMException;
           if (domErr.name === 'NotAllowedError' || domErr.name === 'PermissionDeniedError') {
             throw new Error('麦克风权限被拒绝。请在浏览器地址栏允许麦克风权限，或勾选“仅收听模式”加入。');
@@ -294,6 +336,10 @@ export class VoiceRoomManager {
 
       this.room = room;
       const selfInfo = await room.getSelf();
+      if (this.joinAttemptId !== attemptId) {
+        await room.leave().catch(() => {});
+        return;
+      }
       this.selfPeerId = selfInfo.peerId;
 
       const metaAction = room.makeAction<PeerMetaPayload>('meta');
@@ -303,18 +349,25 @@ export class VoiceRoomManager {
       this.sendChat = (data) => chatAction.send(data);
 
       metaAction.onMessage((data, { peerId }) => {
-        this.peerMeta.set(peerId, data);
+        if (this.joinAttemptId !== attemptId || !isValidPeerMeta(data)) return;
+        this.peerMeta.set(peerId, {
+          nickname: data.nickname.slice(0, 32) || `队友-${peerId.slice(0, 4)}`,
+          isMuted: data.isMuted,
+          isDeafened: data.isDeafened,
+          hasMic: data.hasMic,
+        });
         this.emit();
       });
 
       chatAction.onMessage((data, { peerId }) => {
+        if (this.joinAttemptId !== attemptId || !isValidChatPayload(data)) return;
         this.messages = [
           ...this.messages.slice(-99),
           {
             id: data.id,
             peerId,
-            nickname: data.nickname,
-            text: data.text,
+            nickname: data.nickname.slice(0, 32) || `队友-${peerId.slice(0, 4)}`,
+            text: data.text.slice(0, 1000),
             timestamp: data.timestamp,
             isSelf: false,
           },
@@ -323,15 +376,17 @@ export class VoiceRoomManager {
       });
 
       room.onPeerJoin(({ peerId }) => {
+        if (this.joinAttemptId !== attemptId) return;
         this.connectedPeerIds.add(peerId);
-        void metaAction.send(this.buildSelfMeta(), { target: peerId });
+        void metaAction.send(this.buildSelfMeta(), { target: peerId }).catch(() => {});
         if (this.localStream) {
-          void room.addStream(this.localStream, { target: peerId });
+          void room.addStream(this.localStream, { target: peerId }).catch(() => {});
         }
         this.emit();
       });
 
       room.onPeerLeave(({ peerId }) => {
+        if (this.joinAttemptId !== attemptId) return;
         this.connectedPeerIds.delete(peerId);
         this.peerMeta.delete(peerId);
         this.peerStreams.delete(peerId);
@@ -346,6 +401,7 @@ export class VoiceRoomManager {
       });
 
       room.onPeerStream((stream, { peerId }) => {
+        if (this.joinAttemptId !== attemptId) return;
         this.peerStreams.set(peerId, stream);
         let audio = this.peerAudioElements.get(peerId);
         if (!audio) {
@@ -357,7 +413,7 @@ export class VoiceRoomManager {
         const peerVol = this.peerVolumes.get(peerId) ?? 1;
         audio.volume = this.isDeafened ? 0 : peerVol;
         void audio.play().catch(() => {
-          this.warning = '浏览器阻止了自动播放，请点击页面任意位置恢复语音播放。';
+          this.warning = '浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。';
           this.emit();
         });
         this.attachMonitor(peerId, stream);
@@ -365,27 +421,40 @@ export class VoiceRoomManager {
       });
 
       room.onError((roomErr) => {
+        if (this.joinAttemptId !== attemptId) return;
         if (roomErr.code === 'decrypt-failed') {
           this.warning = '检测到同房间存在密码不匹配的成员，对方无法与您建立语音连接，请核对房间密码。';
           this.emit();
         } else if (roomErr.code === 'relay-failed') {
           this.warning = '部分信令节点连接失败，可能影响新成员加入，建议检查网络或稍后重试。';
           this.emit();
+        } else if (roomErr.code === 'peer-connect-failed') {
+          this.warning = '与部分成员的语音直连失败，可能受网络（NAT）限制，请更换网络或稍后重试。';
+          this.emit();
         }
       });
 
       await room.ready;
+      if (this.joinAttemptId !== attemptId) {
+        await room.leave().catch(() => {});
+        return;
+      }
 
       if (this.localStream) {
         await room.addStream(this.localStream);
+        if (this.joinAttemptId !== attemptId) {
+          await room.leave().catch(() => {});
+          return;
+        }
       }
 
       this.status = 'connected';
       this.startLevelPolling();
       this.emit();
     } catch (err) {
+      if (this.joinAttemptId !== attemptId) return;
       const message = err instanceof Error ? err.message : '加入语音房间失败';
-      await this.leave();
+      await this.resetInternalState();
       this.status = 'error';
       this.error = message;
       this.emit();
@@ -437,39 +506,81 @@ export class VoiceRoomManager {
   }
 
   async switchMicrophone(deviceId: string): Promise<void> {
-    if (this.listenOnly || !this.room || !this.localStream) return;
-    const oldTrack = this.localStream.getAudioTracks()[0];
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    });
-    const newTrack = newStream.getAudioTracks()[0];
-    if (!newTrack) return;
+    const runSwitch = async () => {
+      const attemptId = this.joinAttemptId;
+      if (this.listenOnly || !this.room || !this.localStream) return;
 
-    newTrack.enabled = !this.isMuted;
-    if (oldTrack) {
-      await this.room.replaceTrack(oldTrack, newTrack);
-      oldTrack.stop();
-    }
-    this.localStream = newStream;
-    this.attachMonitor('self', newStream);
-    this.emit();
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+
+      if (this.joinAttemptId !== attemptId || !this.room || !this.localStream) {
+        for (const track of newStream.getTracks()) {
+          track.stop();
+        }
+        return;
+      }
+
+      const newTrack = newStream.getAudioTracks()[0];
+      if (!newTrack) {
+        for (const track of newStream.getTracks()) {
+          track.stop();
+        }
+        throw new Error('未获取到有效的麦克风音轨');
+      }
+
+      const oldTrack = this.localStream.getAudioTracks()[0];
+      newTrack.enabled = !this.isMuted;
+
+      try {
+        if (oldTrack) {
+          await this.room.replaceTrack(oldTrack, newTrack);
+        } else {
+          await this.room.addStream(newStream);
+        }
+      } catch (err) {
+        for (const track of newStream.getTracks()) {
+          track.stop();
+        }
+        throw err;
+      }
+
+      if (this.joinAttemptId !== attemptId || !this.room) {
+        for (const track of newStream.getTracks()) {
+          track.stop();
+        }
+        return;
+      }
+
+      if (oldTrack) {
+        oldTrack.stop();
+      }
+      this.localStream = newStream;
+      this.attachMonitor('self', newStream);
+      this.emit();
+    };
+
+    const next = this.micSwitchChain.then(runSwitch, runSwitch);
+    this.micSwitchChain = next.catch(() => {});
+    return next;
   }
 
   async sendChatMessage(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed || !this.sendChat || this.status !== 'connected') return;
     const payload: ChatPayload = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: createMessageId(),
       nickname: this.nickname,
       text: trimmed,
       timestamp: Date.now(),
     };
+    await this.sendChat(payload);
     this.messages = [
       ...this.messages.slice(-99),
       {
@@ -479,7 +590,6 @@ export class VoiceRoomManager {
       },
     ];
     this.emit();
-    await this.sendChat(payload);
   }
 
   resumePlayback(): void {
@@ -498,6 +608,11 @@ export class VoiceRoomManager {
   }
 
   async leave(): Promise<void> {
+    this.joinAttemptId++;
+    await this.resetInternalState();
+  }
+
+  private async resetInternalState(): Promise<void> {
     this.stopLevelPolling();
 
     for (const key of Array.from(this.monitors.keys())) {
