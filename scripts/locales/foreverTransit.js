@@ -814,7 +814,7 @@ local function EnsureOverlay()
     end
     overlayFrame = CreateFrame("Frame", "ForeverTransitMapOverlay", canvas)
     overlayFrame:SetAllPoints(canvas)
-    overlayFrame:SetFrameLevel((canvas:GetFrameLevel() or 1) + 35)
+    overlayFrame:SetFrameLevel((canvas:GetFrameLevel() or 1) + 180)
     return overlayFrame
 end
 
@@ -994,6 +994,15 @@ function ForeverTransit_Redraw()
     end)
 
     local placedBoxes = {}
+    local halfPin = pinSize * 0.5
+    for _, entry in ipairs(sortedNodes) do
+        table.insert(placedBoxes, {
+            left = entry.x - halfPin,
+            right = entry.x + halfPin,
+            top = entry.y + halfPin,
+            bottom = entry.y - halfPin,
+        })
+    end
     local function overlapsAny(left, top, w, h)
         local right = left + w
         local bottom = top - h
