@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
+    "@trystero-p2p/mqtt": "^0.27.0",
     "clsx": "^2.1.1",
     "idb-keyval": "^6.3.0",
     "jszip": "^3.10.2",
