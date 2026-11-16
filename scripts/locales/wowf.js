@@ -1696,23 +1696,30 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       .filter(d => d && d.id != null)
       .map(d => [d.id, d])
   );
+  const webBuiltDungeonIds = new Set();
   const restoreCachedQuestsForDungeon = dId => {
     const dungeon = dungeonMap.get(dId);
     const cachedDungeon = cachedDungeonMap.get(dId);
     if (!dungeon || !Array.isArray(cachedDungeon?.quests) || cachedDungeon.quests.length === 0) return;
     const questIdentityKey = q => `${q.id}:${q.faction || ''}`;
-    // 优先保留本轮成功构建的任务条目，再从旧快照补充缺失的条目（按任务 ID + 阵营区分）
-    const merged = [...(dungeon.quests || [])];
+    const preferCurrent = webBuiltDungeonIds.has(dId);
+    const primaryList = preferCurrent ? dungeon.quests || [] : cachedDungeon.quests;
+    const fallbackList = preferCurrent ? cachedDungeon.quests : dungeon.quests || [];
+    const merged = [...primaryList];
     const seenKeys = new Set(merged.filter(q => q?.id).map(questIdentityKey));
-    for (const prev of cachedDungeon.quests) {
-      if (!prev) continue;
-      if (prev.id && seenKeys.has(questIdentityKey(prev))) continue;
-      const inSteps = prev.id && merged.some(
-        mq => mq.faction === prev.faction && Array.isArray(mq.steps) && mq.steps.some(st => st.id === prev.id)
-      );
-      if (!inSteps && !merged.some(mq => mq.name === prev.name && mq.faction === prev.faction)) {
-        merged.push(prev);
-        if (prev.id) seenKeys.add(questIdentityKey(prev));
+    for (const item of fallbackList) {
+      if (!item) continue;
+      if (item.id) {
+        if (seenKeys.has(questIdentityKey(item))) continue;
+        const inSteps = merged.some(
+          mq => mq.faction === item.faction && Array.isArray(mq.steps) && mq.steps.some(st => st.id === item.id)
+        );
+        if (!inSteps) {
+          merged.push(item);
+          seenKeys.add(questIdentityKey(item));
+        }
+      } else if (!merged.some(mq => mq.name === item.name && mq.faction === item.faction)) {
+        merged.push(item);
       }
     }
     dungeon.quests = merged;
@@ -1904,13 +1911,19 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     }
 
     if (builtQuests.length > 0) {
+      webBuiltDungeonIds.add(dId);
       // 保留原有数据中按 ID 未被网页覆盖的补充任务
-      const seenIds = new Set(builtQuests.map(q => q.id).filter(Boolean));
+      const seenKeys = new Set(builtQuests.filter(q => q?.id).map(q => `${q.id}:${q.faction || ''}`));
       for (const prev of dungeon.quests || []) {
-        if (prev.id && seenIds.has(prev.id)) continue;
-        // 检查是否已包含在某条任务链的步骤中
-        const inSteps = builtQuests.some(bq => Array.isArray(bq.steps) && bq.steps.some(st => st.id === prev.id));
-        if (!inSteps && !builtQuests.some(bq => bq.name === prev.name && bq.faction === prev.faction)) {
+        if (prev.id) {
+          if (seenKeys.has(`${prev.id}:${prev.faction || ''}`)) continue;
+          const inSteps = builtQuests.some(
+            bq => bq.faction === prev.faction && Array.isArray(bq.steps) && bq.steps.some(st => st.id === prev.id)
+          );
+          if (!inSteps) {
+            builtQuests.push(prev);
+          }
+        } else if (!builtQuests.some(bq => bq.name === prev.name && bq.faction === prev.faction)) {
           builtQuests.push(prev);
         }
       }
