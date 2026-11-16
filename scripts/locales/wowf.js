@@ -5463,7 +5463,7 @@ end
 
 local headerControls = {}
 
-RefreshUI = function()
+RefreshUI = function(preserveScroll)
   if not mainFrame or not mainFrame:IsShown() then return end
   if state.autoFollow then
     SyncPlayerCharacter()
@@ -5500,9 +5500,7 @@ RefreshUI = function()
     end
   end
 
-  if scrollFrame then
-    scrollFrame:SetVerticalScroll(0)
-  end
+  local savedScroll = (preserveScroll and scrollFrame) and (scrollFrame:GetVerticalScroll() or 0) or 0
 
   if state.activeTab == 1 then
     RenderTabSmartMatch()
@@ -5516,6 +5514,15 @@ RefreshUI = function()
     RenderTabDungeons()
   else
     RenderTabForeverAndNews()
+  end
+
+  if scrollFrame then
+    if preserveScroll then
+      local maxScroll = math.max(0, ((contentChild and contentChild:GetHeight()) or 0) - (scrollFrame:GetHeight() or 0))
+      scrollFrame:SetVerticalScroll(math.max(0, math.min(savedScroll, maxScroll)))
+    else
+      scrollFrame:SetVerticalScroll(0)
+    end
   end
 end
 
@@ -5910,6 +5917,9 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
+  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" then
+    SyncPlayerCharacter()
+    RefreshUI(true)
   else
     SyncPlayerCharacter()
     RefreshUI()
