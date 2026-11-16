@@ -2991,7 +2991,7 @@ local function IsDungeonAllQuestsCompleted(d, faction)
   return total > 0
 end
 
-local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag)
+local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, completedOverride)
   if type(q) ~= "table" then
     return "|cffffd100[" .. tostring(q or "未知任务") .. "]|r"
   end
@@ -3000,7 +3000,8 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag)
   local qName = (q.name and q.name ~= "") and q.name or (qid and ("任务 #" .. qid) or "未知任务")
   local qLevel = tonumber(q.level or q.minLevel or fallbackLevel) or state.level or 1
   if qid and qid > 0 then
-    local completed = IsQuestCompletedById(qid)
+    local completed = completedOverride
+    if completed == nil then completed = IsQuestCompletedById(qid) end
     local color = completed and "|cff888888" or "|cffffff00"
     local doneTag = (completed and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
     return string.format("%s|Hquest:%d:%d|h[%s]|h|r%s", color, qid, qLevel, qName, doneTag)
@@ -4268,7 +4269,7 @@ local function RenderTabClassAndTalents()
         local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
         local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
         local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
-        local crLink = FormatQuestLink(cr, cr.level, firstZone)
+        local crLink = FormatQuestLink(cr, cr.level, firstZone, nil, IsQuestCompleted(cr))
         table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
         for idx, st in ipairs(cr.steps or {}) do
           local stZone = (st.zone and st.zone ~= "") and st.zone or st.place
