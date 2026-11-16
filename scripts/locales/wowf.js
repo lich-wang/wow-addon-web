@@ -678,7 +678,7 @@ const FOREVER_SYSTEMS_DATA = [
     category: '经典旧世树',
     minLevel: 1,
     title: '★ 经典旧世专长（传承点数 Legacy 天赋树 · 单角色上限 16 点）',
-    summary: '账号下每个角色达到 15、25、40、55、60 级及完成探索/专业挑战均可解锁【经典旧世点数】（账号累计上限 65 点，单角色同时最多可分配 16 点），所有小号 1 级即可享受全套加成！',
+    summary: '账号下每个职业首次达到 25、45、60 级及非采集类主专业达到对应熟练度/完成探索挑战均可解锁【经典旧世点数】（账号累计上限 65 点，并设 15、25、40、55 点累计奖励里程碑；单角色同时最多可分配 16 点），所有小号 1 级即可享受全套加成！',
     steps: [
       {
         step: 1,
@@ -3741,11 +3741,11 @@ local function BuildLegacyRecommendationLines(lvl, profs, compact)
   local planTitle, planDesc, steps
   if isMax then
     planTitle = "满级综合推荐 (充裕 9 点 + 专业 5 点 + 冒险 2 点)"
-    planDesc = "60 级以声望外交、材料/金币节省与双采/制造效率为核心，优先点出【充裕树】与【专业树】关键节点。"
+    planDesc = "60 级以声望外交、材料节省与双采/制造效率为核心，优先点出【充裕树】与【专业树】关键节点。"
     steps = {
-      { fromPt = 1, toPt = 5, pts = "第 1–5 点", tree = "充裕", text = "外交官（声望加成）& 讨价还价/材料节省（冲声望与降低消耗必点）" },
+      { fromPt = 1, toPt = 5, pts = "第 1–5 点", tree = "充裕", text = "外交官（声望加成）& 材料节省（冲声望与降低施法/消耗品开销必点）" },
       { fromPt = 6, toPt = 9, pts = "第 6–9 点", tree = "充裕", text = "恒久（食物/药水持续）& 美食家（降低日常与团本补给开销）" },
-      { fromPt = 10, toPt = 14, pts = "第 10–14 点", tree = "专业", text = hasDualHerbMine and "加班加点（采集/制造技能提升）& 专研（已学双采高收益）" or "加班加点（专业技能提升）& 专研/大师级厨师（提高制造与副业效率）" },
+      { fromPt = 10, toPt = 14, pts = "第 10–14 点", tree = "专业", text = hasDualHerbMine and "加班加点（采集/制造技能提升）& 专研 / 讨价还价（已学双采高收益）" or "加班加点（专业技能提升）& 专研 / 讨价还价（提高制造效率与商人折扣）" },
       { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 战地医疗（日常赶路与续航便利）" },
     }
   elseif hasGather then
@@ -3755,8 +3755,8 @@ local function BuildLegacyRecommendationLines(lvl, profs, compact)
       { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
       { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
       { fromPt = 8, toPt = 10, pts = "第 8–10 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快跨图赶路与战斗能力）" },
-      { fromPt = 11, toPt = 14, pts = "第 11–14 点", tree = "专业", text = hasDualHerbMine and "加班加点 & 专研（提升采矿/草药技能点获取与采集效率）" or "加班加点 & 专研（提升采集/制造技能点获取与副业效率）" },
-      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "材料节省 & 讨价还价（减少消耗品与修理/购买开销）" },
+      { fromPt = 11, toPt = 14, pts = "第 11–14 点", tree = "专业", text = hasDualHerbMine and "加班加点 & 专研 / 讨价还价（提升采矿/草药技能点获取与商人折扣）" or "加班加点 & 专研 / 讨价还价（提升采集/制造技能点获取与商人折扣）" },
+      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "材料节省 & 恒久（减少技能材料与食物药水补给开销）" },
     }
   else
     planTitle = "纯练级通用推荐 (冒险 11 点 + 充裕 5 点)"
@@ -3765,7 +3765,7 @@ local function BuildLegacyRecommendationLines(lvl, profs, compact)
       { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
       { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
       { fromPt = 8, toPt = 11, pts = "第 8–11 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快鸟点飞行并强化实战）" },
-      { fromPt = 12, toPt = 14, pts = "第 12–14 点", tree = "充裕", text = "材料节省 & 讨价还价（降低技能/施法材料与补给开销）" },
+      { fromPt = 12, toPt = 14, pts = "第 12–14 点", tree = "充裕", text = "材料节省 & 恒久（降低技能/施法材料与补给开销）" },
       { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "外交官（声望获取加成，为满级声望提前铺垫）" },
     }
   end
