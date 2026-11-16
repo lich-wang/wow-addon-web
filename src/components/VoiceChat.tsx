@@ -66,6 +66,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [listenOnly, setListenOnly] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(voiceState.selectedDeviceId);
+  const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
@@ -166,15 +167,20 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const handleSwitchMicChange = async (nextDeviceId: string) => {
     const seq = ++switchSeqRef.current;
-    const prevDeviceId = selectedDeviceId;
     setRoomError(null);
-    setSelectedDeviceId(nextDeviceId);
+    setPendingDeviceId(nextDeviceId);
     try {
       await onSwitchMicrophone(nextDeviceId);
+      if (switchSeqRef.current === seq) {
+        setSelectedDeviceId(nextDeviceId);
+      }
     } catch (err) {
       if (switchSeqRef.current !== seq) return;
-      setSelectedDeviceId(prevDeviceId);
       setRoomError(err instanceof Error ? err.message : '切换麦克风设备失败');
+    } finally {
+      if (switchSeqRef.current === seq) {
+        setPendingDeviceId(null);
+      }
     }
   };
 
@@ -490,7 +496,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
             {!voiceState.listenOnly && audioInputs.length > 1 && (
               <select
-                value={selectedDeviceId}
+                value={pendingDeviceId ?? voiceState.selectedDeviceId}
                 disabled={voiceState.status !== 'connected'}
                 onChange={(e) => {
                   void handleSwitchMicChange(e.target.value);
