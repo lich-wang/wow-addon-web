@@ -676,15 +676,15 @@ const FOREVER_SYSTEMS_DATA = [
   {
     id: 'legacy-system',
     category: '经典旧世树',
-    minLevel: 15,
-    title: '★ 经典旧世专长（Legacy 账号共享天赋树，最高 65 点）',
-    summary: '账号下每个角色达到 15、25、40、55、60 级及完成探索挑战均可为全账号解锁【经典旧世点数】（单角色最多贡献 16 点，账号上限 65 点），所有小号 1 级即可享受全套加成！',
+    minLevel: 1,
+    title: '★ 经典旧世专长（传承点数 Legacy 天赋树 · 单角色上限 16 点）',
+    summary: '账号下每个职业首次达到 25、45、60 级及非采集类主专业达到对应熟练度/完成探索挑战均可解锁【经典旧世点数】（账号累计上限 65 点，并设 15、25、40、55 点累计奖励里程碑；单角色同时最多可分配 16 点），所有小号 1 级即可享受全套加成！',
     steps: [
       {
         step: 1,
         zone: '经典旧世树 · 冒险分支',
         title: '[冒险] 冒险树（练级首选推荐优先点满）',
-        detail: '提供野外道路移动速度提升、炉石冷却时间大幅缩短、灵魂医者虚弱时间减免、探索新地图经验奖励翻倍以及飞行路径速度提升。',
+        detail: '提供休息经验加成、战斗后恢复、高度警戒、露营设施冷却缩减、绷带虚弱时间减免、天赋点解锁以及飞行路径加速。',
       },
       {
         step: 2,
@@ -720,34 +720,6 @@ const FOREVER_SYSTEMS_DATA = [
         coord: { x: 51.5, y: 30.2 },
         title: '部落：杜隆塔尔补给后勤部（主城银行旁 & 贫瘠之地十字路口）',
         detail: '即使无法制造箱子要求的物品，直接上交未填满的原箱也能获得基础声望与经验，切勿丢弃！',
-      },
-    ],
-  },
-  {
-    id: 'forever-zones-routes',
-    category: '新种族与新区域',
-    minLevel: 1,
-    title: '★ 无限服新种族【天裔】、四大新地图与轮船飞艇新航线',
-    summary: '无限服新增联盟【高阶会天裔】与部落【塑风者天裔】种族，开放泽风岛、河林、海加尔山、辛德拉等全新区域，并新增跨海轮船与飞艇航线。',
-    steps: [
-      {
-        step: 1,
-        zone: '泽风岛 (Zephras Isle)',
-        title: 'Lv. 1–12：泽风岛（天裔新手区域）',
-        detail: '拥有独立的 1-12 级任务线、全套职业与专业训练师，12 级后可通过海港轮船直达暴风城/米奈希尔港或奥格瑞玛/棘齿城。',
-      },
-      {
-        step: 2,
-        zone: '河林 (Riverglades)',
-        coord: { x: 65.5, y: 81.5 },
-        title: 'Lv. 30–45：河林（全新中后期练级大区 & 克罗多克要塞）',
-        detail: '位于东部王国中部的全新广袤森林区域，包含刺毛丘陵、法霍德要塞等营地及 40-45 级新副本【克罗多克要塞】，彻底告别 35-45 级断档刷怪。',
-      },
-      {
-        step: 3,
-        zone: '海加尔山 & 辛德拉',
-        title: 'Lv. 55–60：海加尔山与艾萨拉/冬泉谷高阶内容',
-        detail: '开放海加尔山户外区域与 20 人团队副本【海加尔峰】，并在艾萨拉新增 55-60 级五人本【黑喉要塞】、安戈洛新增【塑造者之台】。',
       },
     ],
   },
@@ -3719,6 +3691,118 @@ local function IsQuestCompletedById(qid)
   return false
 end
 
+local function GetPlayerProfessions()
+  local profs = {}
+  if GetProfessions and GetProfessionInfo then
+    local ok, p1, p2 = pcall(GetProfessions)
+    if ok then
+      for _, idx in pairs({ p1, p2 }) do
+        if idx then
+          local ok2, name = pcall(GetProfessionInfo, idx)
+          if ok2 and name and name ~= "" then
+            profs[name] = true
+          end
+        end
+      end
+    end
+  end
+  if GetNumSkillLines and GetSkillLineInfo then
+    local ok, num = pcall(GetNumSkillLines)
+    if ok and num and num > 0 then
+      for i = 1, num do
+        local ok2, skillName, isHeader = pcall(GetSkillLineInfo, i)
+        if ok2 and not isHeader and skillName and skillName ~= "" then
+          profs[skillName] = true
+        end
+      end
+    end
+  end
+  return profs
+end
+
+local function HasPlayerProfession(profs, cnName, enName)
+  if not profs then return false end
+  if cnName and profs[cnName] then return true end
+  if enName and profs[enName] then return true end
+  return false
+end
+
+local function HasGatheringProfession(profs)
+  return HasPlayerProfession(profs, "采矿", "Mining")
+    or HasPlayerProfession(profs, "草药学", "Herbalism")
+    or HasPlayerProfession(profs, "剥皮", "Skinning")
+end
+
+local function BuildLegacyRecommendationLines(lvl, profs, compact)
+  local hasGather = HasGatheringProfession(profs)
+  local hasDualHerbMine = HasPlayerProfession(profs, "采矿", "Mining") and HasPlayerProfession(profs, "草药学", "Herbalism")
+  local isMax = (lvl or 1) >= 60
+
+  local planTitle, planDesc, steps
+  if isMax then
+    planTitle = "满级综合推荐 (充裕 9 点 + 专业 5 点 + 冒险 2 点)"
+    planDesc = "60 级以声望外交、材料节省与双采/制造效率为核心，优先点出【充裕树】与【专业树】关键节点。"
+    steps = {
+      { fromPt = 1, toPt = 5, pts = "第 1–5 点", tree = "充裕", text = "外交官（声望加成）& 材料节省（冲声望与降低施法/消耗品开销必点）" },
+      { fromPt = 6, toPt = 9, pts = "第 6–9 点", tree = "充裕", text = "恒久（食物/药水持续）& 美食家（降低日常与团本补给开销）" },
+      { fromPt = 10, toPt = 14, pts = "第 10–14 点", tree = "专业", text = hasDualHerbMine and "加班加点（采集/制造技能提升）& 专研 / 讨价还价（已学双采高收益）" or "加班加点（专业技能提升）& 专研 / 讨价还价（提高制造效率与商人折扣）" },
+      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 战地医疗（日常赶路与续航便利）" },
+    }
+  elseif hasGather then
+    planTitle = "练级+采集推荐 (冒险 10 点 + 专业 4 点 + 充裕 2 点)"
+    planDesc = "当前角色已学采集专业，推荐优先点出【冒险树】休息经验与续航节点，并搭配【专业树】提升采集与制造技能增长。"
+    steps = {
+      { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
+      { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
+      { fromPt = 8, toPt = 10, pts = "第 8–10 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快跨图赶路与战斗能力）" },
+      { fromPt = 11, toPt = 14, pts = "第 11–14 点", tree = "专业", text = hasDualHerbMine and "加班加点 & 专研 / 讨价还价（提升采矿/草药技能点获取与商人折扣）" or "加班加点 & 专研 / 讨价还价（提升采集/制造技能点获取与商人折扣）" },
+      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "材料节省 & 恒久（减少技能材料与食物药水补给开销）" },
+    }
+  else
+    planTitle = "纯练级通用推荐 (冒险 11 点 + 充裕 5 点)"
+    planDesc = "练级期休息经验、战后恢复与飞行加速收益最高，推荐优先投入【冒险树】，剩余点数投入【充裕树】节省消耗并铺垫声望。"
+    steps = {
+      { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
+      { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
+      { fromPt = 8, toPt = 11, pts = "第 8–11 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快鸟点飞行并强化实战）" },
+      { fromPt = 12, toPt = 14, pts = "第 12–14 点", tree = "充裕", text = "材料节省 & 恒久（降低技能/施法材料与补给开销）" },
+      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "外交官（声望获取加成，为满级声望提前铺垫）" },
+    }
+  end
+
+  if compact then
+    local merged = {}
+    for _, st in ipairs(steps) do
+      local last = merged[#merged]
+      if last and last.tree == st.tree then
+        last.toPt = st.toPt
+      else
+        table.insert(merged, { tree = st.tree, fromPt = st.fromPt, toPt = st.toPt })
+      end
+    end
+    local seqParts = {}
+    for _, m in ipairs(merged) do
+      table.insert(seqParts, string.format("[%s] 第 %d–%d 点", m.tree, m.fromPt, m.toPt))
+    end
+    return {
+      string.format(">> |cff00ff00当前推荐方案:|r |cffffd100%s|r", planTitle),
+      "|cff99e6ff加点顺序:|r " .. table.concat(seqParts, " -> "),
+      "|cffaaaaaa(详细 1–16 点逐阶分配方案见 [专业&无限特色] 页)|r",
+    }
+  end
+
+  local lines = {
+    string.format("|cff00ff96>> 当前角色推荐方案 (Lv.%d):|r |cffffd100%s|r", lvl or 1, planTitle),
+    planDesc,
+    "",
+    "|cffffd100★ 1–16 点逐阶推荐加点顺序（单角色上限 16 点）:|r",
+  }
+  for _, st in ipairs(steps) do
+    table.insert(lines, string.format("  |cff00ff00%s|r  |cffffd100[%s]|r %s", st.pts, st.tree, st.text))
+  end
+  return lines
+end
+
 local function IsQuestActiveById(qid)
   local id = tonumber(qid)
   if not id or id <= 0 then return false end
@@ -4529,8 +4613,13 @@ local function RenderTabSmartMatch()
     table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs .. "   |cffaaaaaa(上方控制栏可自由切换等级、职业、专精与种族路线)|r")
   end
   table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿坐标|r 直接打开世界地图标记点 (Shift+点击发到聊天)；|cffffff00点击黄色任务链接|r 直接插入聊天框发送 (右键标记接取点)。")
-  if lvl >= 14 and lvl < 60 then
-    table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r，并在野外利用制皮【营地帐篷】快速攒双倍经验！")
+  local playerProfs = GetPlayerProfessions()
+  if lvl >= 14 and lvl < 60 and not IsQuestCompletedById(79975) then
+    if HasPlayerProfession(playerProfs, "制皮", "Leatherworking") then
+      table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r，并在野外利用制皮【营地帐篷】快速攒双倍经验！")
+    else
+      table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r（详见证件/任务指引见[专业&无限特色]页）！")
+    end
   end
 
   local c1 = AcquireCard(cardIdx); cardIdx = cardIdx + 1
@@ -4667,6 +4756,20 @@ local function RenderTabSmartMatch()
       { 0.35, 0.65, 0.95, 0.9 },
       { 0.07, 0.11, 0.17, 0.92 },
       "点击[职业与天赋]看完整10-60表"
+    )
+  end
+
+  -- 3.5 经典旧世(传承)点数推荐 (单角色上限 16 点)
+  do
+    local legacyCompactLines = BuildLegacyRecommendationLines(lvl, playerProfs, true)
+    local cLegacy = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+    y = LayoutCard(
+      cLegacy, y,
+      string.format("|cff00ffcc★ Lv.%d 传承点数(经典旧世树)加点推荐 (单角色上限 16 点)|r", lvl),
+      table.concat(legacyCompactLines, "\n"),
+      { 0.0, 0.85, 0.7, 0.9 },
+      { 0.05, 0.12, 0.14, 0.92 },
+      "点击[专业&无限特色]看1-16点详表"
     )
   end
 
@@ -5359,6 +5462,7 @@ local function RenderTabForeverAndNews()
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
   local recProfs = (spec and spec.recommendedProfs) or ""
+  local playerProfs = GetPlayerProfessions()
   local isMatchMode = (state.featureFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
   local toggleBtnLabel = state.featureFilter == "MATCH" and "查看全部特色与专业" or "仅看当前角色匹配"
   local modeDesc = state.featureFilter == "MATCH"
@@ -5369,7 +5473,7 @@ local function RenderTabForeverAndNews()
   y = LayoutCard(
     filterCard, y,
     "|cff00ffcc[特色&专业] 无限服专属玩法与 1-300 专业指南 (" .. modeDesc .. ")|r",
-    "包含《魔兽世界：无限服》专属玩法（露营帐篷、舒适睡袋、经典旧世树、遭劫的板条箱等）、12 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营的特色玩法，以及当前专精推荐专业与生活副业。",
+    "包含《魔兽世界：无限服》专属玩法（舒适睡袋、制皮营地帐篷、经典旧世传承点数推荐、遭劫的板条箱等）、12 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营/专业且未完成的特色玩法（已完成睡袋或非制皮帐篷将自动隐藏），以及当前专精推荐专业。",
     { 0.0, 0.85, 0.7, 0.9 },
     { 0.05, 0.12, 0.14, 0.94 },
     nil,
@@ -5387,8 +5491,23 @@ local function RenderTabForeverAndNews()
   -- 1. 无限服专属玩法攻略（露营、睡袋、经典旧世之树、物资箱等）
   for _, sys in ipairs(Data.foreverSystems or {}) do
     local levelMatch = (not isMatchMode) or (not sys.minLevel) or (state.level >= sys.minLevel)
-    if levelMatch and MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
+    local sysMatch = true
+    if isMatchMode then
+      if sys.id == "sleeping-bag" and IsQuestCompletedById(79975) then
+        sysMatch = false
+      elseif sys.id == "camping-tents" and not HasPlayerProfession(playerProfs, "制皮", "Leatherworking") then
+        sysMatch = false
+      end
+    end
+    if levelMatch and sysMatch and MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
       local lines = { LinkifyInlineCoords(sys.summary or "", "", sys.title or "") }
+      if sys.id == "legacy-system" then
+        local legacyRec = BuildLegacyRecommendationLines(state.level, playerProfs, false)
+        table.insert(lines, "")
+        for _, rLine in ipairs(legacyRec) do
+          table.insert(lines, rLine)
+        end
+      end
       local firstCoord = nil
       for _, st in ipairs(sys.steps or {}) do
         local stepTitle = st.title or ""
@@ -5920,7 +6039,7 @@ eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 for _, questEv in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_LOG_UPDATE" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, questEv)
 end
-for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED" }) do
+for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED", "SKILL_LINES_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
 
@@ -5964,7 +6083,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
-  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" then
+  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
     SyncPlayerCharacter()
     RefreshUI(true)
   else
