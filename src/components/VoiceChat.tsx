@@ -453,21 +453,23 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         </div>
       )}
 
-      {/* Room Action Error Banner */}
-      {roomError && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-3">
-          <div className="flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span>{roomError}</span>
+      {/* Room Action Error Banner (permanently mounted live region for screen readers) */}
+      <div role="status" aria-live="polite">
+        {roomError && (
+          <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{roomError}</span>
+            </div>
+            <button
+              onClick={() => setRoomError(null)}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 shrink-0 cursor-pointer"
+            >
+              关闭
+            </button>
           </div>
-          <button
-            onClick={() => setRoomError(null)}
-            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 shrink-0 cursor-pointer"
-          >
-            关闭
-          </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Main Content: Participants + Text Chat */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
