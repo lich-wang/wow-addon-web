@@ -71,6 +71,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [roomError, setRoomError] = useState<string | null>(null);
   const [copiedType, setCopiedType] = useState<'room' | 'link' | null>(null);
   const [chatInput, setChatInput] = useState('');
+  const [isSendingChat, setIsSendingChat] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const lastMessageId = voiceState.messages[voiceState.messages.length - 1]?.id;
@@ -148,14 +149,17 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
+    if (isSendingChat || !chatInput.trim()) return;
     const text = chatInput;
     setRoomError(null);
+    setIsSendingChat(true);
     try {
       await onSendMessage(text);
       setChatInput('');
     } catch (err) {
       setRoomError(err instanceof Error ? err.message : '发送消息失败，请稍后重试');
+    } finally {
+      setIsSendingChat(false);
     }
   };
 
@@ -622,12 +626,13 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               maxLength={500}
+              disabled={isSendingChat}
               placeholder="发送文字消息..."
-              className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-xs text-slate-100 placeholder-slate-600"
+              className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-xs text-slate-100 placeholder-slate-600 disabled:opacity-60"
             />
             <button
               type="submit"
-              disabled={!chatInput.trim()}
+              disabled={isSendingChat || !chatInput.trim()}
               className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-bold text-xs cursor-pointer transition-colors"
               aria-label="发送消息"
             >
