@@ -2201,6 +2201,64 @@ function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = nu
 }
 
 /**
+ * 为任务链步骤标注 QuestieDB 的前置依赖关系 (reqAll: 多前置全部完成, preId: 单前置)
+ */
+function annotateQuestStepsPrereqs(steps, questiePrereqs) {
+  if (!Array.isArray(steps) || steps.length <= 1 || !questiePrereqs || questiePrereqs.size === 0) {
+    return steps;
+  }
+  const stepIdSet = new Set(steps.map(s => Number(s?.id)).filter(id => id > 0));
+  return steps.map(st => {
+    if (!st || typeof st !== 'object') return st;
+    const sid = Number(st.id);
+    if (!sid) return st;
+    const info = questiePrereqs.get(sid);
+    if (!info) return st;
+    const preG = Array.isArray(info.preGroup) ? info.preGroup.filter(id => id > 0 && stepIdSet.has(id)) : [];
+    const preS = Array.isArray(info.preSingle) ? info.preSingle.filter(id => id > 0 && stepIdSet.has(id)) : [];
+    const next = { ...st };
+    delete next.reqAll;
+    delete next.preId;
+    if (preG.length > 1) {
+      next.reqAll = preG;
+    } else if (preS.length === 1) {
+      next.preId = preS[0];
+    } else if (preG.length === 1) {
+      next.preId = preG[0];
+    }
+    return next;
+  });
+}
+
+function annotateDatasetPrereqs(dataset, questiePrereqs) {
+  if (!dataset || !questiePrereqs || questiePrereqs.size === 0) return dataset;
+  for (const d of dataset.dungeons || []) {
+    for (const q of d.quests || []) {
+      if (Array.isArray(q.steps) && q.steps.length > 1) {
+        q.steps = annotateQuestStepsPrereqs(q.steps, questiePrereqs);
+      }
+    }
+  }
+  for (const r of Object.values(dataset.routes || {})) {
+    for (const b of r.levelBands || []) {
+      for (const q of b.quests || []) {
+        if (Array.isArray(q.steps) && q.steps.length > 1) {
+          q.steps = annotateQuestStepsPrereqs(q.steps, questiePrereqs);
+        }
+      }
+    }
+  }
+  for (const c of Object.values(dataset.classes || {})) {
+    for (const cr of c.classRuns || []) {
+      if (Array.isArray(cr.steps) && cr.steps.length > 1) {
+        cr.steps = annotateQuestStepsPrereqs(cr.steps, questiePrereqs);
+      }
+    }
+  }
+  return dataset;
+}
+
+/**
  * 从 wowf.io/zh/dungeons/<id> 与 /zh/quests/<id> 补全所有副本的双阵营任务与前置任务链
  */
 async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cachedDungeons = []) {
@@ -3129,7 +3187,8 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
     const cachedDbVersion = cachedDataset.meta?.dbVersion || '2026.11.15';
-    return {
+    const offlinePrereqs = await loadQuestiePrereqs(cacheDir);
+    return annotateDatasetPrereqs({
       ...cachedDataset,
       meta: {
         ...cachedDataset.meta,
@@ -3137,7 +3196,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
       },
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
-    };
+    }, offlinePrereqs);
   }
 
   // 4. 从 wowf.io 副本与任务详情页补全全阵营副本任务与前置任务链
@@ -3185,6 +3244,8 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     foreverSystems: FOREVER_SYSTEMS_DATA,
     news,
   };
+  const livePrereqs = await loadQuestiePrereqs(cacheDir);
+  annotateDatasetPrereqs(dataset, livePrereqs);
 
   // 仅当本次抓取完整（或尚无本地缓存快照）时才写入缓存文件，防止局部网络波动覆盖完整缓存
   const hasCompleteRoutes = Object.keys(routesData).length >= RACE_ROUTES.length;
@@ -4279,19 +4340,28 @@ local function FormatQuestClassTag(q)
   return "|cffc79c6e[" .. table.concat(names, "/") .. "]|r "
 end
 
-local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
+local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
   if type(q) ~= "table" or type(q.steps) ~= "table" or #q.steps <= 1 then
-    return FormatQuestLink(q, fallbackLevel, fallbackZone)
+    return FormatQuestLink(q, fallbackLevel, fallbackZone), nil
   end
   local chainDone = IsQuestCompleted(q)
   local primary = FormatQuestLink(q, fallbackLevel, fallbackZone, chainDone)
   local primaryId = tonumber(q.id or q.questId)
   local parentZone = (q.zone and q.zone ~= "") and q.zone or (fallbackZone or "")
   local primaryIdx = nil
+  local hasReqAll = false
+  local stepById = {}
+  local lastStepId = nil
   for idx, st in ipairs(q.steps) do
-    if tonumber(st.id) == primaryId then
-      primaryIdx = idx
-      break
+    local sid = tonumber(st.id)
+    if sid and sid > 0 then
+      lastStepId = sid
+      if sid == primaryId then
+        primaryIdx = idx
+      end
+      if type(st.reqAll) == "table" and #st.reqAll > 1 then
+        hasReqAll = true
+      end
     end
   end
 
@@ -4314,7 +4384,9 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
         y = st.y or (isPrimary and q.y or nil),
       }
       local link = FormatQuestLink(stepObj, fallbackLevel, stZone, chainDone)
-      table.insert(orderedLinks, isPrimary and link or ("|cff99e6ff" .. link .. "|r"))
+      local coloredLink = isPrimary and link or ("|cff99e6ff" .. link .. "|r")
+      stepById[sid] = { step = st, link = coloredLink, isPrimary = isPrimary }
+      table.insert(orderedLinks, coloredLink)
       if isPrimary then
         local hasStepCoords = (st.x ~= nil and st.y ~= nil)
         local hasStepZone = (st.zone ~= nil and st.zone ~= "")
@@ -4340,14 +4412,92 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
       end
     end
   end
+
+  -- 若任务链中存在“需全部完成多个前置 (reqAll)”的汇聚节点，则渲染为树形结构，避免误解为单选或串联
+  if hasReqAll and lastStepId and stepById[lastStepId] then
+    local baseIndent = treeIndent or "    "
+    local treeLines = {}
+    local function buildTreeLines(targetId, indent, isSubBranch, branchPrefix, childIndent, activeSet)
+      if not targetId or activeSet[targetId] or not stepById[targetId] then return end
+      local segIds = {}
+      local curId = targetId
+      while curId and not activeSet[curId] and stepById[curId] do
+        table.insert(segIds, 1, curId)
+        activeSet[curId] = true
+        local curSt = stepById[curId].step
+        if type(curSt.reqAll) == "table" and #curSt.reqAll > 1 then
+          break
+        end
+        local prevId = tonumber(curSt.preId)
+        if prevId and stepById[prevId] and not activeSet[prevId] then
+          curId = prevId
+        else
+          break
+        end
+      end
+
+      local segLinks = {}
+      for _, sid in ipairs(segIds) do
+        table.insert(segLinks, stepById[sid].link)
+      end
+      local segText = table.concat(segLinks, " |cff99e6ff->|r ")
+      local headStep = stepById[segIds[1]].step
+      local validReqs = {}
+      if type(headStep.reqAll) == "table" and #headStep.reqAll > 1 then
+        for _, pid in ipairs(headStep.reqAll) do
+          local numPid = tonumber(pid)
+          if numPid and stepById[numPid] and not activeSet[numPid] then
+            table.insert(validReqs, numPid)
+          end
+        end
+      end
+
+      if #validReqs > 1 then
+        if not isSubBranch then
+          table.insert(treeLines, indent .. "|cff99e6ff├─ 需全部完成前置:|r")
+          for i, pid in ipairs(validReqs) do
+            local isLast = (i == #validReqs)
+            local bPrefix = indent .. "|cff99e6ff│   " .. (isLast and "└─ " or "├─ ") .. "|r"
+            local cIndent = indent .. "|cff99e6ff│   " .. (isLast and "    " or "│   ") .. "|r"
+            buildTreeLines(pid, indent .. "│   ", true, bPrefix, cIndent, activeSet)
+          end
+          table.insert(treeLines, indent .. "|cff99e6ff└─ 解锁:|r " .. segText)
+        else
+          table.insert(treeLines, branchPrefix .. segText .. " |cff99e6ff(需先全部完成:)|r")
+          for i, pid in ipairs(validReqs) do
+            local isLast = (i == #validReqs)
+            local bPrefix = childIndent .. "|cff99e6ff" .. (isLast and "└─ " or "├─ ") .. "|r"
+            local cIndent = childIndent .. "|cff99e6ff" .. (isLast and "    " or "│   ") .. "|r"
+            buildTreeLines(pid, childIndent, true, bPrefix, cIndent, activeSet)
+          end
+        end
+      else
+        if isSubBranch then
+          table.insert(treeLines, branchPrefix .. segText)
+        else
+          table.insert(treeLines, indent .. "|cff99e6ff└─|r " .. segText)
+        end
+      end
+
+      for _, sid in ipairs(segIds) do
+        activeSet[sid] = nil
+      end
+    end
+
+    buildTreeLines(lastStepId, baseIndent, false, "", "", {})
+    if #treeLines > 0 then
+      return primary, table.concat(treeLines, "\n")
+    end
+  end
+
   -- 若主任务前面存在前置步骤（primaryIdx > 1），按“前置1 -> 前置2 -> 主任务 -> 后续”正序展示
   if primaryIdx and primaryIdx > 1 and #orderedLinks > 1 then
-    return table.concat(orderedLinks, " |cff99e6ff->|r ")
+    return table.concat(orderedLinks, " |cff99e6ff->|r "), nil
   end
   if #chainLinks > 0 then
-    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r"
+    return primary .. " |cff99e6ff-> " .. table.concat(chainLinks, " -> ") .. "|r", nil
   end
-  return primary
+  return primary, nil
 end
 
 local function GetDungeonByIdOrName(id, name)
@@ -5056,8 +5206,9 @@ local function RenderTabSmartMatch()
         local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or band.zone)
         local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
         local qTag = (q.kind == "class") and "|cff00ffcc[★职业专属]|r " or "|cffffd100[关键任务]|r "
-        local qLink = FormatQuestWithSteps(q, q.level or band.from, qZone)
+        local qLink, qTree = FormatQuestWithSteps(q, q.level or band.from, qZone, "      ")
         table.insert(qLines, string.format("  - %s%s (Lv.%d) — %s %s%s", qTag, qLink, q.level or band.from, q.place or "", q.npc or "", qc))
+        if qTree then table.insert(qLines, qTree) end
       end
       table.insert(bandLines, "|cff00ffcc本阶段关键/职业任务:|r\n" .. table.concat(qLines, "\n"))
     end
@@ -5201,8 +5352,9 @@ local function RenderTabSmartMatch()
       local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or (band and band.zone or "")
       local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
       local npcInfo = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-      local crLink = FormatQuestWithSteps(cr, cr.level, stepZone)
+      local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "      ")
       table.insert(milestoneLines, string.format("  - |cff00ffcc[Lv.%d %s·%s专属任务链]|r %s%s%s", cr.level, route and route.name or "", cls and cls.name or "", crLink, teachStr, npcInfo))
+      if crTree then table.insert(milestoneLines, crTree) end
     end
   end
   if #milestoneLines > 0 then
@@ -5234,9 +5386,10 @@ local function RenderTabSmartMatch()
             local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
             local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内接取)" or "")
             local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
-            local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
+            local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "        ")
             local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
             table.insert(dLines, string.format("    └ 任务: %s%s%s — %s %s%s", qLink, acceptTag, chainTag, q.zone or "", q.npc or "", qc))
+            if qTree then table.insert(dLines, qTree) end
           end
         end
       end
@@ -5329,8 +5482,9 @@ local function RenderTabRoutes()
         local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
         local stepSummary = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
         local activeTag = (lvl >= cr.level and lvl <= crTo + 2) and "|cff00ff00★[当前可做]|r " or ""
-        local crLink = FormatQuestWithSteps(cr, cr.level, stepZone)
+        local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "      ")
         table.insert(charGuideLines, string.format("  - %s|cff00ffcc[Lv.%d %s·%s职业任务]|r %s%s%s", activeTag, cr.level, route.name, cls and cls.name or "", crLink, teachStr, stepSummary))
+        if crTree then table.insert(charGuideLines, crTree) end
       end
     end
   end
@@ -5434,8 +5588,9 @@ local function RenderTabRoutes()
           local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or b.zone)
           local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
           local qTag = (q.kind == "class") and string.format("|cff00ffcc[★%s职业任务]|r", cls and cls.name or "") or "|cffffd100[区域关键任务]|r"
-          local qLink = FormatQuestWithSteps(q, q.level or b.from, qZone)
+          local qLink, qTree = FormatQuestWithSteps(q, q.level or b.from, qZone, "    ")
           table.insert(lines, string.format("%s %s (Lv.%d) — %s %s%s", qTag, qLink, q.level or b.from, q.place or "", q.npc or "", qc))
+          if qTree then table.insert(lines, qTree) end
         end
       end
 
@@ -5448,8 +5603,9 @@ local function RenderTabRoutes()
           local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or b.zone
           local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
           local npcInfo = firstStep and string.format(" — %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-          local crLink = FormatQuestWithSteps(cr, cr.level, stepZone)
+          local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "    ")
           table.insert(lines, string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r %s%s%s", cr.level, cls and cls.name or "", crLink, teachStr, npcInfo))
+          if crTree then table.insert(lines, crTree) end
         end
       end
 
@@ -5798,9 +5954,10 @@ local function RenderTabDungeons()
             local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
             local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
             local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
-            local qLink = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone)
+            local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "      ")
             local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
             table.insert(lines, string.format("  - %s%s%s%s%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, qLink, acceptTag, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+            if qTree then table.insert(lines, qTree) end
           end
         end
       end
