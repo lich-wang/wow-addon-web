@@ -76,6 +76,7 @@ export interface VoiceStateSnapshot {
   isMuted: boolean;
   isDeafened: boolean;
   listenOnly: boolean;
+  selectedDeviceId: string;
 }
 
 type StateListener = (snapshot: VoiceStateSnapshot) => void;
@@ -102,12 +103,14 @@ export class VoiceRoomManager {
   private isMuted = false;
   private isDeafened = false;
   private listenOnly = false;
+  private selectedDeviceId = '';
   private warning: string | null = null;
   private error: string | null = null;
   private messages: VoiceChatMessage[] = [];
   private connectedPeerIds = new Set<string>();
   private listeners = new Set<StateListener>();
   private joinAttemptId = 0;
+  private pendingMicTrack: MediaStreamTrack | null = null;
   private micSwitchChain: Promise<void> = Promise.resolve();
 
   subscribe(listener: StateListener): () => void {
@@ -164,6 +167,7 @@ export class VoiceRoomManager {
       isMuted: this.isMuted,
       isDeafened: this.isDeafened,
       listenOnly: this.listenOnly,
+      selectedDeviceId: this.selectedDeviceId,
     };
   }
 
@@ -275,6 +279,7 @@ export class VoiceRoomManager {
     this.roomId = trimmedRoom;
     this.nickname = trimmedNickname;
     this.listenOnly = Boolean(options.listenOnly);
+    this.selectedDeviceId = options.deviceId || '';
     this.isMuted = Boolean(options.listenOnly);
     this.isDeafened = false;
     this.warning = null;
@@ -477,6 +482,9 @@ export class VoiceRoomManager {
     for (const track of this.localStream.getAudioTracks()) {
       track.enabled = !this.isMuted;
     }
+    if (this.pendingMicTrack) {
+      this.pendingMicTrack.enabled = !this.isMuted;
+    }
     if (this.sendMeta) {
       void this.sendMeta(this.buildSelfMeta());
     }
@@ -506,9 +514,18 @@ export class VoiceRoomManager {
   }
 
   async switchMicrophone(deviceId: string): Promise<void> {
+    const expectedAttemptId = this.joinAttemptId;
+
     const runSwitch = async () => {
-      const attemptId = this.joinAttemptId;
-      if (this.listenOnly || !this.room || !this.localStream) return;
+      if (
+        this.joinAttemptId !== expectedAttemptId ||
+        this.status !== 'connected' ||
+        this.listenOnly ||
+        !this.room ||
+        !this.localStream
+      ) {
+        return;
+      }
 
       const newStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -520,7 +537,7 @@ export class VoiceRoomManager {
         video: false,
       });
 
-      if (this.joinAttemptId !== attemptId || !this.room || !this.localStream) {
+      if (this.joinAttemptId !== expectedAttemptId || !this.room || !this.localStream) {
         for (const track of newStream.getTracks()) {
           track.stop();
         }
@@ -536,6 +553,7 @@ export class VoiceRoomManager {
       }
 
       const oldTrack = this.localStream.getAudioTracks()[0];
+      this.pendingMicTrack = newTrack;
       newTrack.enabled = !this.isMuted;
 
       try {
@@ -545,23 +563,34 @@ export class VoiceRoomManager {
           await this.room.addStream(newStream);
         }
       } catch (err) {
+        // Best-effort rollback of any peers whose sender was already replaced before failure
+        if (oldTrack && this.room) {
+          await this.room.replaceTrack(newTrack, oldTrack).catch(() => {});
+        }
         for (const track of newStream.getTracks()) {
           track.stop();
         }
         throw err;
+      } finally {
+        if (this.pendingMicTrack === newTrack) {
+          this.pendingMicTrack = null;
+        }
       }
 
-      if (this.joinAttemptId !== attemptId || !this.room) {
+      if (this.joinAttemptId !== expectedAttemptId || !this.room) {
         for (const track of newStream.getTracks()) {
           track.stop();
         }
         return;
       }
 
+      // Re-sync mute state in case toggleMute() happened right as replaceTrack resolved
+      newTrack.enabled = !this.isMuted;
       if (oldTrack) {
         oldTrack.stop();
       }
       this.localStream = newStream;
+      this.selectedDeviceId = deviceId;
       this.attachMonitor('self', newStream);
       this.emit();
     };
@@ -659,6 +688,8 @@ export class VoiceRoomManager {
     this.status = 'idle';
     this.roomId = '';
     this.selfPeerId = '';
+    this.selectedDeviceId = '';
+    this.pendingMicTrack = null;
     this.warning = null;
     this.error = null;
     this.messages = [];

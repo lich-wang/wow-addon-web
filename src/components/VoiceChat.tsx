@@ -65,7 +65,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState(false);
   const [listenOnly, setListenOnly] = useState(false);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(voiceState.selectedDeviceId);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
@@ -74,6 +74,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [isSendingChat, setIsSendingChat] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const switchSeqRef = useRef(0);
   const lastMessageId = voiceState.messages[voiceState.messages.length - 1]?.id;
 
   useEffect(() => {
@@ -164,12 +165,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   };
 
   const handleSwitchMicChange = async (nextDeviceId: string) => {
+    const seq = ++switchSeqRef.current;
     const prevDeviceId = selectedDeviceId;
     setRoomError(null);
     setSelectedDeviceId(nextDeviceId);
     try {
       await onSwitchMicrophone(nextDeviceId);
     } catch (err) {
+      if (switchSeqRef.current !== seq) return;
       setSelectedDeviceId(prevDeviceId);
       setRoomError(err instanceof Error ? err.message : '切换麦克风设备失败');
     }
@@ -488,10 +491,11 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             {!voiceState.listenOnly && audioInputs.length > 1 && (
               <select
                 value={selectedDeviceId}
+                disabled={voiceState.status !== 'connected'}
                 onChange={(e) => {
                   void handleSwitchMicChange(e.target.value);
                 }}
-                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50"
+                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
               >
                 <option value="">切换麦克风：默认</option>
                 {audioInputs.map((d, idx) => (
