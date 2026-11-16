@@ -12,6 +12,9 @@ import { ProgressModal } from './components/ProgressModal';
 import { ClientDownloadModal } from './components/ClientDownloadModal';
 import { UpdateBanner, type OutdatedAddonItem } from './components/UpdateBanner';
 import { BrowserCompatibilityModal } from './components/BrowserCompatibilityModal';
+import { VoiceChat } from './components/VoiceChat';
+import { VoiceMiniBar } from './components/VoiceMiniBar';
+import { voiceRoomManager, type VoiceStateSnapshot } from './services/voiceService';
 import {
   evaluateBrowserCompatibility,
   isBrowserCheckDismissed,
@@ -66,7 +69,28 @@ export function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isPicking, setIsPicking] = useState(false);
   const [needsResumeAuth, setNeedsResumeAuth] = useState(false);
-  const [activeTab, setActiveTab] = useState<'installed' | 'market'>('market');
+  const [initialVoiceRoomId] = useState<string>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('voiceRoom') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [activeTab, setActiveTab] = useState<'installed' | 'market' | 'voice'>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('voiceRoom') ? 'voice' : 'market';
+    } catch {
+      return 'market';
+    }
+  });
+  const [voiceState, setVoiceState] = useState<VoiceStateSnapshot>(() => voiceRoomManager.getSnapshot());
+
+  useEffect(() => {
+    const unsubscribe = voiceRoomManager.subscribe(setVoiceState);
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const handleBrowseMarket = () => {
     setActiveTab('market');
@@ -568,6 +592,8 @@ export function App() {
         isPicking={isPicking}
         agentStatus={agentStatus}
         outdatedCount={outdatedItems.length}
+        voiceParticipantCount={voiceState.participants.length}
+        isVoiceActive={voiceState.status === 'connected' || voiceState.status === 'connecting'}
       />
 
       {/* Main Container */}
@@ -606,8 +632,8 @@ export function App() {
           />
         )}
 
-        {/* Directory Banner when not authorized */}
-        {!directoryState.isAuthorized && !needsResumeAuth && (
+        {/* Directory Banner when not authorized (hidden on voice tab) */}
+        {activeTab !== 'voice' && !directoryState.isAuthorized && !needsResumeAuth && (
           <DirectoryBanner
             onPickDirectory={handlePickDirectory}
             isPicking={isPicking}
@@ -628,7 +654,20 @@ export function App() {
           </div>
         ) : (
           <>
-            {activeTab === 'installed' ? (
+            {activeTab === 'voice' ? (
+              <VoiceChat
+                voiceState={voiceState}
+                initialRoomId={initialVoiceRoomId}
+                onJoin={(opts) => voiceRoomManager.join(opts)}
+                onLeave={() => voiceRoomManager.leave()}
+                onToggleMute={() => voiceRoomManager.toggleMute()}
+                onToggleDeafen={() => voiceRoomManager.toggleDeafen()}
+                onSetPeerVolume={(peerId, vol) => voiceRoomManager.setPeerVolume(peerId, vol)}
+                onSwitchMicrophone={(deviceId) => voiceRoomManager.switchMicrophone(deviceId)}
+                onSendMessage={(text) => voiceRoomManager.sendChatMessage(text)}
+                onResumePlayback={() => voiceRoomManager.resumePlayback()}
+              />
+            ) : activeTab === 'installed' ? (
               directoryState.isAuthorized ? (
                 <AddonList
                   addons={addons}
@@ -740,6 +779,15 @@ export function App() {
         onContinueBrowsing={handleContinueBrowsing}
         onOpenClientModal={() => setIsClientModalOpen(true)}
       />
+
+      {activeTab !== 'voice' && (
+        <VoiceMiniBar
+          voiceState={voiceState}
+          onOpenVoiceTab={() => setActiveTab('voice')}
+          onToggleMute={() => voiceRoomManager.toggleMute()}
+          onLeave={() => voiceRoomManager.leave()}
+        />
+      )}
     </div>
   );
 }
