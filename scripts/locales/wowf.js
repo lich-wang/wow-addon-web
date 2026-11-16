@@ -1457,6 +1457,10 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
       if (questIndexByKey.has(key)) {
         const idx = questIndexByKey.get(key);
         const prevQuest = existing.quests[idx];
+        if (q.id && prevQuest?.id && q.id !== prevQuest.id) {
+          existing.quests.push(q);
+          continue;
+        }
         const mergedFaction =
           prevQuest?.faction === 'both' ||
           q.faction === 'both' ||
@@ -3006,7 +3010,9 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, 
     local doneTag = (completed and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
     return string.format("%s|Hquest:%d:%d|h[%s]|h|r%s", color, qid, qLevel, qName, doneTag)
   end
-  return string.format("|cffffd100[%s]|r", qName)
+  local color = (completedOverride == true) and "|cff888888" or "|cffffd100"
+  local doneTag = (completedOverride == true and not suppressDoneTag) and " |cff00ff00[已经完成]|r" or ""
+  return string.format("%s[%s]|r%s", color, qName, doneTag)
 end
 
 local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone)
