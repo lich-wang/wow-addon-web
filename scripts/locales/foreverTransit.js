@@ -690,19 +690,19 @@ local function AcquirePin()
 
         local border = pin:CreateTexture(nil, "BACKGROUND")
         border:SetAllPoints()
-        border:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+        border:SetTexture("Interface\\\\CHARACTERFRAME\\\\TempPortraitAlphaMask")
         border:SetVertexColor(0.05, 0.06, 0.09, 0.95)
         pin.border = border
 
         local fill = pin:CreateTexture(nil, "ARTWORK")
         fill:SetPoint("TOPLEFT", 2, -2)
         fill:SetPoint("BOTTOMRIGHT", -2, 2)
-        fill:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+        fill:SetTexture("Interface\\\\CHARACTERFRAME\\\\TempPortraitAlphaMask")
         pin.fill = fill
 
         local core = pin:CreateTexture(nil, "OVERLAY")
         core:SetPoint("CENTER")
-        core:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+        core:SetTexture("Interface\\\\CHARACTERFRAME\\\\TempPortraitAlphaMask")
         core:SetVertexColor(1, 1, 1, 0.9)
         pin.core = core
 
