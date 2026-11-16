@@ -908,8 +908,9 @@ function formatRichSegments(segments) {
     if (typeof seg === 'string') {
       out += seg;
     } else if (seg && typeof seg === 'object') {
-      const name = seg.name || (seg.tip && seg.tip.name) || '';
-      if (!name) continue;
+      const rawName = seg.name || (seg.tip && seg.tip.name) || '';
+      if (!rawName) continue;
+      const name = WOWF_EN_TO_ZH[rawName] || rawName;
       if (seg.kind === 'spell') {
         out += `|cff71d5ff[${name}]|r`;
       } else if (seg.kind === 'talent') {
@@ -1452,7 +1453,10 @@ function normalizeWowfString(str) {
   if (str.includes('20金币') && str.includes('坐骑')) {
     return '提前攒好100金币学习初级骑术，本种族坐骑会免费赠送。';
   }
-  return str;
+  return str.replace(/\[([A-Za-z0-9\s':,\-.!?()/]+)\]/g, (full, inner) => {
+    const zh = WOWF_EN_TO_ZH[inner];
+    return zh ? `[${zh}]` : full;
+  });
 }
 
 function normalizeWowfDatasetText(dataset) {
