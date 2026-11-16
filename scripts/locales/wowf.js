@@ -1,9 +1,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 
 const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
-const WOWF_VERSION = 'v1.2.0';
+
+function getAutoWowfVersion() {
+  try {
+    const raw = execFileSync(
+      'git',
+      ['rev-list', '--count', 'HEAD', '--', 'scripts/locales/wowf.js'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    ).trim();
+    const count = Number.parseInt(raw, 10);
+    if (Number.isFinite(count) && count > 0) {
+      return `v1.2.${count}`;
+    }
+  } catch {
+    // 非 Git 环境下回退到默认版本号
+  }
+  return 'v1.2.1';
+}
+
+const WOWF_VERSION = getAutoWowfVersion();
 
 const CLASS_CONFIGS = [
   { key: 'WARRIOR', slug: 'warrior', name: '战士', color: 'c79c6e', allianceRace: 'human', hordeRace: 'orc' },
@@ -2122,8 +2141,13 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   // 如果完全断网导致没有抓到实时路由数据，返回已有完整缓存并补齐新增的内置专业与无限服特色指南字段
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
+    const cachedDbVersion = cachedDataset.meta?.dbVersion || '2026.11.15';
     return {
       ...cachedDataset,
+      meta: {
+        ...cachedDataset.meta,
+        version: `${WOWF_VERSION} + DB v${cachedDbVersion}`,
+      },
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
     };
