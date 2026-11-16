@@ -1804,40 +1804,53 @@ async function loadQuestiePrereqs(cacheDir) {
 
 /**
  * 基于 QuestieDB 向前追溯缺失的前置任务，返回补全后的任务链步骤列表
+ * 若传入 questCache，则仅当所有新增前置步骤均已抓到详情时才使用补全流程，否则回退到 sideData.flow
  */
-function buildEffectiveFlow(mainQuest, sideData, questiePrereqs) {
+function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = null) {
   const baseFlow = Array.isArray(sideData?.flow) ? [...sideData.flow] : [];
   if (!questiePrereqs || questiePrereqs.size === 0) return baseFlow;
 
   const existingIds = new Set(baseFlow.map(st => st?.id).filter(Boolean));
-  let headId = baseFlow.length > 0 ? baseFlow[0].id : mainQuest.id;
+  const headId = baseFlow.length > 0 ? baseFlow[0].id : mainQuest.id;
+  if (!headId) return baseFlow;
+
   const prepended = [];
   const visited = new Set([headId, ...existingIds]);
 
-  for (let depth = 0; depth < 12 && headId; depth++) {
-    const info = questiePrereqs.get(headId);
-    if (!info) break;
-    let preId = null;
+  const collectPrereqs = (questId, depth) => {
+    if (depth >= 12) return;
+    const info = questiePrereqs.get(questId);
+    if (!info) return;
+
+    let directPreIds = [];
     if (Array.isArray(info.preSingle) && info.preSingle.length === 1) {
-      preId = info.preSingle[0];
-    } else if (Array.isArray(info.preGroup) && info.preGroup.length === 1) {
-      preId = info.preGroup[0];
+      directPreIds = [info.preSingle[0]];
+    } else if (Array.isArray(info.preGroup) && info.preGroup.length > 0) {
+      directPreIds = info.preGroup;
     }
-    if (!preId || visited.has(preId)) break;
-    visited.add(preId);
-    const preInfo = questiePrereqs.get(preId);
-    prepended.unshift({
-      id: preId,
-      name: preInfo?.name || `Quest ${preId}`,
-      level: preInfo?.level || mainQuest.level || 1,
-      minLevel: preInfo?.minLevel || mainQuest.minLevel || 1,
-      faction: mainQuest.faction || 'both',
-      self: false,
-    });
-    headId = preId;
-  }
+
+    for (const preId of directPreIds) {
+      if (!preId || visited.has(preId)) continue;
+      visited.add(preId);
+      collectPrereqs(preId, depth + 1);
+      const preInfo = questiePrereqs.get(preId);
+      prepended.push({
+        id: preId,
+        name: preInfo?.name || `Quest ${preId}`,
+        level: preInfo?.level || mainQuest.level || 1,
+        minLevel: preInfo?.minLevel || mainQuest.minLevel || 1,
+        faction: mainQuest.faction || 'both',
+        self: false,
+      });
+    }
+  };
+
+  collectPrereqs(headId, 0);
 
   if (prepended.length === 0) return baseFlow;
+  if (questCache && prepended.some(st => !questCache[String(st.id)]?.name)) {
+    return baseFlow;
+  }
   if (baseFlow.length === 0) {
     return [
       ...prepended,
@@ -2016,7 +2029,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     const seenFlowKey = new Set();
 
     const buildEntry = (q, sideData, factionOverride) => {
-      const flow = buildEffectiveFlow(q, sideData, questiePrereqs);
+      const flow = buildEffectiveFlow(q, sideData, questiePrereqs, questCache);
       const selfIdx = flow.findIndex(st => st.self || st.id === q.id);
       const hasPrereq = selfIdx > 0;
 
