@@ -1700,13 +1700,19 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     const dungeon = dungeonMap.get(dId);
     const cachedDungeon = cachedDungeonMap.get(dId);
     if (!dungeon || !Array.isArray(cachedDungeon?.quests) || cachedDungeon.quests.length === 0) return;
-    const merged = [...cachedDungeon.quests];
-    const seenIds = new Set(merged.map(q => q.id).filter(Boolean));
-    for (const cur of dungeon.quests || []) {
-      if (cur.id && seenIds.has(cur.id)) continue;
-      const inSteps = merged.some(mq => Array.isArray(mq.steps) && mq.steps.some(st => st.id === cur.id));
-      if (!inSteps && !merged.some(mq => mq.name === cur.name && mq.faction === cur.faction)) {
-        merged.push(cur);
+    const questIdentityKey = q => `${q.id}:${q.faction || ''}`;
+    // 优先保留本轮成功构建的任务条目，再从旧快照补充缺失的条目（按任务 ID + 阵营区分）
+    const merged = [...(dungeon.quests || [])];
+    const seenKeys = new Set(merged.filter(q => q?.id).map(questIdentityKey));
+    for (const prev of cachedDungeon.quests) {
+      if (!prev) continue;
+      if (prev.id && seenKeys.has(questIdentityKey(prev))) continue;
+      const inSteps = prev.id && merged.some(
+        mq => mq.faction === prev.faction && Array.isArray(mq.steps) && mq.steps.some(st => st.id === prev.id)
+      );
+      if (!inSteps && !merged.some(mq => mq.name === prev.name && mq.faction === prev.faction)) {
+        merged.push(prev);
+        if (prev.id) seenKeys.add(questIdentityKey(prev));
       }
     }
     dungeon.quests = merged;
