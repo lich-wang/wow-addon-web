@@ -2131,8 +2131,13 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
   // 如果完全断网导致没有抓到实时路由数据，返回已有完整缓存并补齐新增的内置专业与无限服特色指南字段
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
+    const cachedDbVersion = cachedDataset.meta?.dbVersion || '2026.11.15';
     return {
       ...cachedDataset,
+      meta: {
+        ...cachedDataset.meta,
+        version: `${WOWF_VERSION} + DB v${cachedDbVersion}`,
+      },
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
     };
