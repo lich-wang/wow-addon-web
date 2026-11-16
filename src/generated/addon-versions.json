@@ -1,15 +1,15 @@
 {
   "bagnon": {
-    "version": "v12.1.9",
-    "source": "https://edge.forgecdn.net/files/9546/609/Bagnon-12.1.9.zip"
+    "version": "v12.1.10",
+    "source": "https://edge.forgecdn.net/files/9608/574/Bagnon-12.1.10.zip"
   },
   "blackthornes-tradeskills": {
-    "version": "v1.26.0",
-    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.26.0/Blackthornes_TS-v1.26.0-forever.zip"
+    "version": "v1.30.1",
+    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.30.1/Blackthornes_TS-v1.30.1-forever.zip"
   },
   "dungeonsforever": {
-    "version": "v2.1.88",
-    "source": "https://edge.forgecdn.net/files/9567/641/DungeonsForever2.1.88.zip"
+    "version": "v2.1.102",
+    "source": "https://edge.forgecdn.net/files/9625/87/DungeonsForever2.1.102.zip"
   },
   "forever-mouse-tooltip": {
     "version": "v0.2.0",
@@ -28,12 +28,12 @@
     "source": "https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip"
   },
   "questie-forever": {
-    "version": "v12.8.0 + DB v1.1.0",
-    "source": "https://edge.forgecdn.net/files/9576/443/Questie-v12.8.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.0/QuestieDB-1.1.0-Forever.zip"
+    "version": "v12.9.0 + DB v1.1.1",
+    "source": "https://edge.forgecdn.net/files/9602/663/Questie-v12.9.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.1/QuestieDB-1.1.1-Forever.zip"
   },
   "sbf": {
-    "version": "2026.11.11.1",
-    "source": "https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.11.1/SBF-2026.11.11.1.zip"
+    "version": "2026.11.14.8",
+    "source": "https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.14.8/SBF-2026.11.14.8.zip"
   },
   "spellactivationoverlay": {
     "version": "v2.9.1",
