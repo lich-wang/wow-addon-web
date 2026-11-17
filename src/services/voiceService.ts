@@ -9,11 +9,28 @@ const MQTT_RELAY_URLS = [
   'wss://test.mosquitto.org:8081/mqtt',
 ];
 
-const ICE_SERVERS: RTCIceServer[] = [
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.cloudflare.com:3478' },
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.miwifi.com:3478' },
+  { urls: 'stun:stun.qq.com:3478' },
 ];
+
+const TURN_CREDENTIALS_PATH = '/api/turn-credentials';
+const REMOTE_TURN_CREDENTIALS_URL = 'https://wow.lich.tech/api/turn-credentials';
+const TURN_FETCH_TIMEOUT_MS = 4000;
+const TURN_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function isValidIceServer(entry: unknown): entry is RTCIceServer {
+  if (!entry || typeof entry !== 'object') return false;
+  const obj = entry as Record<string, unknown>;
+  const hasValidUrls =
+    (typeof obj.urls === 'string' && obj.urls.length > 0) ||
+    (Array.isArray(obj.urls) && obj.urls.length > 0 && obj.urls.every((u) => typeof u === 'string' && u.length > 0));
+  if (!hasValidUrls) return false;
+  if (obj.username !== undefined && typeof obj.username !== 'string') return false;
+  if (obj.credential !== undefined && typeof obj.credential !== 'string') return false;
+  return true;
+}
 
 interface PeerMetaPayload {
   nickname: string;
@@ -112,6 +129,7 @@ export class VoiceRoomManager {
   private joinAttemptId = 0;
   private pendingMicTrack: MediaStreamTrack | null = null;
   private micSwitchChain: Promise<void> = Promise.resolve();
+  private cachedIceServers: { iceServers: RTCIceServer[]; expiresAt: number } | null = null;
 
   subscribe(listener: StateListener): () => void {
     this.listeners.add(listener);
@@ -325,6 +343,9 @@ export class VoiceRoomManager {
         }
       }
 
+      const iceServers = await this.resolveIceServers();
+      if (this.joinAttemptId !== attemptId) return;
+
       const room = joinRoom(
         {
           appId: VOICE_APP_ID,
@@ -333,7 +354,7 @@ export class VoiceRoomManager {
             urls: MQTT_RELAY_URLS,
           },
           rtcConfig: {
-            iceServers: ICE_SERVERS,
+            iceServers,
           },
         },
         trimmedRoom
@@ -464,6 +485,45 @@ export class VoiceRoomManager {
       this.error = message;
       this.emit();
       throw err;
+    }
+  }
+
+  private async resolveIceServers(): Promise<RTCIceServer[]> {
+    if (this.cachedIceServers && Date.now() < this.cachedIceServers.expiresAt) {
+      return this.cachedIceServers.iceServers;
+    }
+
+    const endpoint =
+      typeof window !== 'undefined' &&
+      (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+        ? TURN_CREDENTIALS_PATH
+        : REMOTE_TURN_CREDENTIALS_URL;
+
+    try {
+      const response = await fetch(endpoint, {
+        signal: AbortSignal.timeout(TURN_FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) return FALLBACK_ICE_SERVERS;
+
+      const data = (await response.json()) as {
+        iceServers?: unknown;
+        turnConfigured?: boolean;
+      };
+      if (!Array.isArray(data.iceServers)) return FALLBACK_ICE_SERVERS;
+
+      const validServers = data.iceServers.filter(isValidIceServer);
+      if (validServers.length === 0) return FALLBACK_ICE_SERVERS;
+
+      if (data.turnConfigured) {
+        this.cachedIceServers = {
+          iceServers: validServers,
+          expiresAt: Date.now() + TURN_CACHE_TTL_MS,
+        };
+      }
+
+      return validServers;
+    } catch {
+      return FALLBACK_ICE_SERVERS;
     }
   }
 
