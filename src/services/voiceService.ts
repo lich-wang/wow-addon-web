@@ -23,6 +23,9 @@ const REMOTE_TURN_CREDENTIALS_URL = 'https://wow.lich.tech/api/turn-credentials'
 const TURN_FETCH_TIMEOUT_MS = 4000;
 const TURN_CACHE_TTL_MS = 30 * 60 * 1000;
 
+type SinkableAudioContext = AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
+type SinkableAudioElement = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> };
+
 const NAT_WARNING_TEXT = '与部分成员的语音直连失败，可能受网络（NAT）限制，请更换网络或稍后重试。';
 const AUTH_MISMATCH_WARNING_TEXT = '检测到同房间存在密码不匹配的成员，对方无法与您建立语音连接，请核对房间密码。';
 
@@ -141,6 +144,7 @@ export interface VoiceStateSnapshot {
   isDeafened: boolean;
   listenOnly: boolean;
   selectedDeviceId: string;
+  selectedOutputDeviceId: string;
   networkSummary: PeerNetworkStats | null;
 }
 
@@ -176,6 +180,7 @@ export class VoiceRoomManager {
   private isDeafened = false;
   private listenOnly = false;
   private selectedDeviceId = '';
+  private selectedOutputDeviceId = '';
   private warning: string | null = null;
   private autoplayBlocked = false;
   private playbackBlockVersion = 0;
@@ -247,6 +252,7 @@ export class VoiceRoomManager {
       isDeafened: this.isDeafened,
       listenOnly: this.listenOnly,
       selectedDeviceId: this.selectedDeviceId,
+      selectedOutputDeviceId: this.selectedOutputDeviceId,
       networkSummary: this.computeNetworkSummary(),
     };
   }
@@ -401,13 +407,20 @@ export class VoiceRoomManager {
   }
 
   private attachPlayback(peerId: string, stream: MediaStream): void {
-    if (this.attachMonitor(peerId, stream, true)) {
+    const ctx = this.audioContext as SinkableAudioContext | null;
+    // A selected output device only works with Web Audio when AudioContext.setSinkId
+    // is available; otherwise use the <audio> element path so setSinkId can apply.
+    const canUseWebAudio = !this.selectedOutputDeviceId || Boolean(ctx?.setSinkId);
+    if (canUseWebAudio && this.attachMonitor(peerId, stream, true)) {
       this.clearFallbackAudio(peerId);
       if (this.audioContext?.state === 'suspended') {
         this.markAutoplayBlocked();
       }
       return;
     }
+
+    // Keep the level meter even when playback falls back to an <audio> element.
+    this.attachMonitor(peerId, stream);
 
     // Fallback for browsers where MediaStream -> Web Audio is unavailable.
     let audio = this.peerAudioElements.get(peerId);
@@ -418,6 +431,12 @@ export class VoiceRoomManager {
     }
     audio.srcObject = stream;
     audio.volume = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
+    if (this.selectedOutputDeviceId) {
+      const sinkable = audio as SinkableAudioElement;
+      if (sinkable.setSinkId) {
+        void sinkable.setSinkId(this.selectedOutputDeviceId).catch(() => {});
+      }
+    }
     const attemptId = this.joinAttemptId;
     void audio.play().catch(() => {
       if (this.joinAttemptId !== attemptId) return;
@@ -432,6 +451,32 @@ export class VoiceRoomManager {
       audio.pause();
       audio.srcObject = null;
       this.peerAudioElements.delete(peerId);
+    }
+  }
+
+  private async applyOutputDevice(deviceId: string): Promise<void> {
+    const ctx = this.audioContext as SinkableAudioContext | null;
+    if (ctx?.setSinkId) {
+      try {
+        await ctx.setSinkId(deviceId);
+      } catch {
+        // Ignore unsupported/failed sink changes; audio falls back to the default device.
+      }
+    }
+    for (const audio of this.peerAudioElements.values()) {
+      const sinkable = audio as SinkableAudioElement;
+      if (!sinkable.setSinkId) continue;
+      try {
+        await sinkable.setSinkId(deviceId);
+      } catch {
+        // Ignore unsupported/failed sink changes.
+      }
+    }
+  }
+
+  private rebuildPlayback(): void {
+    for (const [peerId, stream] of this.peerStreams.entries()) {
+      this.attachPlayback(peerId, stream);
     }
   }
 
@@ -906,6 +951,7 @@ export class VoiceRoomManager {
     this.nickname = trimmedNickname;
     this.listenOnly = Boolean(options.listenOnly);
     this.selectedDeviceId = options.deviceId || '';
+    this.selectedOutputDeviceId = options.outputDeviceId || '';
     this.isMuted = Boolean(options.listenOnly);
     this.isDeafened = false;
     this.warning = null;
@@ -915,6 +961,7 @@ export class VoiceRoomManager {
 
     try {
       this.ensureAudioContext();
+      void this.applyOutputDevice(this.selectedOutputDeviceId);
 
       if (!this.listenOnly) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1156,6 +1203,13 @@ export class VoiceRoomManager {
     if (monitor?.gain) {
       monitor.gain.gain.value = this.isDeafened ? 0 : clamped;
     }
+    this.emit();
+  }
+
+  async setOutputDevice(deviceId: string): Promise<void> {
+    this.selectedOutputDeviceId = deviceId || '';
+    await this.applyOutputDevice(this.selectedOutputDeviceId);
+    this.rebuildPlayback();
     this.emit();
   }
 
@@ -1426,6 +1480,7 @@ export class VoiceRoomManager {
     this.roomId = '';
     this.selfPeerId = '';
     this.selectedDeviceId = '';
+    this.selectedOutputDeviceId = '';
     this.pendingMicTrack = null;
     this.pendingMicStream = null;
     this.warning = null;

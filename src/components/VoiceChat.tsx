@@ -64,11 +64,13 @@ interface VoiceChatProps {
   onToggleDeafen: () => void;
   onSetPeerVolume: (peerId: string, volume: number) => void;
   onSwitchMicrophone: (deviceId: string) => Promise<void>;
+  onSwitchOutputDevice: (deviceId: string) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
   onResumePlayback: () => void;
 }
 
 const NICKNAME_STORAGE_KEY = 'wow_voice_nickname';
+const OUTPUT_DEVICE_STORAGE_KEY = 'wow_voice_output_device';
 
 function generateRandomRoomId(): string {
   const num = Math.floor(1000 + Math.random() * 9000);
@@ -84,6 +86,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   onToggleDeafen,
   onSetPeerVolume,
   onSwitchMicrophone,
+  onSwitchOutputDevice,
   onSendMessage,
   onResumePlayback,
 }) => {
@@ -100,7 +103,16 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [listenOnly, setListenOnly] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(voiceState.selectedDeviceId);
   const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null);
+  const [selectedOutputDeviceId, setSelectedOutputDeviceId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(OUTPUT_DEVICE_STORAGE_KEY) || voiceState.selectedOutputDeviceId;
+    } catch {
+      return voiceState.selectedOutputDeviceId;
+    }
+  });
+  const [pendingOutputDeviceId, setPendingOutputDeviceId] = useState<string | null>(null);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
   const [copiedType, setCopiedType] = useState<'room' | 'link' | null>(null);
@@ -117,6 +129,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         setAudioInputs(devices.filter((d) => d.kind === 'audioinput'));
+        setAudioOutputs(devices.filter((d) => d.kind === 'audiooutput'));
       } catch {
         // Ignore device enumeration failures before permission
       }
@@ -159,6 +172,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         password,
         nickname: finalNickname,
         deviceId: selectedDeviceId || undefined,
+        outputDeviceId: selectedOutputDeviceId || undefined,
         listenOnly: useListenOnly,
       });
     } catch (err) {
@@ -214,6 +228,28 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       if (switchSeqRef.current === seq) {
         setPendingDeviceId(null);
       }
+    }
+  };
+
+  const handleSelectOutputDevice = (nextDeviceId: string) => {
+    setSelectedOutputDeviceId(nextDeviceId);
+    try {
+      localStorage.setItem(OUTPUT_DEVICE_STORAGE_KEY, nextDeviceId);
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  const handleSwitchOutputChange = async (nextDeviceId: string) => {
+    setRoomError(null);
+    setPendingOutputDeviceId(nextDeviceId);
+    try {
+      await onSwitchOutputDevice(nextDeviceId);
+      handleSelectOutputDevice(nextDeviceId);
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : '切换语音输出设备失败');
+    } finally {
+      setPendingOutputDeviceId(null);
     }
   };
 
@@ -346,6 +382,24 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                   {audioInputs.map((device, idx) => (
                     <option key={device.deviceId || idx} value={device.deviceId}>
                       {device.label || `麦克风设备 ${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  语音输出设备
+                </label>
+                <select
+                  value={selectedOutputDeviceId}
+                  onChange={(e) => handleSelectOutputDevice(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-sm text-slate-200"
+                >
+                  <option value="">系统默认输出</option>
+                  {audioOutputs.map((device, idx) => (
+                    <option key={device.deviceId || idx} value={device.deviceId}>
+                      {device.label || `输出设备 ${idx + 1}`}
                     </option>
                   ))}
                 </select>
@@ -579,6 +633,24 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                 {audioInputs.map((d, idx) => (
                   <option key={d.deviceId || idx} value={d.deviceId}>
                     {d.label || `麦克风 ${idx + 1}`}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {audioOutputs.length > 0 && (
+              <select
+                value={pendingOutputDeviceId ?? selectedOutputDeviceId}
+                disabled={voiceState.status !== 'connected' || pendingOutputDeviceId !== null}
+                onChange={(e) => {
+                  void handleSwitchOutputChange(e.target.value);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
+              >
+                <option value="">切换输出：默认</option>
+                {audioOutputs.map((d, idx) => (
+                  <option key={d.deviceId || idx} value={d.deviceId}>
+                    {d.label || `输出 ${idx + 1}`}
                   </option>
                 ))}
               </select>

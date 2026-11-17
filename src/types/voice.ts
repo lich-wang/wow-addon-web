@@ -37,5 +37,6 @@ export interface VoiceJoinOptions {
   password: string;
   nickname: string;
   deviceId?: string;
+  outputDeviceId?: string;
   listenOnly?: boolean;
 }
