@@ -320,7 +320,11 @@ export class VoiceRoomManager {
       void this.audioContext
         .resume()
         .then(() => {
-          if (this.audioContext?.state === 'running' && this.autoplayBlocked) {
+          if (
+            this.audioContext?.state === 'running' &&
+            this.autoplayBlocked &&
+            this.peerAudioElements.size === 0
+          ) {
             this.autoplayBlocked = false;
             this.emit();
           }
@@ -408,7 +412,10 @@ export class VoiceRoomManager {
     }
     audio.srcObject = stream;
     audio.volume = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
+    const attemptId = this.joinAttemptId;
     void audio.play().catch(() => {
+      if (this.joinAttemptId !== attemptId) return;
+      if (this.peerAudioElements.get(peerId) !== audio) return;
       this.autoplayBlocked = true;
       this.emit();
     });
@@ -1310,26 +1317,28 @@ export class VoiceRoomManager {
   }
 
   resumePlayback(): void {
-    for (const audio of this.peerAudioElements.values()) {
-      if (audio.paused) {
-        void audio.play().catch(() => {});
-      }
-    }
+    const attemptId = this.joinAttemptId;
+    const fallbackPlaybacks = Array.from(this.peerAudioElements.values()).map((audio) => {
+      if (!audio.paused) return Promise.resolve(true);
+      return audio
+        .play()
+        .then(() => true)
+        .catch(() => false);
+    });
     const ctx = this.audioContext;
-    if (ctx?.state === 'suspended') {
-      void ctx
-        .resume()
-        .then(() => {
-          if (ctx.state === 'running') {
-            this.autoplayBlocked = false;
-            this.emit();
-          }
-        })
-        .catch(() => {});
-    } else {
-      this.autoplayBlocked = false;
-    }
-    this.emit();
+    const contextReady =
+      ctx?.state === 'suspended'
+        ? ctx
+            .resume()
+            .then(() => ctx.state === 'running')
+            .catch(() => false)
+        : Promise.resolve(true);
+
+    void Promise.all([contextReady, ...fallbackPlaybacks]).then((results) => {
+      if (this.joinAttemptId !== attemptId) return;
+      this.autoplayBlocked = !results.every(Boolean);
+      this.emit();
+    });
   }
 
   async leave(): Promise<void> {
