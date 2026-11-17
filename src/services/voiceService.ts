@@ -487,18 +487,26 @@ export class VoiceRoomManager {
     audio.srcObject = stream;
     audio.volume = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
     this.peerPlaybackModes.set(peerId, 'audio-element');
-    if (this.selectedOutputDeviceId) {
-      const sinkable = audio as SinkableAudioElement;
-      if (sinkable.setSinkId) {
-        void sinkable.setSinkId(this.selectedOutputDeviceId).catch(() => {});
-      }
-    }
     const attemptId = this.joinAttemptId;
-    void audio.play().catch(() => {
-      if (this.joinAttemptId !== attemptId) return;
-      if (this.peerAudioElements.get(peerId) !== audio) return;
-      this.markAutoplayBlocked();
-    });
+    const sinkable = audio as SinkableAudioElement;
+    const sinkReady =
+      this.selectedOutputDeviceId && sinkable.setSinkId
+        ? sinkable
+            .setSinkId(this.selectedOutputDeviceId)
+            .then(() => true)
+            .catch(() => false)
+        : Promise.resolve(true);
+    void sinkReady
+      .then(() => {
+        if (this.joinAttemptId !== attemptId) return;
+        if (this.peerAudioElements.get(peerId) !== audio) return;
+        return audio.play();
+      })
+      .catch(() => {
+        if (this.joinAttemptId !== attemptId) return;
+        if (this.peerAudioElements.get(peerId) !== audio) return;
+        this.markAutoplayBlocked();
+      });
   }
 
   private clearFallbackAudio(peerId: string): void {
@@ -513,20 +521,12 @@ export class VoiceRoomManager {
   private async applyOutputDevice(deviceId: string): Promise<void> {
     const ctx = this.audioContext as SinkableAudioContext | null;
     if (ctx?.setSinkId) {
-      try {
-        await ctx.setSinkId(deviceId);
-      } catch {
-        // Ignore unsupported/failed sink changes; audio falls back to the default device.
-      }
+      await ctx.setSinkId(deviceId);
     }
     for (const audio of this.peerAudioElements.values()) {
       const sinkable = audio as SinkableAudioElement;
       if (!sinkable.setSinkId) continue;
-      try {
-        await sinkable.setSinkId(deviceId);
-      } catch {
-        // Ignore unsupported/failed sink changes.
-      }
+      await sinkable.setSinkId(deviceId);
     }
   }
 
@@ -1051,7 +1051,7 @@ export class VoiceRoomManager {
 
     try {
       this.ensureAudioContext();
-      void this.applyOutputDevice(this.selectedOutputDeviceId);
+      void this.applyOutputDevice(this.selectedOutputDeviceId).catch(() => {});
 
       if (!this.listenOnly) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1075,6 +1075,7 @@ export class VoiceRoomManager {
           }
           this.localStream = acquiredStream;
           this.attachMonitor('self', this.localStream);
+          void this.applyOutputDevice(this.selectedOutputDeviceId).catch(() => {});
         } catch (err) {
           if (this.joinAttemptId !== attemptId) return;
           const domErr = err as DOMException;
@@ -1297,9 +1298,19 @@ export class VoiceRoomManager {
   }
 
   async setOutputDevice(deviceId: string): Promise<void> {
-    this.selectedOutputDeviceId = deviceId || '';
-    await this.applyOutputDevice(this.selectedOutputDeviceId);
-    this.rebuildPlayback();
+    const nextDeviceId = deviceId || '';
+    const previousDeviceId = this.selectedOutputDeviceId;
+    this.selectedOutputDeviceId = nextDeviceId;
+    try {
+      this.rebuildPlayback();
+      await this.applyOutputDevice(nextDeviceId);
+    } catch (err) {
+      this.selectedOutputDeviceId = previousDeviceId;
+      this.rebuildPlayback();
+      await this.applyOutputDevice(previousDeviceId).catch(() => {});
+      this.emit();
+      throw err instanceof Error ? err : new Error('切换语音输出设备失败');
+    }
     this.emit();
   }
 
