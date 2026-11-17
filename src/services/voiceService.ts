@@ -1424,11 +1424,11 @@ export class VoiceRoomManager {
       await this.applyOutputDevice(nextDeviceId);
       if (this.joinAttemptId !== attemptId) return false;
     } catch (err) {
-      if (this.joinAttemptId === attemptId) {
-        this.selectedOutputDeviceId = previousDeviceId;
-        this.rebuildPlayback();
-        await this.applyOutputDevice(previousDeviceId).catch(() => {});
-      }
+      if (this.joinAttemptId !== attemptId) return false;
+      this.selectedOutputDeviceId = previousDeviceId;
+      this.rebuildPlayback();
+      await this.applyOutputDevice(previousDeviceId).catch(() => {});
+      if (this.joinAttemptId !== attemptId) return false;
       this.emit();
       throw err instanceof Error ? err : new Error('切换语音输出设备失败');
     }
