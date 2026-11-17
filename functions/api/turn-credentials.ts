@@ -22,7 +22,16 @@ interface CloudflareTurnResponse {
 }
 
 const TURN_CREDENTIAL_TTL_SECONDS = 3600;
-const UPSTREAM_TIMEOUT_MS = 5000;
+const UPSTREAM_TIMEOUT_MS = 2500;
+
+function isValidIceServerEntry(entry: unknown): entry is IceServerEntry {
+  if (!entry || typeof entry !== 'object') return false;
+  const obj = entry as Record<string, unknown>;
+  return (
+    (typeof obj.urls === 'string' && obj.urls.length > 0) ||
+    (Array.isArray(obj.urls) && obj.urls.length > 0 && obj.urls.every((u) => typeof u === 'string' && u.length > 0))
+  );
+}
 
 const FALLBACK_STUN_SERVERS: IceServerEntry[] = [
   { urls: 'stun:stun.cloudflare.com:3478' },
@@ -103,8 +112,8 @@ async function fetchCloudflareTurnServers(tokenId: string, apiToken: string): Pr
       }
     );
     if (!response.ok) return [];
-    const data = (await response.json()) as CloudflareTurnResponse;
-    return Array.isArray(data.iceServers) ? data.iceServers : [];
+    const data = (await response.json()) as { iceServers?: unknown };
+    return Array.isArray(data.iceServers) ? data.iceServers.filter(isValidIceServerEntry) : [];
   } catch {
     return [];
   }
