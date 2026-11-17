@@ -2514,7 +2514,6 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
         inside: hasPrereq ? Boolean(startSide?.inside) : Boolean(sideData?.inside),
         faction: factionOverride,
         ...(q.classes ? { classes: q.classes } : {}),
-        hasPrereq,
         npc: topNpc,
         zone: topZone,
         place: '',
@@ -2523,8 +2522,6 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
         ...(hasSingleDiffEnd
           ? { endNpc: singleEndNpc, endZone: singleEndZone, endX: singleEndX, endY: singleEndY }
           : {}),
-        stepCount: steps ? steps.length : 1,
-        steps,
         finalObjective: sideData?.objective || '',
       };
     };
@@ -3309,6 +3306,7 @@ function generateWoWFToc(version, updatedAt) {
 ## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、35大副本（含9大无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告。(数据同步: ${updatedAt})
 ## Author: lich.tech & wowf.io
 ## Version: ${version}
+## Dependencies: QuestieDB
 ## SavedVariables: WoWFDB
 ## X-Website: https://wowf.io/zh
 ## X-Category: Guide
@@ -4288,8 +4286,268 @@ local function IsQuestActiveById(qid)
   return false
 end
 
+local questieNpcCache = {}
+local function ResolveQuestieNpc(npcIds)
+  if type(npcIds) ~= "table" or not _G.NpcDB then return nil end
+  local npcId = tonumber(npcIds[1])
+  if not npcId or npcId <= 0 then return nil end
+  if questieNpcCache[npcId] ~= nil then
+    return questieNpcCache[npcId] or nil
+  end
+  local name = _G.NpcDB.name and _G.NpcDB.name(npcId) or ""
+  local spawns = _G.NpcDB.spawns and _G.NpcDB.spawns(npcId)
+  local prefZoneId = _G.NpcDB.zoneID and _G.NpcDB.zoneID(npcId)
+  local areaId, x, y = nil, nil, nil
+  if type(spawns) == "table" then
+    if prefZoneId and type(spawns[prefZoneId]) == "table" and type(spawns[prefZoneId][1]) == "table" then
+      areaId = prefZoneId
+      x = spawns[prefZoneId][1][1]
+      y = spawns[prefZoneId][1][2]
+    else
+      for aid, pts in pairs(spawns) do
+        if type(pts) == "table" and type(pts[1]) == "table" then
+          areaId = aid
+          x = pts[1][1]
+          y = pts[1][2]
+          break
+        end
+      end
+    end
+  end
+  local zoneName = ""
+  if areaId and C_Map and C_Map.GetAreaInfo then
+    local ok, z = pcall(C_Map.GetAreaInfo, areaId)
+    if ok and type(z) == "string" then zoneName = z end
+  end
+  if name == "" and not x then
+    questieNpcCache[npcId] = false
+    return nil
+  end
+  local res = { npc = name, zone = zoneName, x = x, y = y }
+  questieNpcCache[npcId] = res
+  return res
+end
+
+local questieQuestInfoCache = {}
+local function GetQuestieQuestInfo(qid, fallbackObj)
+  qid = tonumber(qid)
+  if not qid or qid <= 0 or not _G.QuestDB then return fallbackObj end
+  local cached = questieQuestInfoCache[qid]
+  if cached ~= nil then
+    if cached == false then return fallbackObj end
+    return cached
+  end
+  local qName = _G.QuestDB.name and _G.QuestDB.name(qid)
+  if not qName or qName == "" then
+    questieQuestInfoCache[qid] = false
+    return fallbackObj
+  end
+  local qLevel = _G.QuestDB.questLevel and _G.QuestDB.questLevel(qid)
+  local qMinLevel = _G.QuestDB.requiredLevel and _G.QuestDB.requiredLevel(qid)
+  local started = _G.QuestDB.startedBy and _G.QuestDB.startedBy(qid)
+  local finished = _G.QuestDB.finishedBy and _G.QuestDB.finishedBy(qid)
+  local startInfo = ResolveQuestieNpc(started and started[1])
+  local endInfo = ResolveQuestieNpc(finished and finished[1])
+  local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(qid)
+  local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(qid)
+  local nextQ = _G.QuestDB.nextQuestInChain and _G.QuestDB.nextQuestInChain(qid)
+  local sFlags = _G.QuestDB.specialFlags and _G.QuestDB.specialFlags(qid)
+  local repeatable = (type(sFlags) == "number" and bit and bit.band and bit.band(sFlags, 1) ~= 0) or false
+  local info = {
+    id = qid,
+    name = qName,
+    level = (type(qLevel) == "number" and qLevel > 0) and qLevel or (fallbackObj and fallbackObj.level),
+    minLevel = (type(qMinLevel) == "number" and qMinLevel > 0) and qMinLevel or (fallbackObj and fallbackObj.minLevel),
+    npc = (startInfo and startInfo.npc ~= "") and startInfo.npc or (fallbackObj and fallbackObj.npc) or "",
+    zone = (startInfo and startInfo.zone ~= "") and startInfo.zone or (fallbackObj and fallbackObj.zone) or "",
+    x = (startInfo and startInfo.x) or (fallbackObj and fallbackObj.x),
+    y = (startInfo and startInfo.y) or (fallbackObj and fallbackObj.y),
+    endNpc = (endInfo and endInfo.npc ~= "") and endInfo.npc or nil,
+    endZone = (endInfo and endInfo.zone ~= "") and endInfo.zone or nil,
+    endX = endInfo and endInfo.x or nil,
+    endY = endInfo and endInfo.y or nil,
+    preSingle = preS,
+    preGroup = preG,
+    nextQuest = (type(nextQ) == "number" and nextQ > 0) and nextQ or nil,
+    repeatable = repeatable,
+  }
+  questieQuestInfoCache[qid] = info
+  return info
+end
+
+local function ResolveQuestChainFromQuestieDB(q)
+  if type(q) ~= "table" or q._qdbResolved then return q end
+  q._qdbResolved = true
+  local mainId = tonumber(q.id or q.questId)
+  if not mainId or mainId <= 0 or not _G.QuestDB then return q end
+  local mainInfo = GetQuestieQuestInfo(mainId, q)
+  if not mainInfo or not mainInfo.name or mainInfo.name == "" then return q end
+
+  q.name = mainInfo.name
+  if mainInfo.level then q.level = mainInfo.level end
+  if mainInfo.minLevel then q.minLevel = mainInfo.minLevel end
+
+  local steps = {}
+  local visited = {}
+  local function makeStep(sid, info, preId, reqAll)
+    local st = {
+      id = sid,
+      name = info.name,
+      level = info.level or q.level,
+      npc = info.npc or "",
+      zone = info.zone or "",
+      place = "",
+      x = info.x,
+      y = info.y,
+      repeatable = info.repeatable or nil,
+      preId = preId,
+      reqAll = reqAll,
+    }
+    if info.endNpc and info.endNpc ~= "" and (info.endNpc ~= st.npc or info.endZone ~= st.zone or info.endX ~= st.x or info.endY ~= st.y) then
+      st.endNpc = info.endNpc
+      st.endZone = info.endZone
+      st.endX = info.endX
+      st.endY = info.endY
+    end
+    return st
+  end
+
+  local function collectPre(qid, depth)
+    if depth >= 12 or visited[qid] then return end
+    visited[qid] = true
+    local info = GetQuestieQuestInfo(qid)
+    if not info then return end
+    local preG = {}
+    if type(info.preGroup) == "table" then
+      for _, pid in ipairs(info.preGroup) do
+        local npid = tonumber(pid)
+        if npid and npid > 0 then table.insert(preG, npid) end
+      end
+    end
+    local preS = {}
+    if type(info.preSingle) == "table" then
+      for _, pid in ipairs(info.preSingle) do
+        local npid = tonumber(pid)
+        if npid and npid > 0 then table.insert(preS, npid) end
+      end
+    end
+    local reqAll, singlePre = nil, nil
+    if #preG > 1 then
+      reqAll = preG
+      for _, pid in ipairs(preG) do
+        collectPre(pid, depth + 1)
+      end
+    elseif #preG == 1 then
+      singlePre = preG[1]
+      collectPre(singlePre, depth + 1)
+    elseif #preS == 1 then
+      singlePre = preS[1]
+      collectPre(singlePre, depth + 1)
+    end
+    table.insert(steps, makeStep(qid, info, singlePre, reqAll))
+  end
+
+  collectPre(mainId, 0)
+  local selfIdx = #steps
+  local curId = mainId
+  local fwdDepth = 0
+  while fwdDepth < 8 do
+    local cInfo = GetQuestieQuestInfo(curId)
+    local nxt = cInfo and tonumber(cInfo.nextQuest)
+    if not nxt or nxt <= 0 or visited[nxt] then break end
+    local nInfo = GetQuestieQuestInfo(nxt)
+    if not nInfo or not nInfo.name then break end
+    visited[nxt] = true
+    table.insert(steps, makeStep(nxt, nInfo, curId, nil))
+    curId = nxt
+    fwdDepth = fwdDepth + 1
+  end
+
+  if #steps > 1 then
+    q.steps = steps
+    q.stepCount = #steps
+    q.hasPrereq = (selfIdx > 1)
+    local firstSt = steps[1]
+    if q.hasPrereq and firstSt then
+      local firstInfo = GetQuestieQuestInfo(firstSt.id)
+      if firstInfo and firstInfo.minLevel then q.minLevel = firstInfo.minLevel end
+      q.npc = firstSt.npc ~= "" and firstSt.npc or q.npc
+      q.zone = firstSt.zone ~= "" and firstSt.zone or q.zone
+      q.x = firstSt.x or q.x
+      q.y = firstSt.y or q.y
+    else
+      q.npc = mainInfo.npc ~= "" and mainInfo.npc or q.npc
+      q.zone = mainInfo.zone ~= "" and mainInfo.zone or q.zone
+      q.x = mainInfo.x or q.x
+      q.y = mainInfo.y or q.y
+      q.endNpc = mainInfo.endNpc
+      q.endZone = mainInfo.endZone
+      q.endX = mainInfo.endX
+      q.endY = mainInfo.endY
+    end
+  else
+    q.stepCount = 1
+    q.hasPrereq = false
+    q.npc = mainInfo.npc ~= "" and mainInfo.npc or q.npc
+    q.zone = mainInfo.zone ~= "" and mainInfo.zone or q.zone
+    q.x = mainInfo.x or q.x
+    q.y = mainInfo.y or q.y
+    if mainInfo.endNpc and mainInfo.endNpc ~= "" and (mainInfo.endNpc ~= q.npc or mainInfo.endZone ~= q.zone or mainInfo.endX ~= q.x or mainInfo.endY ~= q.y) then
+      q.endNpc = mainInfo.endNpc
+      q.endZone = mainInfo.endZone
+      q.endX = mainInfo.endX
+      q.endY = mainInfo.endY
+    end
+  end
+  return q
+end
+
+local function DedupeQuestieQuests(quests)
+  local list = {}
+  for _, q in ipairs(quests or {}) do
+    ResolveQuestChainFromQuestieDB(q)
+    table.insert(list, q)
+  end
+  local out = {}
+  for i, q in ipairs(list) do
+    local ids = {}
+    if type(q.steps) == "table" and #q.steps > 0 then
+      for _, st in ipairs(q.steps) do table.insert(ids, tonumber(st.id)) end
+    else
+      table.insert(ids, tonumber(q.id or q.questId))
+    end
+    local redundant = false
+    for j, other in ipairs(list) do
+      if i ~= j and (other.faction == q.faction or other.faction == "both") then
+        local oIds = {}
+        if type(other.steps) == "table" and #other.steps > 0 then
+          for _, st in ipairs(other.steps) do table.insert(oIds, tonumber(st.id)) end
+        else
+          table.insert(oIds, tonumber(other.id or other.questId))
+        end
+        if #oIds < #ids then
+          local oFirstRep = (type(other.steps) == "table" and other.steps[1] and other.steps[1].repeatable)
+          if not oFirstRep then
+            local offset = #ids - #oIds
+            local match = true
+            for k = 1, #oIds do
+              if oIds[k] ~= ids[offset + k] then match = false break end
+            end
+            if match then redundant = true break end
+          end
+        end
+      end
+    end
+    if not redundant then
+      table.insert(out, q)
+    end
+  end
+  return out
+end
+
 local function IsQuestCompleted(q)
   if type(q) ~= "table" then return false end
+  ResolveQuestChainFromQuestieDB(q)
   if type(q.steps) == "table" and #q.steps > 0 then
     local lastStep = q.steps[#q.steps]
     local lastStepId = tonumber(lastStep and lastStep.id)
@@ -4322,6 +4580,7 @@ end
 
 local function IsQuestLineStarted(q)
   if type(q) ~= "table" then return false end
+  ResolveQuestChainFromQuestieDB(q)
   if type(q.steps) == "table" and #q.steps > 0 then
     for _, st in ipairs(q.steps) do
       local sid = tonumber(st and st.id)
@@ -4416,6 +4675,7 @@ local function FormatQuestClassTag(q)
 end
 
 local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
+  if type(q) == "table" then ResolveQuestChainFromQuestieDB(q) end
   if type(q) ~= "table" or type(q.steps) ~= "table" or #q.steps <= 1 then
     return FormatQuestLink(q, fallbackLevel, fallbackZone), nil
   end
@@ -5644,7 +5904,7 @@ local function RenderTabSmartMatch()
         d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", entCoord, newTag
       ))
       local matchedDunQuests = {}
-      for _, q in ipairs(d.quests or {}) do
+      for _, q in ipairs(DedupeQuestieQuests(d.quests or {})) do
         if (q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q) and (not IsQuestCompleted(q)) then
           table.insert(matchedDunQuests, q)
         end
@@ -6219,7 +6479,7 @@ local function RenderTabDungeons()
       end
       if d.quests and #d.quests > 0 then
         local filteredQuests = {}
-        for _, q in ipairs(d.quests) do
+        for _, q in ipairs(DedupeQuestieQuests(d.quests)) do
           if (not IsQuestCompleted(q)) and (state.dungeonFilter ~= "MATCH" or ((q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q))) then
             table.insert(filteredQuests, q)
           end
