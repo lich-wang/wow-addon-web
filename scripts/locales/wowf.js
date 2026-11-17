@@ -1879,16 +1879,18 @@ function normalizeWowfFaction(f) {
 function parseQuestSideData(sideObj) {
   if (!sideObj || typeof sideObj !== 'object') return null;
   const stages = Array.isArray(sideObj.stages) ? sideObj.stages : [];
-  const startStage = stages.find(s => s?.key === 'start');
-  let startPlace = null;
-  if (startStage && Array.isArray(startStage.blocks)) {
-    for (const blk of startStage.blocks) {
+  const findStagePlace = key => {
+    const stg = stages.find(s => s?.key === key);
+    if (!stg || !Array.isArray(stg.blocks)) return null;
+    for (const blk of stg.blocks) {
       if (Array.isArray(blk?.places) && blk.places[0]) {
-        startPlace = blk.places[0];
-        break;
+        return blk.places[0];
       }
     }
-  }
+    return null;
+  };
+  const startPlace = findStagePlace('start');
+  const endPlace = findStagePlace('end');
   const flow = Array.isArray(sideObj.flow)
     ? sideObj.flow
         .filter(st => st && st.id && st.name)
@@ -1906,6 +1908,10 @@ function parseQuestSideData(sideObj) {
     zone: startPlace?.zone || '',
     x: startPlace?.at?.x ?? null,
     y: startPlace?.at?.y ?? null,
+    endNpc: endPlace?.name || '',
+    endZone: endPlace?.zone || '',
+    endX: endPlace?.at?.x ?? null,
+    endY: endPlace?.at?.y ?? null,
     inside: Boolean(startPlace?.instance),
     objective: sideObj.objective || '',
     flow,
@@ -1913,11 +1919,11 @@ function parseQuestSideData(sideObj) {
 }
 
 /**
- * 抓取单个任务的详细信息（阵营、职业限定、起始 NPC 与坐标、完整前置/后续任务链）
+ * 抓取单个任务的详细信息（阵营、职业限定、起始/交付 NPC 与坐标、完整前置/后续任务链）
  */
 async function fetchQuestDetail(questId, questCache, getHeaders) {
   const key = String(questId);
-  if (questCache[key] && questCache[key].v === 2) {
+  if (questCache[key] && questCache[key].v === 3) {
     return questCache[key];
   }
   try {
@@ -1956,7 +1962,7 @@ async function fetchQuestDetail(questId, questCache, getHeaders) {
     }
 
     const detail = {
-      v: 2,
+      v: 3,
       id: Number(q.id || questId),
       name: q.name || '',
       faction: normalizeWowfFaction(q.f),
@@ -2411,7 +2417,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     for (const sideData of Object.values(q.sides)) {
       const effectiveFlow = buildEffectiveFlow(q, sideData, questiePrereqs);
       for (const st of effectiveFlow) {
-        if (st?.id && !questCache[String(st.id)]?.v) {
+        if (st?.id && questCache[String(st.id)]?.v !== 3) {
           stepQuestIds.add(st.id);
         }
       }
@@ -2457,15 +2463,27 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
           ? flow.map(st => {
               const stDetail = questCache[String(st.id)];
               const stSide = stDetail?.sides?.[factionOverride] || stDetail?.sides?.one || null;
+              const npc = stSide?.npc || '';
+              const zone = stSide?.zone || stDetail?.zone || '';
+              const x = stSide?.x ?? null;
+              const y = stSide?.y ?? null;
+              const endNpc = stSide?.endNpc || '';
+              const endZone = stSide?.endZone || '';
+              const endX = stSide?.endX ?? null;
+              const endY = stSide?.endY ?? null;
+              const hasDiffEnd =
+                endNpc &&
+                (endNpc !== npc || endZone !== zone || endX !== x || endY !== y);
               return {
                 id: st.id,
                 name: stDetail?.name || st.name,
                 level: stDetail?.level || st.level || q.level,
-                npc: stSide?.npc || '',
-                zone: stSide?.zone || stDetail?.zone || '',
+                npc,
+                zone,
                 place: '',
-                x: stSide?.x ?? null,
-                y: stSide?.y ?? null,
+                x,
+                y,
+                ...(hasDiffEnd ? { endNpc, endZone, endX, endY } : {}),
                 ...(questiePrereqs.get(st.id)?.repeatable ? { repeatable: true } : {}),
               };
             })
@@ -3959,6 +3977,47 @@ local function FormatCoordLink(zone, label, x, y, prefixSpace)
   )
 end
 
+local function FormatNpcMapLink(zone, npc, x, y)
+  local zText = (zone and zone ~= "") and zone or ""
+  local nText = (npc and npc ~= "") and npc or ""
+  local displayName = (nText ~= "") and nText or ((zText ~= "") and zText or "坐标")
+  local numX = tonumber(x)
+  local numY = tonumber(y)
+  local linkPart
+  if numX and numY then
+    local mapID = ResolveUiMapID(zText, nText)
+    local safeZone = SanitizeLinkField((zText ~= "") and zText or nText)
+    local safeLabel = SanitizeLinkField((nText ~= "") and nText or zText)
+    linkPart = string.format(
+      "|cff00ffcc|Hwowfmap:%d:%.1f:%.1f:%s:%s|h[%s]|h|r",
+      mapID, numX, numY, safeZone, safeLabel, displayName
+    )
+  else
+    linkPart = "|cff00ffcc" .. displayName .. "|r"
+  end
+  if zText ~= "" and nText ~= "" then
+    return zText .. " " .. linkPart
+  end
+  return linkPart
+end
+
+local function FormatStepNpcInfo(st, fallbackZone)
+  if type(st) ~= "table" then return "" end
+  local stZone = (st.zone and st.zone ~= "") and st.zone or (fallbackZone or "")
+  local hasStart = (st.npc and st.npc ~= "") or (st.x ~= nil and st.y ~= nil) or (stZone ~= "")
+  local startStr = hasStart and FormatNpcMapLink(stZone, st.npc, st.x, st.y) or ""
+  local endZone = (st.endZone and st.endZone ~= "") and st.endZone or stZone
+  local hasEnd = st.endNpc and st.endNpc ~= "" and (st.endNpc ~= st.npc or endZone ~= stZone or st.endX ~= st.x or st.endY ~= st.y)
+  if hasEnd then
+    local endStr = FormatNpcMapLink(endZone, st.endNpc, st.endX, st.endY)
+    if startStr ~= "" then
+      return "接: " .. startStr .. "，交: " .. endStr
+    end
+    return "交: " .. endStr
+  end
+  return startStr
+end
+
 local function DetectZoneInPrefix(prefixText, fallbackZone)
   if prefixText and prefixText ~= "" then
     local bestKw = nil
@@ -4414,88 +4473,99 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
     end
   end
 
-  -- 若任务链中存在“需全部完成多个前置 (reqAll)”的汇聚节点，则渲染为树形结构，避免误解为单选或串联
-  if hasReqAll and lastStepId and stepById[lastStepId] then
-    local baseIndent = treeIndent or "    "
+  -- 逐步缩进树形展示：每步单独一行，同级缩进表示并行/分支，向内缩进表示解锁后续，仅显示可悬停/点击的 NPC 名
+  local baseIndent = treeIndent or "    "
+  local stepEntries = {}
+  local hasAnyPrereqMeta = false
+  for idx, st in ipairs(q.steps) do
+    local sid = tonumber(st.id)
+    if sid and sid > 0 and stepById[sid] then
+      local stZone = (st.zone and st.zone ~= "") and st.zone or parentZone
+      local isPrimary = (sid == primaryId)
+      local effSt = {
+        id = sid,
+        npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
+        zone = stZone,
+        x = st.x or (isPrimary and q.x or nil),
+        y = st.y or (isPrimary and q.y or nil),
+        endNpc = st.endNpc,
+        endZone = st.endZone,
+        endX = st.endX,
+        endY = st.endY,
+      }
+      if tonumber(st.preId) or (type(st.reqAll) == "table" and #st.reqAll > 0) then
+        hasAnyPrereqMeta = true
+      end
+      table.insert(stepEntries, {
+        id = sid,
+        step = st,
+        link = stepById[sid].link,
+        npcInfo = FormatStepNpcInfo(effSt, stZone),
+        idx = idx,
+      })
+    end
+  end
+
+  if #stepEntries > 1 then
+    local depthById = {}
+    local orderedEntries = {}
+    if hasAnyPrereqMeta then
+      local emitted = {}
+      local visiting = {}
+      local function emitStep(sid)
+        if not sid or emitted[sid] or visiting[sid] or not stepById[sid] then return 0 end
+        visiting[sid] = true
+        local st = stepById[sid].step
+        local maxParentDepth = -1
+        if type(st.reqAll) == "table" and #st.reqAll > 1 then
+          for _, pid in ipairs(st.reqAll) do
+            local npid = tonumber(pid)
+            if npid and stepById[npid] then
+              local pd = emitStep(npid)
+              if pd > maxParentDepth then maxParentDepth = pd end
+            end
+          end
+        else
+          local npid = tonumber(st.preId)
+          if npid and stepById[npid] then
+            maxParentDepth = emitStep(npid)
+          end
+        end
+        visiting[sid] = nil
+        local d = maxParentDepth + 1
+        depthById[sid] = d
+        emitted[sid] = true
+        for _, ent in ipairs(stepEntries) do
+          if ent.id == sid then
+            table.insert(orderedEntries, ent)
+            break
+          end
+        end
+        return d
+      end
+      if lastStepId then
+        emitStep(lastStepId)
+      end
+      for _, ent in ipairs(stepEntries) do
+        if not emitted[ent.id] then
+          emitStep(ent.id)
+        end
+      end
+    else
+      for i, ent in ipairs(stepEntries) do
+        depthById[ent.id] = i - 1
+        table.insert(orderedEntries, ent)
+      end
+    end
+
     local treeLines = {}
-    local coveredSteps = {}
-    local function buildTreeLines(targetId, indent, isSubBranch, branchPrefix, childIndent, activeSet)
-      if not targetId or activeSet[targetId] or not stepById[targetId] then return end
-      local segIds = {}
-      local curId = targetId
-      while curId and not activeSet[curId] and stepById[curId] do
-        table.insert(segIds, 1, curId)
-        activeSet[curId] = true
-        coveredSteps[curId] = true
-        local curSt = stepById[curId].step
-        if type(curSt.reqAll) == "table" and #curSt.reqAll > 1 then
-          break
-        end
-        local prevId = tonumber(curSt.preId)
-        if prevId and stepById[prevId] and not activeSet[prevId] then
-          curId = prevId
-        else
-          break
-        end
-      end
-
-      local segLinks = {}
-      for _, sid in ipairs(segIds) do
-        table.insert(segLinks, stepById[sid].link)
-      end
-      local segText = table.concat(segLinks, " |cff99e6ff->|r ")
-      local headStep = stepById[segIds[1]].step
-      local validReqs = {}
-      if type(headStep.reqAll) == "table" and #headStep.reqAll > 1 then
-        for _, pid in ipairs(headStep.reqAll) do
-          local numPid = tonumber(pid)
-          if numPid and stepById[numPid] and not activeSet[numPid] then
-            table.insert(validReqs, numPid)
-          end
-        end
-      end
-
-      if #validReqs > 1 then
-        if not isSubBranch then
-          table.insert(treeLines, indent .. "|cff99e6ff├─ 需全部完成前置:|r")
-          for i, pid in ipairs(validReqs) do
-            local isLast = (i == #validReqs)
-            local bPrefix = indent .. "|cff99e6ff│   " .. (isLast and "└─ " or "├─ ") .. "|r"
-            local cIndent = indent .. "|cff99e6ff│   " .. (isLast and "    " or "│   ") .. "|r"
-            buildTreeLines(pid, indent .. "│   ", true, bPrefix, cIndent, activeSet)
-          end
-          table.insert(treeLines, indent .. "|cff99e6ff└─ 解锁:|r " .. segText)
-        else
-          table.insert(treeLines, branchPrefix .. segText .. " |cff99e6ff(需先全部完成:)|r")
-          for i, pid in ipairs(validReqs) do
-            local isLast = (i == #validReqs)
-            local bPrefix = childIndent .. "|cff99e6ff" .. (isLast and "└─ " or "├─ ") .. "|r"
-            local cIndent = childIndent .. "|cff99e6ff" .. (isLast and "    " or "│   ") .. "|r"
-            buildTreeLines(pid, childIndent, true, bPrefix, cIndent, activeSet)
-          end
-        end
-      else
-        if isSubBranch then
-          table.insert(treeLines, branchPrefix .. segText)
-        else
-          table.insert(treeLines, indent .. "|cff99e6ff└─|r " .. segText)
-        end
-      end
-
-      for _, sid in ipairs(segIds) do
-        activeSet[sid] = nil
-      end
+    for _, ent in ipairs(orderedEntries) do
+      local d = depthById[ent.id] or 0
+      local indent = baseIndent .. string.rep("  ", d)
+      local npcPart = (ent.npcInfo ~= "") and ("  " .. ent.npcInfo) or ""
+      table.insert(treeLines, indent .. ent.link .. npcPart)
     end
-
-    buildTreeLines(lastStepId, baseIndent, false, "", "", {})
-    local allCovered = true
-    for sid in pairs(stepById) do
-      if not coveredSteps[sid] then
-        allCovered = false
-        break
-      end
-    end
-    if #treeLines > 0 and allCovered then
+    if #treeLines > 0 then
       return primary, table.concat(treeLines, "\n")
     end
   end
@@ -4582,29 +4652,58 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
   local lastPre = prefixSteps[k]
   local q1Zone = (q1.zone and q1.zone ~= "") and q1.zone or fallbackZone
   local preZone = (lastPre.zone and lastPre.zone ~= "") and lastPre.zone or q1Zone
-  local prefixQuest = {
-    id = lastPre.id,
-    name = lastPre.name,
-    faction = q1.faction,
-    level = lastPre.level or q1.level,
-    minLevel = q1.minLevel or fallbackLevel,
-    npc = (lastPre.npc and lastPre.npc ~= "") and lastPre.npc or q1.npc,
-    zone = preZone,
-    place = (lastPre.place and lastPre.place ~= "") and lastPre.place or q1.place,
-    x = (lastPre.x ~= nil) and lastPre.x or q1.x,
-    y = (lastPre.y ~= nil) and lastPre.y or q1.y,
-    steps = prefixSteps,
-  }
-  local prefixInline, prefixTree = FormatQuestWithSteps(prefixQuest, q1.minLevel or fallbackLevel, q1Zone, baseIndent)
-  local branchIndent = prefixTree and (baseIndent .. "    ") or baseIndent
   local outLines = {}
-  if prefixTree then
-    table.insert(outLines, prefixTree)
+  local maxPrefixDepth = 0
+
+  if #prefixSteps == 1 then
+    local st = prefixSteps[1]
+    local sid = tonumber(st.id)
+    local stepObj = {
+      id = sid,
+      faction = q1.faction,
+      name = st.name or q1.name,
+      level = st.level or q1.level or q1.minLevel or fallbackLevel,
+      npc = (st.npc and st.npc ~= "") and st.npc or q1.npc,
+      zone = preZone,
+      place = (st.place and st.place ~= "") and st.place or q1.place,
+      x = (st.x ~= nil) and st.x or q1.x,
+      y = (st.y ~= nil) and st.y or q1.y,
+      endNpc = st.endNpc,
+      endZone = st.endZone,
+      endX = st.endX,
+      endY = st.endY,
+    }
+    local link = FormatQuestLink(stepObj, fallbackLevel, preZone, false)
+    local npcPart = FormatStepNpcInfo(stepObj, preZone)
+    table.insert(outLines, baseIndent .. link .. ((npcPart ~= "") and ("  " .. npcPart) or ""))
+    maxPrefixDepth = 0
+  else
+    local prefixQuest = {
+      id = lastPre.id,
+      name = lastPre.name,
+      faction = q1.faction,
+      level = lastPre.level or q1.level,
+      minLevel = q1.minLevel or fallbackLevel,
+      npc = (lastPre.npc and lastPre.npc ~= "") and lastPre.npc or q1.npc,
+      zone = preZone,
+      place = (lastPre.place and lastPre.place ~= "") and lastPre.place or q1.place,
+      x = (lastPre.x ~= nil) and lastPre.x or q1.x,
+      y = (lastPre.y ~= nil) and lastPre.y or q1.y,
+      steps = prefixSteps,
+    }
+    local _, prefixTree = FormatQuestWithSteps(prefixQuest, q1.minLevel or fallbackLevel, q1Zone, baseIndent)
+    if prefixTree and prefixTree ~= "" then
+      for line in string.gmatch(prefixTree, "[^\n]+") do
+        table.insert(outLines, line)
+        local leading = string.match(line, "^(%s*)") or ""
+        local relDepth = math.floor(math.max(0, #leading - #baseIndent) / 2)
+        if relDepth > maxPrefixDepth then maxPrefixDepth = relDepth end
+      end
+    end
   end
-  for bi, bq in ipairs(quests) do
-    local isLast = (bi == #quests)
-    local bPrefix = branchIndent .. "|cff99e6ff" .. (isLast and "└─ " or "├─ ") .. "|r"
-    local suffixLinks = {}
+
+  local branchBaseDepth = maxPrefixDepth + 1
+  for _, bq in ipairs(quests) do
     local bDone = IsQuestCompleted(bq)
     local bZone = (bq.zone and bq.zone ~= "") and bq.zone or fallbackZone
     local bPrimaryId = tonumber(bq.id or bq.questId)
@@ -4624,15 +4723,21 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
           place = (st.place and st.place ~= "") and st.place or (isPrimary and bq.place or ""),
           x = st.x or (isPrimary and bq.x or nil),
           y = st.y or (isPrimary and bq.y or nil),
+          endNpc = st.endNpc,
+          endZone = st.endZone,
+          endX = st.endX,
+          endY = st.endY,
         }
         local link = FormatQuestLink(stepObj, fallbackLevel, stZone, bDone)
-        table.insert(suffixLinks, isPrimary and link or ("|cff99e6ff" .. link .. "|r"))
+        local coloredLink = isPrimary and link or ("|cff99e6ff" .. link .. "|r")
+        local npcPart = FormatStepNpcInfo(stepObj, stZone)
+        local d = branchBaseDepth + (si - (k + 1))
+        local indent = baseIndent .. string.rep("  ", d)
+        table.insert(outLines, indent .. coloredLink .. ((npcPart ~= "") and ("  " .. npcPart) or ""))
       end
     end
-    table.insert(outLines, bPrefix .. table.concat(suffixLinks, " |cff99e6ff->|r "))
   end
-  local headerPrefix = prefixTree and "" or (prefixInline .. " ")
-  return headerPrefix, table.concat(outLines, "\n")
+  return "", table.concat(outLines, "\n")
 end
 
 local function GetDungeonByIdOrName(id, name)
