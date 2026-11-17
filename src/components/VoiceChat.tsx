@@ -106,7 +106,7 @@ interface VoiceChatProps {
   onToggleDeafen: () => void;
   onSetPeerVolume: (peerId: string, volume: number) => void;
   onSwitchMicrophone: (deviceId: string) => Promise<void>;
-  onSwitchOutputDevice: (deviceId: string) => Promise<void>;
+  onSwitchOutputDevice: (deviceId: string) => Promise<boolean>;
   onSendMessage: (text: string) => Promise<void>;
   onResumePlayback: () => void;
 }
@@ -314,8 +314,10 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     setRoomError(null);
     setPendingOutputDeviceId(nextDeviceId);
     try {
-      await onSwitchOutputDevice(nextDeviceId);
-      handleSelectOutputDevice(nextDeviceId);
+      const applied = await onSwitchOutputDevice(nextDeviceId);
+      if (applied) {
+        handleSelectOutputDevice(nextDeviceId);
+      }
     } catch (err) {
       setRoomError(err instanceof Error ? err.message : '切换语音输出设备失败');
     } finally {

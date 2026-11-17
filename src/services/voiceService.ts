@@ -1403,23 +1403,26 @@ export class VoiceRoomManager {
     this.emit();
   }
 
-  setOutputDevice(deviceId: string): Promise<void> {
+  setOutputDevice(deviceId: string): Promise<boolean> {
     const attemptId = this.joinAttemptId;
     const run = () => this.performSetOutputDevice(deviceId, attemptId);
     const next = this.outputSwitchChain.then(run, run);
-    this.outputSwitchChain = next.catch(() => {});
+    this.outputSwitchChain = next.then(
+      () => undefined,
+      () => undefined
+    );
     return next;
   }
 
-  private async performSetOutputDevice(deviceId: string, attemptId: number): Promise<void> {
-    if (this.joinAttemptId !== attemptId) return;
+  private async performSetOutputDevice(deviceId: string, attemptId: number): Promise<boolean> {
+    if (this.joinAttemptId !== attemptId) return false;
     const nextDeviceId = deviceId || '';
     const previousDeviceId = this.selectedOutputDeviceId;
     this.selectedOutputDeviceId = nextDeviceId;
     try {
       this.rebuildPlayback();
       await this.applyOutputDevice(nextDeviceId);
-      if (this.joinAttemptId !== attemptId) return;
+      if (this.joinAttemptId !== attemptId) return false;
     } catch (err) {
       if (this.joinAttemptId === attemptId) {
         this.selectedOutputDeviceId = previousDeviceId;
@@ -1430,6 +1433,7 @@ export class VoiceRoomManager {
       throw err instanceof Error ? err : new Error('切换语音输出设备失败');
     }
     this.emit();
+    return true;
   }
 
   private async replaceAudioTrackAcrossPeers(
