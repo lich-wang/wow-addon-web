@@ -18,9 +18,42 @@ import {
   Loader2,
   Radio,
   Share2,
+  Wifi,
 } from 'lucide-react';
 import type { VoiceStateSnapshot } from '../services/voiceService';
-import type { VoiceJoinOptions } from '../types/voice';
+import type { NetworkQualityLevel, PeerNetworkStats, VoiceJoinOptions } from '../types/voice';
+
+const NETWORK_QUALITY_META: Record<
+  NetworkQualityLevel,
+  { label: string; badgeClass: string }
+> = {
+  excellent: {
+    label: '网络极佳',
+    badgeClass: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
+  },
+  good: {
+    label: '网络良好',
+    badgeClass: 'bg-sky-500/10 border-sky-500/25 text-sky-400',
+  },
+  fair: {
+    label: '网络一般',
+    badgeClass: 'bg-amber-500/10 border-amber-500/25 text-amber-300',
+  },
+  poor: {
+    label: '网络较差',
+    badgeClass: 'bg-rose-500/10 border-rose-500/25 text-rose-300',
+  },
+  connecting: {
+    label: '检测中',
+    badgeClass: 'bg-slate-800/80 border-slate-700 text-slate-400',
+  },
+};
+
+function formatTransportLabel(stats: PeerNetworkStats): string {
+  if (stats.transport === 'relay') return 'TURN中继';
+  if (stats.transport === 'p2p') return 'P2P直连';
+  return '连接中';
+}
 
 interface VoiceChatProps {
   voiceState: VoiceStateSnapshot;
@@ -378,6 +411,37 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                   <Lock className="w-3 h-3" />
                   <span>已加密</span>
                 </span>
+                {voiceState.status === 'connected' && (
+                  voiceState.networkSummary ? (
+                    <span
+                      title={`传输方式：${formatTransportLabel(voiceState.networkSummary)}${
+                        voiceState.networkSummary.packetLossPct !== null
+                          ? `，丢包率 ${voiceState.networkSummary.packetLossPct}%`
+                          : ''
+                      }`}
+                      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md border text-[11px] ${
+                        NETWORK_QUALITY_META[voiceState.networkSummary.quality].badgeClass
+                      }`}
+                    >
+                      <Wifi className="w-3 h-3" />
+                      <span>
+                        {NETWORK_QUALITY_META[voiceState.networkSummary.quality].label}
+                        {voiceState.networkSummary.rttMs !== null ? ` · ${voiceState.networkSummary.rttMs}ms` : ''}
+                        {voiceState.networkSummary.packetLossPct !== null
+                          ? ` · 丢包 ${voiceState.networkSummary.packetLossPct}%`
+                          : ''}
+                        {voiceState.networkSummary.transport !== 'unknown'
+                          ? ` · ${formatTransportLabel(voiceState.networkSummary)}`
+                          : ''}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-400 text-[11px]">
+                      <Wifi className="w-3 h-3 text-emerald-400" />
+                      <span>信令正常</span>
+                    </span>
+                  )
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5 flex items-center space-x-2">
                 <Users className="w-3.5 h-3.5 text-slate-500" />
@@ -548,6 +612,25 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                         {p.isSelf && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px] font-medium shrink-0">
                             我
+                          </span>
+                        )}
+                        {!p.isSelf && p.network && (
+                          <span
+                            className={`inline-flex items-center space-x-1 px-1.5 py-0.5 rounded border text-[10px] shrink-0 ${
+                              NETWORK_QUALITY_META[p.network.quality].badgeClass
+                            }`}
+                          >
+                            <Wifi className="w-2.5 h-2.5" />
+                            <span>
+                              {NETWORK_QUALITY_META[p.network.quality].label}
+                              {p.network.rttMs !== null ? ` · ${p.network.rttMs}ms` : ''}
+                              {p.network.transport !== 'unknown'
+                                ? ` · ${p.network.transport === 'relay' ? 'TURN' : 'P2P'}`
+                                : ''}
+                              {p.network.packetLossPct !== null && p.network.packetLossPct > 0
+                                ? ` · 丢包${p.network.packetLossPct}%`
+                                : ''}
+                            </span>
                           </span>
                         )}
                       </div>

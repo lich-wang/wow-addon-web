@@ -1,4 +1,12 @@
-import type { VoiceChatMessage, VoiceConnectionStatus, VoiceJoinOptions, VoiceParticipant } from '../types/voice';
+import type {
+  NetworkQualityLevel,
+  PeerNetworkStats,
+  TransportMode,
+  VoiceChatMessage,
+  VoiceConnectionStatus,
+  VoiceJoinOptions,
+  VoiceParticipant,
+} from '../types/voice';
 
 const SIGNAL_WS_URL = 'wss://wow-voice-signal.lich-wang8718.workers.dev/ws';
 const SIGNAL_CONNECT_TIMEOUT_MS = 8000;
@@ -130,6 +138,7 @@ export interface VoiceStateSnapshot {
   isDeafened: boolean;
   listenOnly: boolean;
   selectedDeviceId: string;
+  networkSummary: PeerNetworkStats | null;
 }
 
 type StateListener = (snapshot: VoiceStateSnapshot) => void;
@@ -151,7 +160,10 @@ export class VoiceRoomManager {
   private peerMeta = new Map<string, PeerMetaPayload>();
   private peerVolumes = new Map<string, number>();
   private peerLevels = new Map<string, { level: number; speaking: boolean }>();
+  private peerNetworkStats = new Map<string, PeerNetworkStats>();
+  private prevRtpCounts = new Map<string, Map<string, { received: number; lost: number }>>();
   private levelTimer: number | null = null;
+  private statsTimer: number | null = null;
 
   private status: VoiceConnectionStatus = 'idle';
   private roomId = '';
@@ -212,6 +224,7 @@ export class VoiceRoomManager {
           audioLevel: !isPeerMuted ? lvl.level : 0,
           hasAudioStream: this.peerStreams.has(peerId),
           volume: this.peerVolumes.get(peerId) ?? 1,
+          network: this.peerNetworkStats.get(peerId),
         });
       }
     }
@@ -228,6 +241,55 @@ export class VoiceRoomManager {
       isDeafened: this.isDeafened,
       listenOnly: this.listenOnly,
       selectedDeviceId: this.selectedDeviceId,
+      networkSummary: this.computeNetworkSummary(),
+    };
+  }
+
+  private computeNetworkSummary(): PeerNetworkStats | null {
+    if (this.status !== 'connected' || this.peerConnections.size === 0) return null;
+
+    const qualityRank: Record<NetworkQualityLevel, number> = {
+      excellent: 0,
+      good: 1,
+      fair: 2,
+      connecting: 3,
+      poor: 4,
+    };
+
+    let worstQuality: NetworkQualityLevel = 'excellent';
+    let maxRtt: number | null = null;
+    let maxLoss: number | null = null;
+    let transport: TransportMode = 'unknown';
+
+    for (const peerId of this.peerConnections.keys()) {
+      const stat = this.peerNetworkStats.get(peerId);
+      if (!stat) {
+        if (qualityRank.connecting > qualityRank[worstQuality]) {
+          worstQuality = 'connecting';
+        }
+        continue;
+      }
+      if (qualityRank[stat.quality] > qualityRank[worstQuality]) {
+        worstQuality = stat.quality;
+      }
+      if (stat.rttMs !== null && (maxRtt === null || stat.rttMs > maxRtt)) {
+        maxRtt = stat.rttMs;
+      }
+      if (stat.packetLossPct !== null && (maxLoss === null || stat.packetLossPct > maxLoss)) {
+        maxLoss = stat.packetLossPct;
+      }
+      if (stat.transport === 'relay') {
+        transport = 'relay';
+      } else if (stat.transport === 'p2p' && transport === 'unknown') {
+        transport = 'p2p';
+      }
+    }
+
+    return {
+      quality: worstQuality,
+      rttMs: maxRtt,
+      packetLossPct: maxLoss,
+      transport,
     };
   }
 
@@ -316,6 +378,175 @@ export class VoiceRoomManager {
     if (this.levelTimer !== null) {
       window.clearInterval(this.levelTimer);
       this.levelTimer = null;
+    }
+  }
+
+  private startStatsPolling(): void {
+    this.stopStatsPolling();
+    const attemptId = this.joinAttemptId;
+    this.statsTimer = window.setInterval(() => {
+      if (this.joinAttemptId !== attemptId || this.peerConnections.size === 0) return;
+      void this.collectPeerStats(attemptId);
+    }, 2000);
+  }
+
+  private stopStatsPolling(): void {
+    if (this.statsTimer !== null) {
+      window.clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
+  }
+
+  private async collectPeerStats(attemptId: number): Promise<void> {
+    let changed = false;
+    const entries = Array.from(this.peerConnections.entries());
+
+    await Promise.all(
+      entries.map(async ([peerId, pc]) => {
+        if (this.joinAttemptId !== attemptId) return;
+        try {
+          const report = await pc.getStats();
+          if (this.joinAttemptId !== attemptId || this.peerConnections.get(peerId) !== pc) return;
+
+          let selectedPairId: string | undefined;
+          const candidatePairs = new Map<
+            string,
+            {
+              currentRoundTripTime?: number;
+              localCandidateId?: string;
+              remoteCandidateId?: string;
+              state?: string;
+              nominated?: boolean;
+            }
+          >();
+          let fallbackPair: {
+            currentRoundTripTime?: number;
+            localCandidateId?: string;
+            remoteCandidateId?: string;
+            state?: string;
+            nominated?: boolean;
+          } | null = null;
+          const candidates = new Map<string, { candidateType?: string }>();
+          const inboundStreams = new Map<string, { received: number; lost: number }>();
+
+          report.forEach((stat) => {
+            if (stat.type === 'transport') {
+              const t = stat as unknown as { selectedCandidatePairId?: string };
+              if (typeof t.selectedCandidatePairId === 'string') {
+                selectedPairId = t.selectedCandidatePairId;
+              }
+            } else if (stat.type === 'candidate-pair') {
+              const pair = stat as unknown as {
+                state?: string;
+                nominated?: boolean;
+                currentRoundTripTime?: number;
+                localCandidateId?: string;
+                remoteCandidateId?: string;
+              };
+              candidatePairs.set(stat.id, pair);
+              if (pair.state === 'succeeded' && (pair.nominated || !fallbackPair)) {
+                fallbackPair = pair;
+              }
+            } else if (stat.type === 'local-candidate' || stat.type === 'remote-candidate') {
+              candidates.set(stat.id, stat as unknown as { candidateType?: string });
+            } else if (stat.type === 'inbound-rtp') {
+              const rtp = stat as unknown as { kind?: string; mediaType?: string; packetsReceived?: number; packetsLost?: number };
+              if (rtp.kind === 'audio' || rtp.mediaType === 'audio') {
+                inboundStreams.set(stat.id, {
+                  received: rtp.packetsReceived ?? 0,
+                  lost: rtp.packetsLost ?? 0,
+                });
+              }
+            }
+          });
+
+          const activePair = (selectedPairId ? candidatePairs.get(selectedPairId) : undefined) ?? fallbackPair;
+
+          let transport: TransportMode = 'unknown';
+          let rttMs: number | null = null;
+          if (activePair) {
+            const pairObj = activePair as {
+              currentRoundTripTime?: number;
+              localCandidateId?: string;
+              remoteCandidateId?: string;
+            };
+            if (typeof pairObj.currentRoundTripTime === 'number' && Number.isFinite(pairObj.currentRoundTripTime)) {
+              rttMs = Math.round(pairObj.currentRoundTripTime * 1000);
+            }
+            const localType = pairObj.localCandidateId ? candidates.get(pairObj.localCandidateId)?.candidateType : undefined;
+            const remoteType = pairObj.remoteCandidateId ? candidates.get(pairObj.remoteCandidateId)?.candidateType : undefined;
+            if (localType === 'relay' || remoteType === 'relay') {
+              transport = 'relay';
+            } else if (localType || remoteType) {
+              transport = 'p2p';
+            }
+          }
+
+          let packetLossPct: number | null = null;
+          if (inboundStreams.size > 0) {
+            const prevByStream = this.prevRtpCounts.get(peerId) ?? new Map<string, { received: number; lost: number }>();
+            const nextByStream = new Map<string, { received: number; lost: number }>();
+            let dRecvTotal = 0;
+            let dLostTotal = 0;
+            let hasDelta = false;
+
+            for (const [streamId, curr] of inboundStreams.entries()) {
+              const prev = prevByStream.get(streamId);
+              if (prev && curr.received >= prev.received) {
+                dRecvTotal += curr.received - prev.received;
+                dLostTotal += Math.max(0, curr.lost - prev.lost);
+                hasDelta = true;
+              }
+              nextByStream.set(streamId, curr);
+            }
+
+            this.prevRtpCounts.set(peerId, nextByStream);
+            if (hasDelta) {
+              const total = dRecvTotal + dLostTotal;
+              packetLossPct = total > 0 ? Math.round((dLostTotal / total) * 1000) / 10 : 0;
+            }
+          } else {
+            this.prevRtpCounts.delete(peerId);
+          }
+
+          let quality: NetworkQualityLevel;
+          if (pc.connectionState === 'failed') {
+            quality = 'poor';
+          } else if (pc.connectionState !== 'connected' || rttMs === null) {
+            quality = 'connecting';
+          } else {
+            const loss = packetLossPct ?? 0;
+            if (rttMs <= 80 && loss < 1) {
+              quality = 'excellent';
+            } else if (rttMs <= 160 && loss < 3) {
+              quality = 'good';
+            } else if (rttMs <= 300 && loss < 8) {
+              quality = 'fair';
+            } else {
+              quality = 'poor';
+            }
+          }
+
+          const nextStat: PeerNetworkStats = { quality, rttMs, packetLossPct, transport };
+          const prevStat = this.peerNetworkStats.get(peerId);
+          if (
+            !prevStat ||
+            prevStat.quality !== nextStat.quality ||
+            prevStat.rttMs !== nextStat.rttMs ||
+            prevStat.packetLossPct !== nextStat.packetLossPct ||
+            prevStat.transport !== nextStat.transport
+          ) {
+            this.peerNetworkStats.set(peerId, nextStat);
+            changed = true;
+          }
+        } catch {
+          // Ignore transient getStats failures on closing connections
+        }
+      })
+    );
+
+    if (changed && this.joinAttemptId === attemptId) {
+      this.emit();
     }
   }
 
@@ -490,6 +721,8 @@ export class VoiceRoomManager {
     this.pendingCandidates.delete(peerId);
     this.failedPeerIds.delete(peerId);
     this.restartedIcePeers.delete(peerId);
+    this.peerNetworkStats.delete(peerId);
+    this.prevRtpCounts.delete(peerId);
     this.detachMonitor(peerId);
 
     const cancelers = this.peerTrackCancelers.get(peerId);
@@ -751,6 +984,7 @@ export class VoiceRoomManager {
 
       this.status = 'connected';
       this.startLevelPolling();
+      this.startStatsPolling();
       this.emit();
     } catch (err) {
       if (this.joinAttemptId !== attemptId) return;
@@ -1028,6 +1262,7 @@ export class VoiceRoomManager {
 
   private async resetInternalState(): Promise<void> {
     this.stopLevelPolling();
+    this.stopStatsPolling();
 
     if (this.pingTimer !== null) {
       window.clearInterval(this.pingTimer);
@@ -1068,6 +1303,8 @@ export class VoiceRoomManager {
     this.peerStreams.clear();
     this.peerMeta.clear();
     this.peerVolumes.clear();
+    this.peerNetworkStats.clear();
+    this.prevRtpCounts.clear();
     this.connectedPeerIds.clear();
 
     if (this.ws) {
