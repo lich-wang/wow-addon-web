@@ -124,6 +124,8 @@ interface AudioMonitor {
   source: MediaStreamAudioSourceNode;
   analyser: AnalyserNode;
   dataArray: Uint8Array<ArrayBuffer>;
+  /** Present only for remote peers: routes playback through Web Audio instead of an <audio> element. */
+  gain?: GainNode;
 }
 
 export interface VoiceStateSnapshot {
@@ -133,6 +135,7 @@ export interface VoiceStateSnapshot {
   participants: VoiceParticipant[];
   messages: VoiceChatMessage[];
   warning: string | null;
+  autoplayBlocked: boolean;
   error: string | null;
   isMuted: boolean;
   isDeafened: boolean;
@@ -174,6 +177,8 @@ export class VoiceRoomManager {
   private listenOnly = false;
   private selectedDeviceId = '';
   private warning: string | null = null;
+  private autoplayBlocked = false;
+  private playbackBlockVersion = 0;
   private error: string | null = null;
   private messages: VoiceChatMessage[] = [];
   private connectedPeerIds = new Set<string>();
@@ -236,6 +241,7 @@ export class VoiceRoomManager {
       participants,
       messages: [...this.messages],
       warning: this.warning,
+      autoplayBlocked: this.autoplayBlocked,
       error: this.error,
       isMuted: this.isMuted,
       isDeafened: this.isDeafened,
@@ -305,29 +311,71 @@ export class VoiceRoomManager {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return null;
     if (!this.audioContext) {
-      this.audioContext = new AudioCtx();
+      try {
+        this.audioContext = new AudioCtx();
+      } catch {
+        return null;
+      }
     }
     if (this.audioContext.state === 'suspended') {
-      void this.audioContext.resume();
+      void this.audioContext
+        .resume()
+        .then(() => {
+          if (
+            this.audioContext?.state === 'running' &&
+            this.autoplayBlocked &&
+            this.peerAudioElements.size === 0
+          ) {
+            this.autoplayBlocked = false;
+            this.emit();
+          }
+        })
+        .catch(() => {
+          // Keep the autoplay-blocked state; the user can retry from the UI.
+        });
     }
     return this.audioContext;
   }
 
-  private attachMonitor(key: string, stream: MediaStream): void {
+  /**
+   * Creates the analyser used by the speaking indicator.
+   * When `playback` is true the same source is also routed through a GainNode to the
+   * AudioContext destination, so remote voice is rendered by Web Audio instead of an
+   * <audio> element. Web Audio output is not a WebRTC communications render session,
+   * which avoids Windows ducking/muting other applications (e.g. game audio).
+   */
+  private attachMonitor(key: string, stream: MediaStream, playback = false): boolean {
     this.detachMonitor(key);
     const ctx = this.ensureAudioContext();
-    if (!ctx || stream.getAudioTracks().length === 0) return;
+    if (!ctx || stream.getAudioTracks().length === 0) return false;
 
+    let source: MediaStreamAudioSourceNode | null = null;
+    let analyser: AnalyserNode | null = null;
+    let gain: GainNode | null = null;
     try {
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
+      source = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.45;
       source.connect(analyser);
+      if (playback) {
+        gain = ctx.createGain();
+        gain.gain.value = this.isDeafened ? 0 : (this.peerVolumes.get(key) ?? 1);
+        source.connect(gain);
+        gain.connect(ctx.destination);
+      }
       const dataArray = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
-      this.monitors.set(key, { source, analyser, dataArray });
+      this.monitors.set(key, { source, analyser, dataArray, gain: gain ?? undefined });
+      return true;
     } catch {
-      // Ignore analyser errors for streams without playable audio
+      try {
+        source?.disconnect();
+        analyser?.disconnect();
+        gain?.disconnect();
+      } catch {
+        // Ignore cleanup errors
+      }
+      return false;
     }
   }
 
@@ -337,12 +385,54 @@ export class VoiceRoomManager {
       try {
         existing.source.disconnect();
         existing.analyser.disconnect();
+        existing.gain?.disconnect();
       } catch {
         // Ignore disconnect errors
       }
       this.monitors.delete(key);
     }
     this.peerLevels.delete(key);
+  }
+
+  private markAutoplayBlocked(): void {
+    this.autoplayBlocked = true;
+    this.playbackBlockVersion++;
+    this.emit();
+  }
+
+  private attachPlayback(peerId: string, stream: MediaStream): void {
+    if (this.attachMonitor(peerId, stream, true)) {
+      this.clearFallbackAudio(peerId);
+      if (this.audioContext?.state === 'suspended') {
+        this.markAutoplayBlocked();
+      }
+      return;
+    }
+
+    // Fallback for browsers where MediaStream -> Web Audio is unavailable.
+    let audio = this.peerAudioElements.get(peerId);
+    if (!audio) {
+      audio = new Audio();
+      audio.autoplay = true;
+      this.peerAudioElements.set(peerId, audio);
+    }
+    audio.srcObject = stream;
+    audio.volume = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
+    const attemptId = this.joinAttemptId;
+    void audio.play().catch(() => {
+      if (this.joinAttemptId !== attemptId) return;
+      if (this.peerAudioElements.get(peerId) !== audio) return;
+      this.markAutoplayBlocked();
+    });
+  }
+
+  private clearFallbackAudio(peerId: string): void {
+    const audio = this.peerAudioElements.get(peerId);
+    if (audio) {
+      audio.pause();
+      audio.srcObject = null;
+      this.peerAudioElements.delete(peerId);
+    }
   }
 
   private startLevelPolling(): void {
@@ -597,20 +687,7 @@ export class VoiceRoomManager {
       if (this.joinAttemptId !== attemptId) return;
       const stream = event.streams[0] ?? new MediaStream([event.track]);
       this.peerStreams.set(remotePeerId, stream);
-      let audio = this.peerAudioElements.get(remotePeerId);
-      if (!audio) {
-        audio = new Audio();
-        audio.autoplay = true;
-        this.peerAudioElements.set(remotePeerId, audio);
-      }
-      audio.srcObject = stream;
-      const peerVol = this.peerVolumes.get(remotePeerId) ?? 1;
-      audio.volume = this.isDeafened ? 0 : peerVol;
-      void audio.play().catch(() => {
-        this.warning = '浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。';
-        this.emit();
-      });
-      this.attachMonitor(remotePeerId, stream);
+      this.attachPlayback(remotePeerId, stream);
       this.emit();
     };
 
@@ -739,12 +816,7 @@ export class VoiceRoomManager {
       this.peerConnections.delete(peerId);
     }
 
-    const audio = this.peerAudioElements.get(peerId);
-    if (audio) {
-      audio.pause();
-      audio.srcObject = null;
-      this.peerAudioElements.delete(peerId);
-    }
+    this.clearFallbackAudio(peerId);
 
     if (this.failedPeerIds.size === 0 && this.warning === NAT_WARNING_TEXT) {
       this.warning = null;
@@ -1064,6 +1136,11 @@ export class VoiceRoomManager {
       const peerVol = this.peerVolumes.get(peerId) ?? 1;
       audio.volume = this.isDeafened ? 0 : peerVol;
     }
+    for (const [peerId, monitor] of this.monitors.entries()) {
+      if (monitor.gain) {
+        monitor.gain.gain.value = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
+      }
+    }
     this.sendWs({ type: 'meta', meta: this.buildSelfMeta() });
     this.emit();
   }
@@ -1074,6 +1151,10 @@ export class VoiceRoomManager {
     const audio = this.peerAudioElements.get(peerId);
     if (audio) {
       audio.volume = this.isDeafened ? 0 : clamped;
+    }
+    const monitor = this.monitors.get(peerId);
+    if (monitor?.gain) {
+      monitor.gain.gain.value = this.isDeafened ? 0 : clamped;
     }
     this.emit();
   }
@@ -1241,18 +1322,34 @@ export class VoiceRoomManager {
   }
 
   resumePlayback(): void {
-    for (const audio of this.peerAudioElements.values()) {
-      if (audio.paused) {
-        void audio.play().catch(() => {});
+    const attemptId = this.joinAttemptId;
+    const resumeVersion = this.playbackBlockVersion;
+    const fallbackPlaybacks = Array.from(this.peerAudioElements.values()).map((audio) => {
+      if (!audio.paused) return Promise.resolve(true);
+      return audio
+        .play()
+        .then(() => true)
+        .catch(() => false);
+    });
+    const ctx = this.audioContext;
+    const contextReady =
+      ctx?.state === 'suspended'
+        ? ctx
+            .resume()
+            .then(() => ctx.state === 'running')
+            .catch(() => false)
+        : Promise.resolve(true);
+
+    void Promise.all([contextReady, ...fallbackPlaybacks]).then((results) => {
+      if (this.joinAttemptId !== attemptId) return;
+      const allFallbackPlaying = Array.from(this.peerAudioElements.values()).every((audio) => !audio.paused);
+      if (results.every(Boolean) && this.playbackBlockVersion === resumeVersion && allFallbackPlaying) {
+        this.autoplayBlocked = false;
+        this.emit();
+      } else if (!results.every(Boolean)) {
+        this.markAutoplayBlocked();
       }
-    }
-    if (this.audioContext && this.audioContext.state === 'suspended') {
-      void this.audioContext.resume();
-    }
-    if (this.warning?.includes('自动播放')) {
-      this.warning = null;
-      this.emit();
-    }
+    });
   }
 
   async leave(): Promise<void> {
@@ -1332,6 +1429,8 @@ export class VoiceRoomManager {
     this.pendingMicTrack = null;
     this.pendingMicStream = null;
     this.warning = null;
+    this.autoplayBlocked = false;
+    this.playbackBlockVersion++;
     this.error = null;
     this.messages = [];
     this.emit();
