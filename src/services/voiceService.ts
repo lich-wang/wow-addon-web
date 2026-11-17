@@ -8,7 +8,7 @@ import type {
   VoiceParticipant,
 } from '../types/voice';
 
-const SIGNAL_WS_URL = 'wss://wow-voice-signal.lich-wang8718.workers.dev/ws';
+const SIGNAL_WS_URL = 'wss://wow.lich.tech/api/voice-ws';
 const SIGNAL_CONNECT_TIMEOUT_MS = 8000;
 const SIGNAL_PING_INTERVAL_MS = 25000;
 

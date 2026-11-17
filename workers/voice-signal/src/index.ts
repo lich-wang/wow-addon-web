@@ -230,14 +230,14 @@ export default {
     }
 
     const url = new URL(request.url);
-    if (url.pathname === '/health') {
+    if (url.pathname === '/health' || url.pathname === '/api/voice-ws/health') {
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
     }
 
-    if (url.pathname === '/ws') {
+    if (url.pathname === '/ws' || url.pathname === '/api/voice-ws') {
       const room = url.searchParams.get('room')?.trim();
       if (!room || room.length > 64) {
         return new Response('Invalid room parameter', { status: 400, headers: CORS_HEADERS });
