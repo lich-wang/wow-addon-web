@@ -55,6 +55,7 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
       void micContextRef.current.close().catch(() => {});
       micContextRef.current = null;
     }
+    setMicStarting(false);
     setMicTesting(false);
     setMicLevel(0);
   }, []);
@@ -123,9 +124,13 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
         void context.close().catch(() => {});
         if (micContextRef.current === context) micContextRef.current = null;
       }
-      setMicError(describeMicError(err));
+      if (micTokenRef.current === token) {
+        setMicError(describeMicError(err));
+      }
     } finally {
-      setMicStarting(false);
+      if (micTokenRef.current === token) {
+        setMicStarting(false);
+      }
     }
   };
 
@@ -223,13 +228,17 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
       window.setTimeout(() => {
         if (speakerTokenRef.current !== token) return;
         cleanup();
-        speakerCleanupRef.current = null;
+        if (speakerCleanupRef.current === cleanup) {
+          speakerCleanupRef.current = null;
+        }
         setSpeakerTesting(false);
         setSpeakerStatus('测试音播放完成');
       }, 1400);
     } catch (err) {
       cleanup();
-      speakerCleanupRef.current = null;
+      if (speakerCleanupRef.current === cleanup) {
+        speakerCleanupRef.current = null;
+      }
       if (speakerTokenRef.current === token) {
         setSpeakerTesting(false);
         setSpeakerStatus(err instanceof Error ? `扬声器测试失败：${err.message}` : '扬声器测试失败');
@@ -243,6 +252,8 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
       stopMicTest();
       speakerCleanupRef.current?.();
       speakerCleanupRef.current = null;
+      setSpeakerTesting(false);
+      setSpeakerStatus(null);
     },
     [micDeviceId, stopMicTest]
   );

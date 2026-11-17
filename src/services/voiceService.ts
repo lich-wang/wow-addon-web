@@ -221,6 +221,7 @@ export class VoiceRoomManager {
   private pendingMicStream: MediaStream | null = null;
   private peerTrackCancelers = new Map<string, Set<() => void>>();
   private micSwitchChain: Promise<void> = Promise.resolve();
+  private outputSwitchChain: Promise<void> = Promise.resolve();
   private cachedIceServers: { iceServers: RTCIceServer[]; expiresAt: number } | null = null;
 
   subscribe(listener: StateListener): () => void {
@@ -1402,14 +1403,23 @@ export class VoiceRoomManager {
     this.emit();
   }
 
-  async setOutputDevice(deviceId: string): Promise<void> {
+  setOutputDevice(deviceId: string): Promise<void> {
+    const attemptId = this.joinAttemptId;
+    const run = () => this.performSetOutputDevice(deviceId, attemptId);
+    const next = this.outputSwitchChain.then(run, run);
+    this.outputSwitchChain = next.catch(() => {});
+    return next;
+  }
+
+  private async performSetOutputDevice(deviceId: string, attemptId: number): Promise<void> {
+    if (this.joinAttemptId !== attemptId) return;
     const nextDeviceId = deviceId || '';
     const previousDeviceId = this.selectedOutputDeviceId;
-    const attemptId = this.joinAttemptId;
     this.selectedOutputDeviceId = nextDeviceId;
     try {
       this.rebuildPlayback();
       await this.applyOutputDevice(nextDeviceId);
+      if (this.joinAttemptId !== attemptId) return;
     } catch (err) {
       if (this.joinAttemptId === attemptId) {
         this.selectedOutputDeviceId = previousDeviceId;
