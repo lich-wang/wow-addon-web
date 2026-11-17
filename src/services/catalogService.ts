@@ -226,7 +226,7 @@ export async function fetchCuratedAddonZip(
 
   for (const url of candidates) {
     try {
-      const response = await fetch(url, { cache: 'no-cache' });
+      const response = await fetch(url);
       lastStatus = response.status;
       if (!response.ok) continue;
       const contentType = response.headers.get('content-type') || '';
