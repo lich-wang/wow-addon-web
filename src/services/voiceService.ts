@@ -135,6 +135,7 @@ export interface VoiceStateSnapshot {
   participants: VoiceParticipant[];
   messages: VoiceChatMessage[];
   warning: string | null;
+  autoplayBlocked: boolean;
   error: string | null;
   isMuted: boolean;
   isDeafened: boolean;
@@ -176,6 +177,7 @@ export class VoiceRoomManager {
   private listenOnly = false;
   private selectedDeviceId = '';
   private warning: string | null = null;
+  private autoplayBlocked = false;
   private error: string | null = null;
   private messages: VoiceChatMessage[] = [];
   private connectedPeerIds = new Set<string>();
@@ -238,6 +240,7 @@ export class VoiceRoomManager {
       participants,
       messages: [...this.messages],
       warning: this.warning,
+      autoplayBlocked: this.autoplayBlocked,
       error: this.error,
       isMuted: this.isMuted,
       isDeafened: this.isDeafened,
@@ -307,10 +310,24 @@ export class VoiceRoomManager {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return null;
     if (!this.audioContext) {
-      this.audioContext = new AudioCtx();
+      try {
+        this.audioContext = new AudioCtx();
+      } catch {
+        return null;
+      }
     }
     if (this.audioContext.state === 'suspended') {
-      void this.audioContext.resume();
+      void this.audioContext
+        .resume()
+        .then(() => {
+          if (this.audioContext?.state === 'running' && this.autoplayBlocked) {
+            this.autoplayBlocked = false;
+            this.emit();
+          }
+        })
+        .catch(() => {
+          // Keep the autoplay-blocked state; the user can retry from the UI.
+        });
     }
     return this.audioContext;
   }
@@ -376,7 +393,7 @@ export class VoiceRoomManager {
     if (this.attachMonitor(peerId, stream, true)) {
       this.clearFallbackAudio(peerId);
       if (this.audioContext?.state === 'suspended') {
-        this.warning = '浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。';
+        this.autoplayBlocked = true;
         this.emit();
       }
       return;
@@ -392,7 +409,7 @@ export class VoiceRoomManager {
     audio.srcObject = stream;
     audio.volume = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
     void audio.play().catch(() => {
-      this.warning = '浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。';
+      this.autoplayBlocked = true;
       this.emit();
     });
   }
@@ -1298,13 +1315,21 @@ export class VoiceRoomManager {
         void audio.play().catch(() => {});
       }
     }
-    if (this.audioContext && this.audioContext.state === 'suspended') {
-      void this.audioContext.resume();
+    const ctx = this.audioContext;
+    if (ctx?.state === 'suspended') {
+      void ctx
+        .resume()
+        .then(() => {
+          if (ctx.state === 'running') {
+            this.autoplayBlocked = false;
+            this.emit();
+          }
+        })
+        .catch(() => {});
+    } else {
+      this.autoplayBlocked = false;
     }
-    if (this.warning?.includes('自动播放')) {
-      this.warning = null;
-      this.emit();
-    }
+    this.emit();
   }
 
   async leave(): Promise<void> {
@@ -1384,6 +1409,7 @@ export class VoiceRoomManager {
     this.pendingMicTrack = null;
     this.pendingMicStream = null;
     this.warning = null;
+    this.autoplayBlocked = false;
     this.error = null;
     this.messages = [];
     this.emit();

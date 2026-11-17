@@ -512,6 +512,22 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         </div>
       </div>
 
+      {/* Autoplay Blocked Banner */}
+      {voiceState.autoplayBlocked && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。</span>
+          </div>
+          <button
+            onClick={onResumePlayback}
+            className="px-3 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold shrink-0 cursor-pointer"
+          >
+            恢复播放
+          </button>
+        </div>
+      )}
+
       {/* Warning Banner */}
       {voiceState.warning && (
         <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
@@ -519,14 +535,6 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>{voiceState.warning}</span>
           </div>
-          {voiceState.warning.includes('自动播放') && (
-            <button
-              onClick={onResumePlayback}
-              className="px-3 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold shrink-0 cursor-pointer"
-            >
-              恢复播放
-            </button>
-          )}
         </div>
       )}
 
