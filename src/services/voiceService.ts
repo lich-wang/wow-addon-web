@@ -161,7 +161,7 @@ export class VoiceRoomManager {
   private peerVolumes = new Map<string, number>();
   private peerLevels = new Map<string, { level: number; speaking: boolean }>();
   private peerNetworkStats = new Map<string, PeerNetworkStats>();
-  private prevRtpCounts = new Map<string, { received: number; lost: number }>();
+  private prevRtpCounts = new Map<string, Map<string, { received: number; lost: number }>>();
   private levelTimer: number | null = null;
   private statsTimer: number | null = null;
 
@@ -408,7 +408,18 @@ export class VoiceRoomManager {
           const report = await pc.getStats();
           if (this.joinAttemptId !== attemptId || this.peerConnections.get(peerId) !== pc) return;
 
-          let activePair: {
+          let selectedPairId: string | undefined;
+          const candidatePairs = new Map<
+            string,
+            {
+              currentRoundTripTime?: number;
+              localCandidateId?: string;
+              remoteCandidateId?: string;
+              state?: string;
+              nominated?: boolean;
+            }
+          >();
+          let fallbackPair: {
             currentRoundTripTime?: number;
             localCandidateId?: string;
             remoteCandidateId?: string;
@@ -416,12 +427,15 @@ export class VoiceRoomManager {
             nominated?: boolean;
           } | null = null;
           const candidates = new Map<string, { candidateType?: string }>();
-          let inboundReceived = 0;
-          let inboundLost = 0;
-          let hasInbound = false;
+          const inboundStreams = new Map<string, { received: number; lost: number }>();
 
           report.forEach((stat) => {
-            if (stat.type === 'candidate-pair') {
+            if (stat.type === 'transport') {
+              const t = stat as unknown as { selectedCandidatePairId?: string };
+              if (typeof t.selectedCandidatePairId === 'string') {
+                selectedPairId = t.selectedCandidatePairId;
+              }
+            } else if (stat.type === 'candidate-pair') {
               const pair = stat as unknown as {
                 state?: string;
                 nominated?: boolean;
@@ -429,20 +443,24 @@ export class VoiceRoomManager {
                 localCandidateId?: string;
                 remoteCandidateId?: string;
               };
-              if (pair.state === 'succeeded' && (pair.nominated || !activePair)) {
-                activePair = pair;
+              candidatePairs.set(stat.id, pair);
+              if (pair.state === 'succeeded' && (pair.nominated || !fallbackPair)) {
+                fallbackPair = pair;
               }
             } else if (stat.type === 'local-candidate' || stat.type === 'remote-candidate') {
               candidates.set(stat.id, stat as unknown as { candidateType?: string });
             } else if (stat.type === 'inbound-rtp') {
               const rtp = stat as unknown as { kind?: string; mediaType?: string; packetsReceived?: number; packetsLost?: number };
               if (rtp.kind === 'audio' || rtp.mediaType === 'audio') {
-                hasInbound = true;
-                inboundReceived += rtp.packetsReceived ?? 0;
-                inboundLost += Math.max(0, rtp.packetsLost ?? 0);
+                inboundStreams.set(stat.id, {
+                  received: rtp.packetsReceived ?? 0,
+                  lost: Math.max(0, rtp.packetsLost ?? 0),
+                });
               }
             }
           });
+
+          const activePair = (selectedPairId ? candidatePairs.get(selectedPairId) : undefined) ?? fallbackPair;
 
           let transport: TransportMode = 'unknown';
           let rttMs: number | null = null;
@@ -465,15 +483,30 @@ export class VoiceRoomManager {
           }
 
           let packetLossPct: number | null = null;
-          if (hasInbound) {
-            const prev = this.prevRtpCounts.get(peerId);
-            if (prev) {
-              const dRecv = Math.max(0, inboundReceived - prev.received);
-              const dLost = Math.max(0, inboundLost - prev.lost);
-              const total = dRecv + dLost;
-              packetLossPct = total > 0 ? Math.round((dLost / total) * 1000) / 10 : 0;
+          if (inboundStreams.size > 0) {
+            const prevByStream = this.prevRtpCounts.get(peerId) ?? new Map<string, { received: number; lost: number }>();
+            const nextByStream = new Map<string, { received: number; lost: number }>();
+            let dRecvTotal = 0;
+            let dLostTotal = 0;
+            let hasDelta = false;
+
+            for (const [streamId, curr] of inboundStreams.entries()) {
+              const prev = prevByStream.get(streamId);
+              if (prev && curr.received >= prev.received && curr.lost >= prev.lost) {
+                dRecvTotal += curr.received - prev.received;
+                dLostTotal += curr.lost - prev.lost;
+                hasDelta = true;
+              }
+              nextByStream.set(streamId, curr);
             }
-            this.prevRtpCounts.set(peerId, { received: inboundReceived, lost: inboundLost });
+
+            this.prevRtpCounts.set(peerId, nextByStream);
+            if (hasDelta) {
+              const total = dRecvTotal + dLostTotal;
+              packetLossPct = total > 0 ? Math.round((dLostTotal / total) * 1000) / 10 : 0;
+            }
+          } else {
+            this.prevRtpCounts.delete(peerId);
           }
 
           let quality: NetworkQualityLevel;

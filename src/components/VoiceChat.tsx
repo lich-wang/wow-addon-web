@@ -427,6 +427,9 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                       <span>
                         {NETWORK_QUALITY_META[voiceState.networkSummary.quality].label}
                         {voiceState.networkSummary.rttMs !== null ? ` · ${voiceState.networkSummary.rttMs}ms` : ''}
+                        {voiceState.networkSummary.packetLossPct !== null
+                          ? ` · 丢包 ${voiceState.networkSummary.packetLossPct}%`
+                          : ''}
                         {voiceState.networkSummary.transport !== 'unknown'
                           ? ` · ${formatTransportLabel(voiceState.networkSummary)}`
                           : ''}
@@ -619,7 +622,8 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                           >
                             <Wifi className="w-2.5 h-2.5" />
                             <span>
-                              {p.network.rttMs !== null ? `${p.network.rttMs}ms` : NETWORK_QUALITY_META[p.network.quality].label}
+                              {NETWORK_QUALITY_META[p.network.quality].label}
+                              {p.network.rttMs !== null ? ` · ${p.network.rttMs}ms` : ''}
                               {p.network.transport !== 'unknown'
                                 ? ` · ${p.network.transport === 'relay' ? 'TURN' : 'P2P'}`
                                 : ''}
