@@ -124,6 +124,8 @@ interface AudioMonitor {
   source: MediaStreamAudioSourceNode;
   analyser: AnalyserNode;
   dataArray: Uint8Array<ArrayBuffer>;
+  /** Present only for remote peers: routes playback through Web Audio instead of an <audio> element. */
+  gain?: GainNode;
 }
 
 export interface VoiceStateSnapshot {
@@ -313,21 +315,45 @@ export class VoiceRoomManager {
     return this.audioContext;
   }
 
-  private attachMonitor(key: string, stream: MediaStream): void {
+  /**
+   * Creates the analyser used by the speaking indicator.
+   * When `playback` is true the same source is also routed through a GainNode to the
+   * AudioContext destination, so remote voice is rendered by Web Audio instead of an
+   * <audio> element. Web Audio output is not a WebRTC communications render session,
+   * which avoids Windows ducking/muting other applications (e.g. game audio).
+   */
+  private attachMonitor(key: string, stream: MediaStream, playback = false): boolean {
     this.detachMonitor(key);
     const ctx = this.ensureAudioContext();
-    if (!ctx || stream.getAudioTracks().length === 0) return;
+    if (!ctx || stream.getAudioTracks().length === 0) return false;
 
+    let source: MediaStreamAudioSourceNode | null = null;
+    let analyser: AnalyserNode | null = null;
+    let gain: GainNode | null = null;
     try {
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
+      source = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.45;
       source.connect(analyser);
+      if (playback) {
+        gain = ctx.createGain();
+        gain.gain.value = this.isDeafened ? 0 : (this.peerVolumes.get(key) ?? 1);
+        source.connect(gain);
+        gain.connect(ctx.destination);
+      }
       const dataArray = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
-      this.monitors.set(key, { source, analyser, dataArray });
+      this.monitors.set(key, { source, analyser, dataArray, gain: gain ?? undefined });
+      return true;
     } catch {
-      // Ignore analyser errors for streams without playable audio
+      try {
+        source?.disconnect();
+        analyser?.disconnect();
+        gain?.disconnect();
+      } catch {
+        // Ignore cleanup errors
+      }
+      return false;
     }
   }
 
@@ -337,12 +363,43 @@ export class VoiceRoomManager {
       try {
         existing.source.disconnect();
         existing.analyser.disconnect();
+        existing.gain?.disconnect();
       } catch {
         // Ignore disconnect errors
       }
       this.monitors.delete(key);
     }
     this.peerLevels.delete(key);
+  }
+
+  private attachPlayback(peerId: string, stream: MediaStream): void {
+    if (this.attachMonitor(peerId, stream, true)) {
+      this.clearFallbackAudio(peerId);
+      return;
+    }
+
+    // Fallback for browsers where MediaStream -> Web Audio is unavailable.
+    let audio = this.peerAudioElements.get(peerId);
+    if (!audio) {
+      audio = new Audio();
+      audio.autoplay = true;
+      this.peerAudioElements.set(peerId, audio);
+    }
+    audio.srcObject = stream;
+    audio.volume = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
+    void audio.play().catch(() => {
+      this.warning = '浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。';
+      this.emit();
+    });
+  }
+
+  private clearFallbackAudio(peerId: string): void {
+    const audio = this.peerAudioElements.get(peerId);
+    if (audio) {
+      audio.pause();
+      audio.srcObject = null;
+      this.peerAudioElements.delete(peerId);
+    }
   }
 
   private startLevelPolling(): void {
@@ -597,20 +654,7 @@ export class VoiceRoomManager {
       if (this.joinAttemptId !== attemptId) return;
       const stream = event.streams[0] ?? new MediaStream([event.track]);
       this.peerStreams.set(remotePeerId, stream);
-      let audio = this.peerAudioElements.get(remotePeerId);
-      if (!audio) {
-        audio = new Audio();
-        audio.autoplay = true;
-        this.peerAudioElements.set(remotePeerId, audio);
-      }
-      audio.srcObject = stream;
-      const peerVol = this.peerVolumes.get(remotePeerId) ?? 1;
-      audio.volume = this.isDeafened ? 0 : peerVol;
-      void audio.play().catch(() => {
-        this.warning = '浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。';
-        this.emit();
-      });
-      this.attachMonitor(remotePeerId, stream);
+      this.attachPlayback(remotePeerId, stream);
       this.emit();
     };
 
@@ -739,12 +783,7 @@ export class VoiceRoomManager {
       this.peerConnections.delete(peerId);
     }
 
-    const audio = this.peerAudioElements.get(peerId);
-    if (audio) {
-      audio.pause();
-      audio.srcObject = null;
-      this.peerAudioElements.delete(peerId);
-    }
+    this.clearFallbackAudio(peerId);
 
     if (this.failedPeerIds.size === 0 && this.warning === NAT_WARNING_TEXT) {
       this.warning = null;
@@ -1064,6 +1103,11 @@ export class VoiceRoomManager {
       const peerVol = this.peerVolumes.get(peerId) ?? 1;
       audio.volume = this.isDeafened ? 0 : peerVol;
     }
+    for (const [peerId, monitor] of this.monitors.entries()) {
+      if (monitor.gain) {
+        monitor.gain.gain.value = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
+      }
+    }
     this.sendWs({ type: 'meta', meta: this.buildSelfMeta() });
     this.emit();
   }
@@ -1074,6 +1118,10 @@ export class VoiceRoomManager {
     const audio = this.peerAudioElements.get(peerId);
     if (audio) {
       audio.volume = this.isDeafened ? 0 : clamped;
+    }
+    const monitor = this.monitors.get(peerId);
+    if (monitor?.gain) {
+      monitor.gain.gain.value = this.isDeafened ? 0 : clamped;
     }
     this.emit();
   }
