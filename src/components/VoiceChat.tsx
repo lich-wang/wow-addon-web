@@ -341,13 +341,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const displayError = localError || voiceState.error;
   const selfAudioLevel = voiceState.participants.find((participant) => participant.isSelf)?.audioLevel ?? 0;
   const roomOutputDeviceId = pendingOutputDeviceId ?? voiceState.selectedOutputDeviceId;
+  const hasResolvedOutputIds = audioOutputs.some((device) => Boolean(device.deviceId));
   const isSelectedOutputMissing =
     Boolean(selectedOutputDeviceId) &&
-    audioOutputs.length > 0 &&
+    hasResolvedOutputIds &&
     !audioOutputs.some((device) => device.deviceId === selectedOutputDeviceId);
   const isRoomOutputMissing =
     Boolean(roomOutputDeviceId) &&
-    audioOutputs.length > 0 &&
+    hasResolvedOutputIds &&
     !audioOutputs.some((device) => device.deviceId === roomOutputDeviceId);
 
   if (!isInRoom) {
