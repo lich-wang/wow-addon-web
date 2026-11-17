@@ -21,6 +21,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import type { VoiceStateSnapshot } from '../services/voiceService';
+import { VoiceDeviceCheck } from './VoiceDeviceCheck';
 import type {
   NetworkQualityLevel,
   PeerNetworkStats,
@@ -311,6 +312,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const isInRoom = voiceState.status === 'connected' || voiceState.status === 'connecting';
   const displayError = localError || voiceState.error;
+  const selfAudioLevel = voiceState.participants.find((participant) => participant.isSelf)?.audioLevel ?? 0;
 
   if (!isInRoom) {
     return (
@@ -493,6 +495,10 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             </div>
           </form>
 
+          <div className="px-6 pb-5">
+            <VoiceDeviceCheck micDeviceId={selectedDeviceId} outputDeviceId={selectedOutputDeviceId} />
+          </div>
+
           {/* Footer Info */}
           <div className="px-6 py-4 bg-slate-950/60 border-t border-slate-800/80 text-xs text-slate-400 space-y-1.5">
             <p className="font-medium text-slate-300">使用说明：</p>
@@ -642,6 +648,19 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           </button>
         </div>
       </div>
+
+      <details className="rounded-2xl bg-slate-900/60 border border-slate-800 p-4">
+        <summary className="text-sm font-semibold text-slate-200 cursor-pointer select-none">
+          设备自检（麦克风 / 扬声器）
+        </summary>
+        <div className="mt-3">
+          <VoiceDeviceCheck
+            inRoom
+            selfAudioLevel={selfAudioLevel}
+            outputDeviceId={voiceState.selectedOutputDeviceId}
+          />
+        </div>
+      </details>
 
       {/* Autoplay Blocked Banner */}
       {voiceState.autoplayBlocked && (
