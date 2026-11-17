@@ -4332,47 +4332,65 @@ local questieQuestInfoCache = {}
 local function GetQuestieQuestInfo(qid, fallbackObj)
   qid = tonumber(qid)
   if not qid or qid <= 0 or not _G.QuestDB then return fallbackObj end
-  local cached = questieQuestInfoCache[qid]
-  if cached ~= nil then
-    if cached == false then return fallbackObj end
-    return cached
+  local raw = questieQuestInfoCache[qid]
+  if raw == nil then
+    local qName = _G.QuestDB.name and _G.QuestDB.name(qid)
+    if not qName or qName == "" then
+      questieQuestInfoCache[qid] = false
+      raw = false
+    else
+      local qLevel = _G.QuestDB.questLevel and _G.QuestDB.questLevel(qid)
+      local qMinLevel = _G.QuestDB.requiredLevel and _G.QuestDB.requiredLevel(qid)
+      local started = _G.QuestDB.startedBy and _G.QuestDB.startedBy(qid)
+      local finished = _G.QuestDB.finishedBy and _G.QuestDB.finishedBy(qid)
+      local startInfo = ResolveQuestieNpc(started and started[1])
+      local endInfo = ResolveQuestieNpc(finished and finished[1])
+      local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(qid)
+      local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(qid)
+      local nextQ = _G.QuestDB.nextQuestInChain and _G.QuestDB.nextQuestInChain(qid)
+      local sFlags = _G.QuestDB.specialFlags and _G.QuestDB.specialFlags(qid)
+      local repeatable = (type(sFlags) == "number" and bit and bit.band and bit.band(sFlags, 1) ~= 0) or false
+      raw = {
+        id = qid,
+        name = qName,
+        level = (type(qLevel) == "number" and qLevel > 0) and qLevel or nil,
+        minLevel = (type(qMinLevel) == "number" and qMinLevel > 0) and qMinLevel or nil,
+        npc = (startInfo and startInfo.npc ~= "") and startInfo.npc or nil,
+        zone = (startInfo and startInfo.zone ~= "") and startInfo.zone or nil,
+        x = startInfo and startInfo.x or nil,
+        y = startInfo and startInfo.y or nil,
+        endNpc = (endInfo and endInfo.npc ~= "") and endInfo.npc or nil,
+        endZone = (endInfo and endInfo.zone ~= "") and endInfo.zone or nil,
+        endX = endInfo and endInfo.x or nil,
+        endY = endInfo and endInfo.y or nil,
+        preSingle = preS,
+        preGroup = preG,
+        nextQuest = (type(nextQ) == "number" and nextQ > 0) and nextQ or nil,
+        repeatable = repeatable,
+      }
+      questieQuestInfoCache[qid] = raw
+    end
   end
-  local qName = _G.QuestDB.name and _G.QuestDB.name(qid)
-  if not qName or qName == "" then
-    questieQuestInfoCache[qid] = false
-    return fallbackObj
-  end
-  local qLevel = _G.QuestDB.questLevel and _G.QuestDB.questLevel(qid)
-  local qMinLevel = _G.QuestDB.requiredLevel and _G.QuestDB.requiredLevel(qid)
-  local started = _G.QuestDB.startedBy and _G.QuestDB.startedBy(qid)
-  local finished = _G.QuestDB.finishedBy and _G.QuestDB.finishedBy(qid)
-  local startInfo = ResolveQuestieNpc(started and started[1])
-  local endInfo = ResolveQuestieNpc(finished and finished[1])
-  local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(qid)
-  local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(qid)
-  local nextQ = _G.QuestDB.nextQuestInChain and _G.QuestDB.nextQuestInChain(qid)
-  local sFlags = _G.QuestDB.specialFlags and _G.QuestDB.specialFlags(qid)
-  local repeatable = (type(sFlags) == "number" and bit and bit.band and bit.band(sFlags, 1) ~= 0) or false
-  local info = {
-    id = qid,
-    name = qName,
-    level = (type(qLevel) == "number" and qLevel > 0) and qLevel or (fallbackObj and fallbackObj.level),
-    minLevel = (type(qMinLevel) == "number" and qMinLevel > 0) and qMinLevel or (fallbackObj and fallbackObj.minLevel),
-    npc = (startInfo and startInfo.npc ~= "") and startInfo.npc or (fallbackObj and fallbackObj.npc) or "",
-    zone = (startInfo and startInfo.zone ~= "") and startInfo.zone or (fallbackObj and fallbackObj.zone) or "",
-    x = (startInfo and startInfo.x) or (fallbackObj and fallbackObj.x),
-    y = (startInfo and startInfo.y) or (fallbackObj and fallbackObj.y),
-    endNpc = (endInfo and endInfo.npc ~= "") and endInfo.npc or nil,
-    endZone = (endInfo and endInfo.zone ~= "") and endInfo.zone or nil,
-    endX = endInfo and endInfo.x or nil,
-    endY = endInfo and endInfo.y or nil,
-    preSingle = preS,
-    preGroup = preG,
-    nextQuest = (type(nextQ) == "number" and nextQ > 0) and nextQ or nil,
-    repeatable = repeatable,
+  if raw == false then return fallbackObj end
+  if not fallbackObj then return raw end
+  return {
+    id = raw.id,
+    name = raw.name,
+    level = raw.level or fallbackObj.level,
+    minLevel = raw.minLevel or fallbackObj.minLevel,
+    npc = raw.npc or fallbackObj.npc or "",
+    zone = raw.zone or fallbackObj.zone or "",
+    x = raw.x or fallbackObj.x,
+    y = raw.y or fallbackObj.y,
+    endNpc = raw.endNpc or fallbackObj.endNpc,
+    endZone = raw.endZone or fallbackObj.endZone,
+    endX = raw.endX or fallbackObj.endX,
+    endY = raw.endY or fallbackObj.endY,
+    preSingle = raw.preSingle,
+    preGroup = raw.preGroup,
+    nextQuest = raw.nextQuest,
+    repeatable = raw.repeatable,
   }
-  questieQuestInfoCache[qid] = info
-  return info
 end
 
 local function ResolveQuestChainFromQuestieDB(q)
@@ -4386,6 +4404,7 @@ local function ResolveQuestChainFromQuestieDB(q)
   q.name = mainInfo.name
   if mainInfo.level then q.level = mainInfo.level end
   if mainInfo.minLevel then q.minLevel = mainInfo.minLevel end
+  q.repeatable = mainInfo.repeatable or nil
 
   local steps = {}
   local visited = {}
@@ -4526,7 +4545,12 @@ local function DedupeQuestieQuests(quests)
           table.insert(oIds, tonumber(other.id or other.questId))
         end
         if #oIds < #ids then
-          local oFirstRep = (type(other.steps) == "table" and other.steps[1] and other.steps[1].repeatable)
+          local oFirstRep
+          if type(other.steps) == "table" and other.steps[1] then
+            oFirstRep = other.steps[1].repeatable
+          else
+            oFirstRep = other.repeatable
+          end
           if not oFirstRep then
             local offset = #ids - #oIds
             local match = true
@@ -4961,6 +4985,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
     maxPrefixDepth = 0
   else
     local prefixQuest = {
+      _qdbResolved = true,
       id = lastPre.id,
       name = lastPre.name,
       faction = q1.faction,
