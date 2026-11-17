@@ -4,12 +4,12 @@
     "source": "https://edge.forgecdn.net/files/9638/308/Bagnon-12.1.11.zip"
   },
   "blackthornes-tradeskills": {
-    "version": "v1.21.0",
-    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.21.0/Blackthornes_TS-v1.21.0-forever.zip"
+    "version": "v1.32.0",
+    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.32.0/Blackthornes_TS-v1.32.0-forever.zip"
   },
   "dungeonsforever": {
-    "version": "v2.1.104",
-    "source": "https://edge.forgecdn.net/files/9641/500/DungeonsForever2.1.104.zip"
+    "version": "v2.1.109",
+    "source": "https://edge.forgecdn.net/files/9649/511/DungeonsForever2.1.109.zip"
   },
   "forever-mouse-tooltip": {
     "version": "v0.2.0",
@@ -20,31 +20,31 @@
     "source": "builtin://forever-transit"
   },
   "icehud": {
-    "version": "v1.17.28",
-    "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.28/IceHUD-v1.17.28.zip"
+    "version": "v1.17.30",
+    "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.30/IceHUD-v1.17.30.zip"
   },
   "lueur": {
-    "version": "v1.7.0",
-    "source": "https://edge.forgecdn.net/files/9547/99/Lueur-1.7.0.zip"
+    "version": "v2.0.0",
+    "source": "https://edge.forgecdn.net/files/9661/950/Lueur-2.0.0.zip"
   },
   "mapzeroth": {
     "version": "v2.0.0-dev",
     "source": "https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip"
   },
   "questie-forever": {
-    "version": "v12.9.0 + DB v1.1.1",
-    "source": "https://edge.forgecdn.net/files/9602/663/Questie-v12.9.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.1/QuestieDB-1.1.1-Forever.zip"
+    "version": "v12.9.0 + DB v1.1.2",
+    "source": "https://edge.forgecdn.net/files/9602/663/Questie-v12.9.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.2/QuestieDB-1.1.2-Forever.zip"
   },
   "sbf": {
-    "version": "2026.11.05.1",
-    "source": "https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.05.1/SBF-2026.11.05.1.zip"
+    "version": "2026.11.14.8",
+    "source": "https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.14.8/SBF-2026.11.14.8.zip"
   },
   "spellactivationoverlay": {
-    "version": "v2.9.1",
-    "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v2.9.1/SpellActivationOverlay-2.9.1-universal.zip"
+    "version": "v3.0.0",
+    "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v3.0.0/SpellActivationOverlay-3.0.0-universal.zip"
   },
   "wowf": {
-    "version": "v1.2.22 + DB v2026.11.16",
-    "source": "https://wowf.io/zh (deploy-fe74460d-1794894361367)"
+    "version": "v1.2.23 + DB v2026.11.16",
+    "source": "https://wowf.io/zh (deploy-dd95d345-1794905677116)"
   }
 }
