@@ -454,7 +454,7 @@ export class VoiceRoomManager {
               if (rtp.kind === 'audio' || rtp.mediaType === 'audio') {
                 inboundStreams.set(stat.id, {
                   received: rtp.packetsReceived ?? 0,
-                  lost: Math.max(0, rtp.packetsLost ?? 0),
+                  lost: rtp.packetsLost ?? 0,
                 });
               }
             }
@@ -492,9 +492,9 @@ export class VoiceRoomManager {
 
             for (const [streamId, curr] of inboundStreams.entries()) {
               const prev = prevByStream.get(streamId);
-              if (prev && curr.received >= prev.received && curr.lost >= prev.lost) {
+              if (prev && curr.received >= prev.received) {
                 dRecvTotal += curr.received - prev.received;
-                dLostTotal += curr.lost - prev.lost;
+                dLostTotal += Math.max(0, curr.lost - prev.lost);
                 hasDelta = true;
               }
               nextByStream.set(streamId, curr);
