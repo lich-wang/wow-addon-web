@@ -21,7 +21,14 @@ import {
   Wifi,
 } from 'lucide-react';
 import type { VoiceStateSnapshot } from '../services/voiceService';
-import type { NetworkQualityLevel, PeerNetworkStats, VoiceJoinOptions } from '../types/voice';
+import type {
+  NetworkQualityLevel,
+  PeerNetworkStats,
+  PlaybackMode,
+  RelayProvider,
+  TransportProtocol,
+  VoiceJoinOptions,
+} from '../types/voice';
 
 const NETWORK_QUALITY_META: Record<
   NetworkQualityLevel,
@@ -49,10 +56,35 @@ const NETWORK_QUALITY_META: Record<
   },
 };
 
+function formatRelayLabel(relay: RelayProvider): string {
+  if (relay === 'vps') return 'VPS';
+  if (relay === 'cloudflare') return 'Cloudflare';
+  if (relay === 'mixed') return '混合TURN';
+  if (relay === 'custom') return 'TURN';
+  return '';
+}
+
+function formatProtocolLabel(protocol: TransportProtocol): string {
+  if (protocol === 'udp') return 'UDP';
+  if (protocol === 'tcp') return 'TCP';
+  return '';
+}
+
 function formatTransportLabel(stats: PeerNetworkStats): string {
-  if (stats.transport === 'relay') return 'TURN中继';
-  if (stats.transport === 'p2p') return 'P2P直连';
-  return '连接中';
+  const base =
+    stats.transport === 'relay'
+      ? `TURN·${formatRelayLabel(stats.relay) || '中继'}`
+      : stats.transport === 'p2p'
+        ? 'P2P直连'
+        : '连接中';
+  const protocol = formatProtocolLabel(stats.protocol);
+  return protocol ? `${base} · ${protocol}` : base;
+}
+
+function formatPlaybackLabel(mode: PlaybackMode): string {
+  if (mode === 'web-audio') return 'Web Audio';
+  if (mode === 'audio-element') return 'Audio 元素';
+  return '';
 }
 
 interface VoiceChatProps {
@@ -466,35 +498,46 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                   <span>已加密</span>
                 </span>
                 {voiceState.status === 'connected' && (
-                  voiceState.networkSummary ? (
-                    <span
-                      title={`传输方式：${formatTransportLabel(voiceState.networkSummary)}${
-                        voiceState.networkSummary.packetLossPct !== null
-                          ? `，丢包率 ${voiceState.networkSummary.packetLossPct}%`
-                          : ''
-                      }`}
-                      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md border text-[11px] ${
-                        NETWORK_QUALITY_META[voiceState.networkSummary.quality].badgeClass
-                      }`}
-                    >
-                      <Wifi className="w-3 h-3" />
-                      <span>
-                        {NETWORK_QUALITY_META[voiceState.networkSummary.quality].label}
-                        {voiceState.networkSummary.rttMs !== null ? ` · ${voiceState.networkSummary.rttMs}ms` : ''}
-                        {voiceState.networkSummary.packetLossPct !== null
-                          ? ` · 丢包 ${voiceState.networkSummary.packetLossPct}%`
-                          : ''}
-                        {voiceState.networkSummary.transport !== 'unknown'
-                          ? ` · ${formatTransportLabel(voiceState.networkSummary)}`
-                          : ''}
+                  <>
+                    {voiceState.networkSummary ? (
+                      <span
+                        title={`传输方式：${formatTransportLabel(voiceState.networkSummary)}${
+                          voiceState.networkSummary.packetLossPct !== null
+                            ? `，丢包率 ${voiceState.networkSummary.packetLossPct}%`
+                            : ''
+                        }`}
+                        className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md border text-[11px] ${
+                          NETWORK_QUALITY_META[voiceState.networkSummary.quality].badgeClass
+                        }`}
+                      >
+                        <Wifi className="w-3 h-3" />
+                        <span>
+                          {NETWORK_QUALITY_META[voiceState.networkSummary.quality].label}
+                          {voiceState.networkSummary.rttMs !== null ? ` · ${voiceState.networkSummary.rttMs}ms` : ''}
+                          {voiceState.networkSummary.packetLossPct !== null
+                            ? ` · 丢包 ${voiceState.networkSummary.packetLossPct}%`
+                            : ''}
+                          {voiceState.networkSummary.transport !== 'unknown'
+                            ? ` · ${formatTransportLabel(voiceState.networkSummary)}`
+                            : ''}
+                        </span>
                       </span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-400 text-[11px]">
-                      <Wifi className="w-3 h-3 text-emerald-400" />
-                      <span>信令正常</span>
-                    </span>
-                  )
+                    ) : (
+                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-400 text-[11px]">
+                        <Wifi className="w-3 h-3 text-emerald-400" />
+                        <span>信令正常</span>
+                      </span>
+                    )}
+                    {voiceState.playbackMode !== 'unknown' && (
+                      <span
+                        title="远端语音播放方式"
+                        className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/25 text-sky-300 text-[11px]"
+                      >
+                        <Headphones className="w-3 h-3" />
+                        <span>{formatPlaybackLabel(voiceState.playbackMode)}</span>
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5 flex items-center space-x-2">
@@ -705,7 +748,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                               {NETWORK_QUALITY_META[p.network.quality].label}
                               {p.network.rttMs !== null ? ` · ${p.network.rttMs}ms` : ''}
                               {p.network.transport !== 'unknown'
-                                ? ` · ${p.network.transport === 'relay' ? 'TURN' : 'P2P'}`
+                                ? ` · ${formatTransportLabel(p.network)}`
                                 : ''}
                               {p.network.packetLossPct !== null && p.network.packetLossPct > 0
                                 ? ` · 丢包${p.network.packetLossPct}%`
