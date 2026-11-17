@@ -1,12 +1,14 @@
 /**
  * Cloudflare Pages Function: /api/turn-credentials
- * Generates short-lived WebRTC TURN/STUN credentials via Cloudflare Realtime TURN API.
- * Falls back to public domestic-accessible STUN servers if TURN env vars are not configured.
+ * Generates short-lived WebRTC TURN/STUN credentials.
+ * Prefers self-hosted domestic coturn (HMAC-SHA1) when configured, with Cloudflare Realtime TURN as fallback.
  */
 
 interface TurnEnv {
   CF_TURN_TOKEN_ID?: string;
   CF_TURN_API_TOKEN?: string;
+  COTURN_HOST?: string;
+  COTURN_STATIC_SECRET?: string;
 }
 
 interface IceServerEntry {
@@ -16,11 +18,20 @@ interface IceServerEntry {
 }
 
 interface CloudflareTurnResponse {
-  iceServers?: IceServerEntry[];
+  iceServers?: unknown;
 }
 
 const TURN_CREDENTIAL_TTL_SECONDS = 3600;
-const UPSTREAM_TIMEOUT_MS = 5000;
+const UPSTREAM_TIMEOUT_MS = 2500;
+
+function isValidIceServerEntry(entry: unknown): entry is IceServerEntry {
+  if (!entry || typeof entry !== 'object') return false;
+  const obj = entry as Record<string, unknown>;
+  return (
+    (typeof obj.urls === 'string' && obj.urls.length > 0) ||
+    (Array.isArray(obj.urls) && obj.urls.length > 0 && obj.urls.every((u) => typeof u === 'string' && u.length > 0))
+  );
+}
 
 const FALLBACK_STUN_SERVERS: IceServerEntry[] = [
   { urls: 'stun:stun.cloudflare.com:3478' },
@@ -62,17 +73,31 @@ function mergeWithFallbackStun(turnServers: IceServerEntry[]): IceServerEntry[] 
   return [...turnServers, ...extras];
 }
 
-export async function onRequestGet(context: { env: TurnEnv }): Promise<Response> {
-  const tokenId = context.env.CF_TURN_TOKEN_ID?.trim();
-  const apiToken = context.env.CF_TURN_API_TOKEN?.trim();
+async function buildCoturnIceServers(host: string, secret: string): Promise<IceServerEntry[]> {
+  const encoder = new TextEncoder();
+  const expiresAt = Math.floor(Date.now() / 1000) + TURN_CREDENTIAL_TTL_SECONDS;
+  const username = `${expiresAt}:wow`;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-1' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(username));
+  const credential = btoa(String.fromCharCode(...new Uint8Array(signature)));
 
-  if (!tokenId || !apiToken || !/^[a-zA-Z0-9_-]+$/.test(tokenId)) {
-    return jsonResponse({
-      iceServers: FALLBACK_STUN_SERVERS,
-      turnConfigured: false,
-    });
-  }
+  return [
+    { urls: `stun:${host}:3478` },
+    {
+      urls: [`turn:${host}:3478?transport=udp`, `turn:${host}:3478?transport=tcp`],
+      username,
+      credential,
+    },
+  ];
+}
 
+async function fetchCloudflareTurnServers(tokenId: string, apiToken: string): Promise<IceServerEntry[]> {
   try {
     const response = await fetch(
       `https://rtc.live.cloudflare.com/v1/turn/keys/${tokenId}/credentials/generate-ice-servers`,
@@ -86,32 +111,41 @@ export async function onRequestGet(context: { env: TurnEnv }): Promise<Response>
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       }
     );
-
-    if (!response.ok) {
-      return jsonResponse({
-        iceServers: FALLBACK_STUN_SERVERS,
-        turnConfigured: false,
-      });
-    }
-
+    if (!response.ok) return [];
     const data = (await response.json()) as CloudflareTurnResponse;
-    if (!Array.isArray(data.iceServers) || data.iceServers.length === 0) {
-      return jsonResponse({
-        iceServers: FALLBACK_STUN_SERVERS,
-        turnConfigured: false,
-      });
-    }
-
-    return jsonResponse({
-      iceServers: mergeWithFallbackStun(data.iceServers),
-      turnConfigured: true,
-    });
+    return Array.isArray(data.iceServers) ? data.iceServers.filter(isValidIceServerEntry) : [];
   } catch {
+    return [];
+  }
+}
+
+export async function onRequestGet(context: { env: TurnEnv }): Promise<Response> {
+  const coturnHost = context.env.COTURN_HOST?.trim();
+  const coturnSecret = context.env.COTURN_STATIC_SECRET?.trim();
+  const tokenId = context.env.CF_TURN_TOKEN_ID?.trim();
+  const apiToken = context.env.CF_TURN_API_TOKEN?.trim();
+
+  const [coturnServers, cfServers] = await Promise.all([
+    coturnHost && coturnSecret && /^[a-zA-Z0-9.-]+$/.test(coturnHost)
+      ? buildCoturnIceServers(coturnHost, coturnSecret).catch(() => [] as IceServerEntry[])
+      : Promise.resolve([] as IceServerEntry[]),
+    tokenId && apiToken && /^[a-zA-Z0-9_-]+$/.test(tokenId)
+      ? fetchCloudflareTurnServers(tokenId, apiToken)
+      : Promise.resolve([] as IceServerEntry[]),
+  ]);
+
+  const combined = [...coturnServers, ...cfServers];
+  if (combined.length === 0) {
     return jsonResponse({
       iceServers: FALLBACK_STUN_SERVERS,
       turnConfigured: false,
     });
   }
+
+  return jsonResponse({
+    iceServers: mergeWithFallbackStun(combined),
+    turnConfigured: true,
+  });
 }
 
 export async function onRequestOptions(): Promise<Response> {
