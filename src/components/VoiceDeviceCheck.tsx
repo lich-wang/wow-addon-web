@@ -35,9 +35,12 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
   const micStreamRef = useRef<MediaStream | null>(null);
   const micContextRef = useRef<AudioContext | null>(null);
   const micFrameRef = useRef<number | null>(null);
+  const micTokenRef = useRef(0);
+  const speakerTokenRef = useRef(0);
   const speakerCleanupRef = useRef<(() => void) | null>(null);
 
   const stopMicTest = useCallback(() => {
+    micTokenRef.current++;
     if (micFrameRef.current !== null) {
       cancelAnimationFrame(micFrameRef.current);
       micFrameRef.current = null;
@@ -61,27 +64,45 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
       stopMicTest();
       return;
     }
+
+    const token = ++micTokenRef.current;
     setMicStarting(true);
     setMicError(null);
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
+
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('当前浏览器不支持麦克风采集');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
         video: false,
       });
-      const context = new AudioContext();
+      if (micTokenRef.current !== token) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
+
+      micStreamRef.current = stream;
+      context = new AudioContext();
+      if (micTokenRef.current !== token) {
+        for (const track of stream.getTracks()) track.stop();
+        void context.close().catch(() => {});
+        if (micStreamRef.current === stream) micStreamRef.current = null;
+        return;
+      }
+
+      micContextRef.current = context;
       const source = context.createMediaStreamSource(stream);
       const analyser = context.createAnalyser();
       analyser.fftSize = 512;
       source.connect(analyser);
       const data = new Uint8Array(analyser.fftSize);
-      micStreamRef.current = stream;
-      micContextRef.current = context;
       setMicTesting(true);
 
       const tick = () => {
+        if (micTokenRef.current !== token) return;
         analyser.getByteTimeDomainData(data);
         let sum = 0;
         for (let i = 0; i < data.length; i++) {
@@ -94,6 +115,14 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
       };
       tick();
     } catch (err) {
+      if (stream) {
+        for (const track of stream.getTracks()) track.stop();
+        if (micStreamRef.current === stream) micStreamRef.current = null;
+      }
+      if (context) {
+        void context.close().catch(() => {});
+        if (micContextRef.current === context) micContextRef.current = null;
+      }
       setMicError(describeMicError(err));
     } finally {
       setMicStarting(false);
@@ -102,6 +131,7 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
 
   const testSpeaker = async () => {
     if (speakerTesting) {
+      speakerTokenRef.current++;
       speakerCleanupRef.current?.();
       speakerCleanupRef.current = null;
       setSpeakerTesting(false);
@@ -109,23 +139,62 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
       return;
     }
 
+    const token = ++speakerTokenRef.current;
     setSpeakerTesting(true);
     setSpeakerStatus('正在播放测试音...');
+
+    let context: AudioContext | null = null;
+    let audio: HTMLAudioElement | null = null;
+    let oscillator: OscillatorNode | null = null;
+    let gain: GainNode | null = null;
+    let cleaned = false;
+
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        oscillator?.stop();
+      } catch {
+        // Already stopped
+      }
+      try {
+        gain?.disconnect();
+      } catch {
+        // Already disconnected
+      }
+      if (audio) {
+        audio.pause();
+        audio.srcObject = null;
+      }
+      if (context) {
+        void context.close().catch(() => {});
+      }
+    };
+    speakerCleanupRef.current = cleanup;
+
     try {
-      const context = new AudioContext();
+      context = new AudioContext();
+      if (speakerTokenRef.current !== token) {
+        cleanup();
+        return;
+      }
+
       const sinkableContext = context as AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
       if (outputDeviceId && sinkableContext.setSinkId) {
         await sinkableContext.setSinkId(outputDeviceId);
       }
+      if (speakerTokenRef.current !== token) {
+        cleanup();
+        return;
+      }
 
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
+      oscillator = context.createOscillator();
+      gain = context.createGain();
       oscillator.type = 'sine';
       oscillator.frequency.value = 440;
       gain.gain.value = 0.18;
       oscillator.connect(gain);
 
-      let audio: HTMLAudioElement | null = null;
       if (sinkableContext.setSinkId) {
         gain.connect(context.destination);
       } else {
@@ -137,50 +206,45 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
         if (outputDeviceId && sinkableAudio.setSinkId) {
           await sinkableAudio.setSinkId(outputDeviceId);
         }
+        if (speakerTokenRef.current !== token) {
+          cleanup();
+          return;
+        }
         await audio.play();
+        if (speakerTokenRef.current !== token) {
+          cleanup();
+          return;
+        }
       }
 
       oscillator.start();
       oscillator.stop(context.currentTime + 1.2);
 
-      const cleanup = () => {
-        try {
-          oscillator.stop();
-        } catch {
-          // Already stopped
-        }
-        try {
-          gain.disconnect();
-        } catch {
-          // Already disconnected
-        }
-        if (audio) {
-          audio.pause();
-          audio.srcObject = null;
-        }
-        void context.close().catch(() => {});
-      };
-      speakerCleanupRef.current = cleanup;
-
       window.setTimeout(() => {
+        if (speakerTokenRef.current !== token) return;
         cleanup();
         speakerCleanupRef.current = null;
         setSpeakerTesting(false);
         setSpeakerStatus('测试音播放完成');
       }, 1400);
     } catch (err) {
-      setSpeakerTesting(false);
-      setSpeakerStatus(err instanceof Error ? `扬声器测试失败：${err.message}` : '扬声器测试失败');
+      cleanup();
+      speakerCleanupRef.current = null;
+      if (speakerTokenRef.current === token) {
+        setSpeakerTesting(false);
+        setSpeakerStatus(err instanceof Error ? `扬声器测试失败：${err.message}` : '扬声器测试失败');
+      }
     }
   };
 
   useEffect(
     () => () => {
+      speakerTokenRef.current++;
       stopMicTest();
       speakerCleanupRef.current?.();
       speakerCleanupRef.current = null;
     },
-    [stopMicTest]
+    [micDeviceId, stopMicTest]
   );
 
   const level = inRoom ? Math.min(1, selfAudioLevel) : micLevel;
