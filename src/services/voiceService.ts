@@ -375,6 +375,10 @@ export class VoiceRoomManager {
   private attachPlayback(peerId: string, stream: MediaStream): void {
     if (this.attachMonitor(peerId, stream, true)) {
       this.clearFallbackAudio(peerId);
+      if (this.audioContext?.state === 'suspended') {
+        this.warning = '浏览器阻止了自动播放，请点击“恢复播放”按钮以收听语音。';
+        this.emit();
+      }
       return;
     }
 
