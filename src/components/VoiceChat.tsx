@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Mic,
   MicOff,
@@ -21,7 +21,15 @@ import {
   Wifi,
 } from 'lucide-react';
 import type { VoiceStateSnapshot } from '../services/voiceService';
-import type { NetworkQualityLevel, PeerNetworkStats, VoiceJoinOptions } from '../types/voice';
+import { VoiceDeviceCheck } from './VoiceDeviceCheck';
+import type {
+  NetworkQualityLevel,
+  PeerNetworkStats,
+  PlaybackMode,
+  RelayProvider,
+  TransportProtocol,
+  VoiceJoinOptions,
+} from '../types/voice';
 
 const NETWORK_QUALITY_META: Record<
   NetworkQualityLevel,
@@ -49,10 +57,44 @@ const NETWORK_QUALITY_META: Record<
   },
 };
 
+function formatRelayLabel(relay: RelayProvider): string {
+  if (relay === 'vps') return 'VPS';
+  if (relay === 'cloudflare') return 'Cloudflare';
+  if (relay === 'mixed') return '混合TURN';
+  if (relay === 'custom') return 'TURN';
+  return '';
+}
+
+function formatProtocolLabel(protocol: TransportProtocol): string {
+  if (protocol === 'udp') return 'UDP';
+  if (protocol === 'tcp') return 'TCP';
+  return '';
+}
+
 function formatTransportLabel(stats: PeerNetworkStats): string {
-  if (stats.transport === 'relay') return 'TURN中继';
-  if (stats.transport === 'p2p') return 'P2P直连';
-  return '连接中';
+  const base =
+    stats.transport === 'relay'
+      ? `TURN·${formatRelayLabel(stats.relay) || '中继'}`
+      : stats.transport === 'p2p'
+        ? 'P2P直连'
+        : '连接中';
+  const protocol = formatProtocolLabel(stats.protocol);
+  return protocol ? `${base} · ${protocol}` : base;
+}
+
+function formatPlaybackLabel(mode: PlaybackMode): string {
+  if (mode === 'web-audio') return 'Web Audio';
+  if (mode === 'audio-element') return 'Audio 元素';
+  return '';
+}
+
+function formatRate(kbps: number | null): string {
+  if (kbps === null) return '--';
+  return kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${kbps} kbps`;
+}
+
+function formatLatency(ms: number | null): string {
+  return ms === null ? '--' : `${ms}ms`;
 }
 
 interface VoiceChatProps {
@@ -64,11 +106,13 @@ interface VoiceChatProps {
   onToggleDeafen: () => void;
   onSetPeerVolume: (peerId: string, volume: number) => void;
   onSwitchMicrophone: (deviceId: string) => Promise<void>;
+  onSwitchOutputDevice: (deviceId: string) => Promise<boolean>;
   onSendMessage: (text: string) => Promise<void>;
   onResumePlayback: () => void;
 }
 
 const NICKNAME_STORAGE_KEY = 'wow_voice_nickname';
+const OUTPUT_DEVICE_STORAGE_KEY = 'wow_voice_output_device';
 
 function generateRandomRoomId(): string {
   const num = Math.floor(1000 + Math.random() * 9000);
@@ -84,6 +128,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   onToggleDeafen,
   onSetPeerVolume,
   onSwitchMicrophone,
+  onSwitchOutputDevice,
   onSendMessage,
   onResumePlayback,
 }) => {
@@ -100,7 +145,16 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [listenOnly, setListenOnly] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(voiceState.selectedDeviceId);
   const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null);
+  const [selectedOutputDeviceId, setSelectedOutputDeviceId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(OUTPUT_DEVICE_STORAGE_KEY) || voiceState.selectedOutputDeviceId;
+    } catch {
+      return voiceState.selectedOutputDeviceId;
+    }
+  });
+  const [pendingOutputDeviceId, setPendingOutputDeviceId] = useState<string | null>(null);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
   const [copiedType, setCopiedType] = useState<'room' | 'link' | null>(null);
@@ -109,20 +163,36 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const switchSeqRef = useRef(0);
+  const deviceEnumSeqRef = useRef(0);
+  const voiceStateRef = useRef(voiceState);
   const lastMessageId = voiceState.messages[voiceState.messages.length - 1]?.id;
 
   useEffect(() => {
-    const loadDevices = async () => {
-      if (!navigator.mediaDevices?.enumerateDevices) return;
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        setAudioInputs(devices.filter((d) => d.kind === 'audioinput'));
-      } catch {
-        // Ignore device enumeration failures before permission
-      }
-    };
-    void loadDevices();
-  }, [voiceState.status]);
+    voiceStateRef.current = voiceState;
+  }, [voiceState]);
+
+  const loadAudioDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const seq = ++deviceEnumSeqRef.current;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      if (deviceEnumSeqRef.current !== seq) return;
+      setAudioInputs(devices.filter((d) => d.kind === 'audioinput'));
+      setAudioOutputs(devices.filter((d) => d.kind === 'audiooutput'));
+    } catch {
+      // Ignore device enumeration failures before permission
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAudioDevices();
+    const mediaDevices = navigator.mediaDevices;
+    if (mediaDevices?.addEventListener) {
+      mediaDevices.addEventListener('devicechange', loadAudioDevices);
+      return () => mediaDevices.removeEventListener('devicechange', loadAudioDevices);
+    }
+    return undefined;
+  }, [loadAudioDevices, voiceState.status]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -159,6 +229,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         password,
         nickname: finalNickname,
         deviceId: selectedDeviceId || undefined,
+        outputDeviceId: selectedOutputDeviceId || undefined,
         listenOnly: useListenOnly,
       });
     } catch (err) {
@@ -217,8 +288,68 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     }
   };
 
+  const handleSelectOutputDevice = (nextDeviceId: string) => {
+    setSelectedOutputDeviceId(nextDeviceId);
+    try {
+      localStorage.setItem(OUTPUT_DEVICE_STORAGE_KEY, nextDeviceId);
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  const handlePickOutputDevice = async () => {
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      selectAudioOutput?: () => Promise<MediaDeviceInfo>;
+    };
+    const sessionRoom = voiceStateRef.current.roomId;
+    const sessionStatus = voiceStateRef.current.status;
+    try {
+      if (mediaDevices.selectAudioOutput) {
+        const device = await mediaDevices.selectAudioOutput();
+        const current = voiceStateRef.current;
+        if (current.roomId !== sessionRoom || current.status !== sessionStatus) return;
+        if (device?.deviceId) {
+          if (current.status === 'connected') {
+            await handleSwitchOutputChange(device.deviceId);
+          } else {
+            handleSelectOutputDevice(device.deviceId);
+          }
+        }
+      }
+      await loadAudioDevices();
+    } catch {
+      // User cancelled the picker or output selection is unsupported.
+    }
+  };
+
+  const handleSwitchOutputChange = async (nextDeviceId: string) => {
+    setRoomError(null);
+    setPendingOutputDeviceId(nextDeviceId);
+    try {
+      const applied = await onSwitchOutputDevice(nextDeviceId);
+      if (applied) {
+        handleSelectOutputDevice(nextDeviceId);
+      }
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : '切换语音输出设备失败');
+    } finally {
+      setPendingOutputDeviceId(null);
+    }
+  };
+
   const isInRoom = voiceState.status === 'connected' || voiceState.status === 'connecting';
   const displayError = localError || voiceState.error;
+  const selfAudioLevel = voiceState.participants.find((participant) => participant.isSelf)?.audioLevel ?? 0;
+  const roomOutputDeviceId = pendingOutputDeviceId ?? voiceState.selectedOutputDeviceId;
+  const hasResolvedOutputIds = audioOutputs.some((device) => Boolean(device.deviceId));
+  const isSelectedOutputMissing =
+    Boolean(selectedOutputDeviceId) &&
+    hasResolvedOutputIds &&
+    !audioOutputs.some((device) => device.deviceId === selectedOutputDeviceId);
+  const isRoomOutputMissing =
+    Boolean(roomOutputDeviceId) &&
+    hasResolvedOutputIds &&
+    !audioOutputs.some((device) => device.deviceId === roomOutputDeviceId);
 
   if (!isInRoom) {
     return (
@@ -350,6 +481,37 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                   ))}
                 </select>
               </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  语音输出设备
+                </label>
+                <div className="flex space-x-2">
+                  <select
+                    value={selectedOutputDeviceId}
+                    onChange={(e) => handleSelectOutputDevice(e.target.value)}
+                    className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-sm text-slate-200"
+                  >
+                    <option value="">系统默认输出</option>
+                    {isSelectedOutputMissing && (
+                      <option value={selectedOutputDeviceId}>已断开的输出设备</option>
+                    )}
+                    {audioOutputs.map((device, idx) => (
+                      <option key={device.deviceId || idx} value={device.deviceId}>
+                        {device.label || `输出设备 ${idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void handlePickOutputDevice()}
+                    title="检测/选择输出设备（需要浏览器授权）"
+                    className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-amber-300 transition-colors cursor-pointer text-xs shrink-0"
+                  >
+                    检测
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
@@ -372,6 +534,10 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               </button>
             </div>
           </form>
+
+          <div className="px-6 pb-5">
+            <VoiceDeviceCheck micDeviceId={selectedDeviceId} outputDeviceId={selectedOutputDeviceId} />
+          </div>
 
           {/* Footer Info */}
           <div className="px-6 py-4 bg-slate-950/60 border-t border-slate-800/80 text-xs text-slate-400 space-y-1.5">
@@ -412,35 +578,46 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                   <span>已加密</span>
                 </span>
                 {voiceState.status === 'connected' && (
-                  voiceState.networkSummary ? (
-                    <span
-                      title={`传输方式：${formatTransportLabel(voiceState.networkSummary)}${
-                        voiceState.networkSummary.packetLossPct !== null
-                          ? `，丢包率 ${voiceState.networkSummary.packetLossPct}%`
-                          : ''
-                      }`}
-                      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md border text-[11px] ${
-                        NETWORK_QUALITY_META[voiceState.networkSummary.quality].badgeClass
-                      }`}
-                    >
-                      <Wifi className="w-3 h-3" />
-                      <span>
-                        {NETWORK_QUALITY_META[voiceState.networkSummary.quality].label}
-                        {voiceState.networkSummary.rttMs !== null ? ` · ${voiceState.networkSummary.rttMs}ms` : ''}
-                        {voiceState.networkSummary.packetLossPct !== null
-                          ? ` · 丢包 ${voiceState.networkSummary.packetLossPct}%`
-                          : ''}
-                        {voiceState.networkSummary.transport !== 'unknown'
-                          ? ` · ${formatTransportLabel(voiceState.networkSummary)}`
-                          : ''}
+                  <>
+                    {voiceState.networkSummary ? (
+                      <span
+                        title={`传输方式：${formatTransportLabel(voiceState.networkSummary)}${
+                          voiceState.networkSummary.packetLossPct !== null
+                            ? `，丢包率 ${voiceState.networkSummary.packetLossPct}%`
+                            : ''
+                        }`}
+                        className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md border text-[11px] ${
+                          NETWORK_QUALITY_META[voiceState.networkSummary.quality].badgeClass
+                        }`}
+                      >
+                        <Wifi className="w-3 h-3" />
+                        <span>
+                          {NETWORK_QUALITY_META[voiceState.networkSummary.quality].label}
+                          {voiceState.networkSummary.rttMs !== null ? ` · ${voiceState.networkSummary.rttMs}ms` : ''}
+                          {voiceState.networkSummary.packetLossPct !== null
+                            ? ` · 丢包 ${voiceState.networkSummary.packetLossPct}%`
+                            : ''}
+                          {voiceState.networkSummary.transport !== 'unknown'
+                            ? ` · ${formatTransportLabel(voiceState.networkSummary)}`
+                            : ''}
+                        </span>
                       </span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-400 text-[11px]">
-                      <Wifi className="w-3 h-3 text-emerald-400" />
-                      <span>信令正常</span>
-                    </span>
-                  )
+                    ) : (
+                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-400 text-[11px]">
+                        <Wifi className="w-3 h-3 text-emerald-400" />
+                        <span>信令正常</span>
+                      </span>
+                    )}
+                    {voiceState.playbackMode !== 'unknown' && (
+                      <span
+                        title="远端语音播放方式"
+                        className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/25 text-sky-300 text-[11px]"
+                      >
+                        <Headphones className="w-3 h-3" />
+                        <span>{formatPlaybackLabel(voiceState.playbackMode)}</span>
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5 flex items-center space-x-2">
@@ -451,6 +628,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                     : `当前在线 ${voiceState.participants.length} 人`}
                 </span>
               </p>
+              {voiceState.networkSummary && (
+                <p className="text-[11px] text-slate-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span>↑ 上行 {formatRate(voiceState.networkSummary.uplinkKbps)}</span>
+                  <span>↓ 下行 {formatRate(voiceState.networkSummary.downlinkKbps)}</span>
+                  <span>上行延迟 {formatLatency(voiceState.networkSummary.uplinkRttMs)}</span>
+                  <span>下行延迟 {formatLatency(voiceState.networkSummary.downlinkRttMs)}</span>
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -511,6 +696,19 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           </button>
         </div>
       </div>
+
+      <details className="rounded-2xl bg-slate-900/60 border border-slate-800 p-4">
+        <summary className="text-sm font-semibold text-slate-200 cursor-pointer select-none">
+          设备自检（麦克风 / 扬声器）
+        </summary>
+        <div className="mt-3">
+          <VoiceDeviceCheck
+            inRoom
+            selfAudioLevel={selfAudioLevel}
+            outputDeviceId={voiceState.selectedOutputDeviceId}
+          />
+        </div>
+      </details>
 
       {/* Autoplay Blocked Banner */}
       {voiceState.autoplayBlocked && (
@@ -583,6 +781,42 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                 ))}
               </select>
             )}
+
+            {(audioOutputs.length > 0 || isRoomOutputMissing) && (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-1">
+                  <select
+                    value={roomOutputDeviceId}
+                    disabled={voiceState.status !== 'connected' || pendingOutputDeviceId !== null}
+                    onChange={(e) => {
+                      void handleSwitchOutputChange(e.target.value);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
+                  >
+                    <option value="">切换输出：默认</option>
+                    {isRoomOutputMissing && (
+                      <option value={roomOutputDeviceId}>已断开的输出设备</option>
+                    )}
+                    {audioOutputs.map((d, idx) => (
+                      <option key={d.deviceId || idx} value={d.deviceId}>
+                        {d.label || `输出 ${idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void handlePickOutputDevice()}
+                    title="检测/选择输出设备"
+                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 hover:text-amber-300 cursor-pointer"
+                  >
+                    检测
+                  </button>
+                </div>
+                {isRoomOutputMissing && (
+                  <span className="text-[10px] text-amber-400">输出设备已断开，请切回“默认”输出。</span>
+                )}
+              </div>
+            )}
           </div>
 
           {voiceState.participants.length <= 1 && (
@@ -633,7 +867,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                               {NETWORK_QUALITY_META[p.network.quality].label}
                               {p.network.rttMs !== null ? ` · ${p.network.rttMs}ms` : ''}
                               {p.network.transport !== 'unknown'
-                                ? ` · ${p.network.transport === 'relay' ? 'TURN' : 'P2P'}`
+                                ? ` · ${formatTransportLabel(p.network)}`
                                 : ''}
                               {p.network.packetLossPct !== null && p.network.packetLossPct > 0
                                 ? ` · 丢包${p.network.packetLossPct}%`
@@ -642,6 +876,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                           </span>
                         )}
                       </div>
+                      {!p.isSelf && p.network && (
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          ↑ {formatRate(p.network.uplinkKbps)} · ↓ {formatRate(p.network.downlinkKbps)} · 上行{' '}
+                          {formatLatency(p.network.uplinkRttMs)} / 下行 {formatLatency(p.network.downlinkRttMs)}
+                        </div>
+                      )}
                       <div className="flex items-center space-x-2 text-[11px] mt-0.5">
                         {p.isSpeaking ? (
                           <span className="text-emerald-400 font-medium">正在说话...</span>

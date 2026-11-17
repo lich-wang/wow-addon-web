@@ -1,7 +1,10 @@
 import type {
   NetworkQualityLevel,
   PeerNetworkStats,
+  PlaybackMode,
+  RelayProvider,
   TransportMode,
+  TransportProtocol,
   VoiceChatMessage,
   VoiceConnectionStatus,
   VoiceJoinOptions,
@@ -22,6 +25,9 @@ const TURN_CREDENTIALS_PATH = '/api/turn-credentials';
 const REMOTE_TURN_CREDENTIALS_URL = 'https://wow.lich.tech/api/turn-credentials';
 const TURN_FETCH_TIMEOUT_MS = 4000;
 const TURN_CACHE_TTL_MS = 30 * 60 * 1000;
+
+type SinkableAudioContext = AudioContext & { setSinkId?: (sinkId: string) => Promise<void> };
+type SinkableAudioElement = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> };
 
 const NAT_WARNING_TEXT = '与部分成员的语音直连失败，可能受网络（NAT）限制，请更换网络或稍后重试。';
 const AUTH_MISMATCH_WARNING_TEXT = '检测到同房间存在密码不匹配的成员，对方无法与您建立语音连接，请核对房间密码。';
@@ -102,6 +108,25 @@ function isValidSignalPayload(data: unknown): data is SignalPayload {
   return false;
 }
 
+function normalizeProtocol(value: unknown): TransportProtocol {
+  if (value === 'udp') return 'udp';
+  if (value === 'tcp' || value === 'tls') return 'tcp';
+  return 'unknown';
+}
+
+function detectRelayProvider(candidate: {
+  address?: string;
+  relatedAddress?: string;
+  url?: string;
+} | undefined): RelayProvider {
+  if (!candidate) return 'unknown';
+  const text = `${candidate.address ?? ''} ${candidate.relatedAddress ?? ''} ${candidate.url ?? ''}`.toLowerCase();
+  if (!text.trim()) return 'unknown';
+  if (text.includes('118.193.35.163') || text.includes('lich.tech')) return 'vps';
+  if (text.includes('cloudflare')) return 'cloudflare';
+  return 'custom';
+}
+
 function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -141,6 +166,8 @@ export interface VoiceStateSnapshot {
   isDeafened: boolean;
   listenOnly: boolean;
   selectedDeviceId: string;
+  selectedOutputDeviceId: string;
+  playbackMode: PlaybackMode;
   networkSummary: PeerNetworkStats | null;
 }
 
@@ -160,11 +187,16 @@ export class VoiceRoomManager {
   private monitors = new Map<string, AudioMonitor>();
   private peerAudioElements = new Map<string, HTMLAudioElement>();
   private peerStreams = new Map<string, MediaStream>();
+  private peerPlaybackModes = new Map<string, PlaybackMode>();
   private peerMeta = new Map<string, PeerMetaPayload>();
   private peerVolumes = new Map<string, number>();
   private peerLevels = new Map<string, { level: number; speaking: boolean }>();
   private peerNetworkStats = new Map<string, PeerNetworkStats>();
   private prevRtpCounts = new Map<string, Map<string, { received: number; lost: number }>>();
+  private prevByteCounts = new Map<
+    string,
+    { timestamp: number; inboundBytes: number; outboundBytes: number }
+  >();
   private levelTimer: number | null = null;
   private statsTimer: number | null = null;
 
@@ -176,6 +208,7 @@ export class VoiceRoomManager {
   private isDeafened = false;
   private listenOnly = false;
   private selectedDeviceId = '';
+  private selectedOutputDeviceId = '';
   private warning: string | null = null;
   private autoplayBlocked = false;
   private playbackBlockVersion = 0;
@@ -188,6 +221,7 @@ export class VoiceRoomManager {
   private pendingMicStream: MediaStream | null = null;
   private peerTrackCancelers = new Map<string, Set<() => void>>();
   private micSwitchChain: Promise<void> = Promise.resolve();
+  private outputSwitchChain: Promise<void> = Promise.resolve();
   private cachedIceServers: { iceServers: RTCIceServer[]; expiresAt: number } | null = null;
 
   subscribe(listener: StateListener): () => void {
@@ -247,8 +281,19 @@ export class VoiceRoomManager {
       isDeafened: this.isDeafened,
       listenOnly: this.listenOnly,
       selectedDeviceId: this.selectedDeviceId,
+      selectedOutputDeviceId: this.selectedOutputDeviceId,
+      playbackMode: this.computePlaybackMode(),
       networkSummary: this.computeNetworkSummary(),
     };
+  }
+
+  private computePlaybackMode(): PlaybackMode {
+    let hasWebAudio = false;
+    for (const mode of this.peerPlaybackModes.values()) {
+      if (mode === 'audio-element') return 'audio-element';
+      if (mode === 'web-audio') hasWebAudio = true;
+    }
+    return hasWebAudio ? 'web-audio' : 'unknown';
   }
 
   private computeNetworkSummary(): PeerNetworkStats | null {
@@ -266,6 +311,12 @@ export class VoiceRoomManager {
     let maxRtt: number | null = null;
     let maxLoss: number | null = null;
     let transport: TransportMode = 'unknown';
+    let totalUplink: number | null = null;
+    let totalDownlink: number | null = null;
+    let maxUplinkRtt: number | null = null;
+    let maxDownlinkRtt: number | null = null;
+    const protocols = new Set<TransportProtocol>();
+    const relays = new Set<RelayProvider>();
 
     for (const peerId of this.peerConnections.keys()) {
       const stat = this.peerNetworkStats.get(peerId);
@@ -289,6 +340,33 @@ export class VoiceRoomManager {
       } else if (stat.transport === 'p2p' && transport === 'unknown') {
         transport = 'p2p';
       }
+      if (stat.protocol !== 'unknown') {
+        protocols.add(stat.protocol);
+      }
+      if (stat.relay !== 'unknown' && stat.relay !== 'none') {
+        relays.add(stat.relay);
+      }
+      if (stat.uplinkKbps !== null) {
+        totalUplink = (totalUplink ?? 0) + stat.uplinkKbps;
+      }
+      if (stat.downlinkKbps !== null) {
+        totalDownlink = (totalDownlink ?? 0) + stat.downlinkKbps;
+      }
+      if (stat.uplinkRttMs !== null && (maxUplinkRtt === null || stat.uplinkRttMs > maxUplinkRtt)) {
+        maxUplinkRtt = stat.uplinkRttMs;
+      }
+      if (stat.downlinkRttMs !== null && (maxDownlinkRtt === null || stat.downlinkRttMs > maxDownlinkRtt)) {
+        maxDownlinkRtt = stat.downlinkRttMs;
+      }
+    }
+
+    const protocol: TransportProtocol =
+      protocols.size === 0 ? 'unknown' : protocols.size === 1 ? Array.from(protocols)[0] : 'unknown';
+    let relay: RelayProvider = 'unknown';
+    if (transport === 'p2p') {
+      relay = 'none';
+    } else if (transport === 'relay') {
+      relay = relays.size === 0 ? 'unknown' : relays.size === 1 ? Array.from(relays)[0] : 'mixed';
     }
 
     return {
@@ -296,6 +374,12 @@ export class VoiceRoomManager {
       rttMs: maxRtt,
       packetLossPct: maxLoss,
       transport,
+      protocol,
+      relay,
+      uplinkKbps: totalUplink,
+      downlinkKbps: totalDownlink,
+      uplinkRttMs: maxUplinkRtt,
+      downlinkRttMs: maxDownlinkRtt,
     };
   }
 
@@ -401,13 +485,21 @@ export class VoiceRoomManager {
   }
 
   private attachPlayback(peerId: string, stream: MediaStream): void {
-    if (this.attachMonitor(peerId, stream, true)) {
+    const ctx = this.audioContext as SinkableAudioContext | null;
+    // A selected output device only works with Web Audio when AudioContext.setSinkId
+    // is available; otherwise use the <audio> element path so setSinkId can apply.
+    const canUseWebAudio = !this.selectedOutputDeviceId || Boolean(ctx?.setSinkId);
+    if (canUseWebAudio && this.attachMonitor(peerId, stream, true)) {
+      this.peerPlaybackModes.set(peerId, 'web-audio');
       this.clearFallbackAudio(peerId);
       if (this.audioContext?.state === 'suspended') {
         this.markAutoplayBlocked();
       }
       return;
     }
+
+    // Keep the level meter even when playback falls back to an <audio> element.
+    this.attachMonitor(peerId, stream);
 
     // Fallback for browsers where MediaStream -> Web Audio is unavailable.
     let audio = this.peerAudioElements.get(peerId);
@@ -418,12 +510,27 @@ export class VoiceRoomManager {
     }
     audio.srcObject = stream;
     audio.volume = this.isDeafened ? 0 : (this.peerVolumes.get(peerId) ?? 1);
+    this.peerPlaybackModes.set(peerId, 'audio-element');
     const attemptId = this.joinAttemptId;
-    void audio.play().catch(() => {
-      if (this.joinAttemptId !== attemptId) return;
-      if (this.peerAudioElements.get(peerId) !== audio) return;
-      this.markAutoplayBlocked();
-    });
+    const sinkable = audio as SinkableAudioElement;
+    const sinkReady =
+      this.selectedOutputDeviceId && sinkable.setSinkId
+        ? sinkable
+            .setSinkId(this.selectedOutputDeviceId)
+            .then(() => true)
+            .catch(() => false)
+        : Promise.resolve(true);
+    void sinkReady
+      .then(() => {
+        if (this.joinAttemptId !== attemptId) return;
+        if (this.peerAudioElements.get(peerId) !== audio) return;
+        return audio.play();
+      })
+      .catch(() => {
+        if (this.joinAttemptId !== attemptId) return;
+        if (this.peerAudioElements.get(peerId) !== audio) return;
+        this.markAutoplayBlocked();
+      });
   }
 
   private clearFallbackAudio(peerId: string): void {
@@ -432,6 +539,24 @@ export class VoiceRoomManager {
       audio.pause();
       audio.srcObject = null;
       this.peerAudioElements.delete(peerId);
+    }
+  }
+
+  private async applyOutputDevice(deviceId: string): Promise<void> {
+    const ctx = this.audioContext as SinkableAudioContext | null;
+    if (ctx?.setSinkId) {
+      await ctx.setSinkId(deviceId);
+    }
+    for (const audio of this.peerAudioElements.values()) {
+      const sinkable = audio as SinkableAudioElement;
+      if (!sinkable.setSinkId) continue;
+      await sinkable.setSinkId(deviceId);
+    }
+  }
+
+  private rebuildPlayback(): void {
+    for (const [peerId, stream] of this.peerStreams.entries()) {
+      this.attachPlayback(peerId, stream);
     }
   }
 
@@ -516,8 +641,20 @@ export class VoiceRoomManager {
             state?: string;
             nominated?: boolean;
           } | null = null;
-          const candidates = new Map<string, { candidateType?: string }>();
-          const inboundStreams = new Map<string, { received: number; lost: number }>();
+          const candidates = new Map<
+            string,
+            {
+              candidateType?: string;
+              protocol?: string;
+              relayProtocol?: string;
+              address?: string;
+              relatedAddress?: string;
+              url?: string;
+            }
+          >();
+          const inboundStreams = new Map<string, { received: number; lost: number; bytes: number }>();
+          const outboundStreams = new Map<string, { sent: number; bytes: number }>();
+          let remoteInboundRtt: number | null = null;
 
           report.forEach((stat) => {
             if (stat.type === 'transport') {
@@ -538,14 +675,53 @@ export class VoiceRoomManager {
                 fallbackPair = pair;
               }
             } else if (stat.type === 'local-candidate' || stat.type === 'remote-candidate') {
-              candidates.set(stat.id, stat as unknown as { candidateType?: string });
+              candidates.set(
+                stat.id,
+                stat as unknown as {
+                  candidateType?: string;
+                  protocol?: string;
+                  relayProtocol?: string;
+                  address?: string;
+                  relatedAddress?: string;
+                  url?: string;
+                }
+              );
             } else if (stat.type === 'inbound-rtp') {
-              const rtp = stat as unknown as { kind?: string; mediaType?: string; packetsReceived?: number; packetsLost?: number };
+              const rtp = stat as unknown as {
+                kind?: string;
+                mediaType?: string;
+                packetsReceived?: number;
+                packetsLost?: number;
+                bytesReceived?: number;
+              };
               if (rtp.kind === 'audio' || rtp.mediaType === 'audio') {
                 inboundStreams.set(stat.id, {
                   received: rtp.packetsReceived ?? 0,
                   lost: rtp.packetsLost ?? 0,
+                  bytes: rtp.bytesReceived ?? 0,
                 });
+              }
+            } else if (stat.type === 'outbound-rtp') {
+              const rtp = stat as unknown as {
+                kind?: string;
+                mediaType?: string;
+                packetsSent?: number;
+                bytesSent?: number;
+              };
+              if (rtp.kind === 'audio' || rtp.mediaType === 'audio') {
+                outboundStreams.set(stat.id, {
+                  sent: rtp.packetsSent ?? 0,
+                  bytes: rtp.bytesSent ?? 0,
+                });
+              }
+            } else if (stat.type === 'remote-inbound-rtp') {
+              const rtp = stat as unknown as { roundTripTime?: number; kind?: string; mediaType?: string };
+              if (
+                (rtp.kind === 'audio' || rtp.mediaType === 'audio') &&
+                typeof rtp.roundTripTime === 'number' &&
+                Number.isFinite(rtp.roundTripTime)
+              ) {
+                remoteInboundRtt = Math.max(remoteInboundRtt ?? 0, rtp.roundTripTime);
               }
             }
           });
@@ -553,6 +729,8 @@ export class VoiceRoomManager {
           const activePair = (selectedPairId ? candidatePairs.get(selectedPairId) : undefined) ?? fallbackPair;
 
           let transport: TransportMode = 'unknown';
+          let protocol: TransportProtocol = 'unknown';
+          let relay: RelayProvider = 'unknown';
           let rttMs: number | null = null;
           if (activePair) {
             const pairObj = activePair as {
@@ -563,13 +741,27 @@ export class VoiceRoomManager {
             if (typeof pairObj.currentRoundTripTime === 'number' && Number.isFinite(pairObj.currentRoundTripTime)) {
               rttMs = Math.round(pairObj.currentRoundTripTime * 1000);
             }
-            const localType = pairObj.localCandidateId ? candidates.get(pairObj.localCandidateId)?.candidateType : undefined;
-            const remoteType = pairObj.remoteCandidateId ? candidates.get(pairObj.remoteCandidateId)?.candidateType : undefined;
+            const localCandidate = pairObj.localCandidateId
+              ? candidates.get(pairObj.localCandidateId)
+              : undefined;
+            const remoteCandidate = pairObj.remoteCandidateId
+              ? candidates.get(pairObj.remoteCandidateId)
+              : undefined;
+            const localType = localCandidate?.candidateType;
+            const remoteType = remoteCandidate?.candidateType;
             if (localType === 'relay' || remoteType === 'relay') {
               transport = 'relay';
+              const relayCandidate =
+                localType === 'relay' ? localCandidate : remoteType === 'relay' ? remoteCandidate : localCandidate ?? remoteCandidate;
+              relay = detectRelayProvider(relayCandidate);
             } else if (localType || remoteType) {
               transport = 'p2p';
+              relay = 'none';
             }
+            const localRelayProtocol = localType === 'relay' ? localCandidate?.relayProtocol : undefined;
+            protocol = normalizeProtocol(
+              localRelayProtocol ?? localCandidate?.protocol ?? remoteCandidate?.protocol
+            );
           }
 
           let packetLossPct: number | null = null;
@@ -599,6 +791,36 @@ export class VoiceRoomManager {
             this.prevRtpCounts.delete(peerId);
           }
 
+          let inboundBytes = 0;
+          for (const stream of inboundStreams.values()) {
+            inboundBytes += stream.bytes;
+          }
+          let outboundBytes = 0;
+          for (const stream of outboundStreams.values()) {
+            outboundBytes += stream.bytes;
+          }
+          const now = performance.now();
+          const prevBytes = this.prevByteCounts.get(peerId);
+          let uplinkKbps: number | null = null;
+          let downlinkKbps: number | null = null;
+          if (prevBytes && now > prevBytes.timestamp) {
+            const seconds = (now - prevBytes.timestamp) / 1000;
+            if (seconds > 0) {
+              downlinkKbps = Math.max(
+                0,
+                Math.round(((inboundBytes - prevBytes.inboundBytes) * 8) / 1000 / seconds)
+              );
+              uplinkKbps = Math.max(
+                0,
+                Math.round(((outboundBytes - prevBytes.outboundBytes) * 8) / 1000 / seconds)
+              );
+            }
+          }
+          this.prevByteCounts.set(peerId, { timestamp: now, inboundBytes, outboundBytes });
+
+          const uplinkRttMs = remoteInboundRtt !== null ? Math.round(remoteInboundRtt * 1000) : rttMs;
+          const downlinkRttMs = rttMs;
+
           let quality: NetworkQualityLevel;
           if (pc.connectionState === 'failed') {
             quality = 'poor';
@@ -617,14 +839,31 @@ export class VoiceRoomManager {
             }
           }
 
-          const nextStat: PeerNetworkStats = { quality, rttMs, packetLossPct, transport };
+          const nextStat: PeerNetworkStats = {
+            quality,
+            rttMs,
+            packetLossPct,
+            transport,
+            protocol,
+            relay,
+            uplinkKbps,
+            downlinkKbps,
+            uplinkRttMs,
+            downlinkRttMs,
+          };
           const prevStat = this.peerNetworkStats.get(peerId);
           if (
             !prevStat ||
             prevStat.quality !== nextStat.quality ||
             prevStat.rttMs !== nextStat.rttMs ||
             prevStat.packetLossPct !== nextStat.packetLossPct ||
-            prevStat.transport !== nextStat.transport
+            prevStat.transport !== nextStat.transport ||
+            prevStat.protocol !== nextStat.protocol ||
+            prevStat.relay !== nextStat.relay ||
+            prevStat.uplinkKbps !== nextStat.uplinkKbps ||
+            prevStat.downlinkKbps !== nextStat.downlinkKbps ||
+            prevStat.uplinkRttMs !== nextStat.uplinkRttMs ||
+            prevStat.downlinkRttMs !== nextStat.downlinkRttMs
           ) {
             this.peerNetworkStats.set(peerId, nextStat);
             changed = true;
@@ -795,11 +1034,13 @@ export class VoiceRoomManager {
     this.connectedPeerIds.delete(peerId);
     this.peerMeta.delete(peerId);
     this.peerStreams.delete(peerId);
+    this.peerPlaybackModes.delete(peerId);
     this.pendingCandidates.delete(peerId);
     this.failedPeerIds.delete(peerId);
     this.restartedIcePeers.delete(peerId);
     this.peerNetworkStats.delete(peerId);
     this.prevRtpCounts.delete(peerId);
+    this.prevByteCounts.delete(peerId);
     this.detachMonitor(peerId);
 
     const cancelers = this.peerTrackCancelers.get(peerId);
@@ -906,6 +1147,7 @@ export class VoiceRoomManager {
     this.nickname = trimmedNickname;
     this.listenOnly = Boolean(options.listenOnly);
     this.selectedDeviceId = options.deviceId || '';
+    this.selectedOutputDeviceId = options.outputDeviceId || '';
     this.isMuted = Boolean(options.listenOnly);
     this.isDeafened = false;
     this.warning = null;
@@ -915,6 +1157,14 @@ export class VoiceRoomManager {
 
     try {
       this.ensureAudioContext();
+      const initialOutputDeviceId = this.selectedOutputDeviceId;
+      void this.applyOutputDevice(initialOutputDeviceId).catch(() => {
+        if (this.listenOnly && this.selectedOutputDeviceId === initialOutputDeviceId) {
+          this.selectedOutputDeviceId = '';
+          this.warning = '所选语音输出设备不可用，已回退到系统默认输出。';
+          this.emit();
+        }
+      });
 
       if (!this.listenOnly) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -938,6 +1188,7 @@ export class VoiceRoomManager {
           }
           this.localStream = acquiredStream;
           this.attachMonitor('self', this.localStream);
+          void this.applyOutputDevice(this.selectedOutputDeviceId).catch(() => {});
         } catch (err) {
           if (this.joinAttemptId !== attemptId) return;
           const domErr = err as DOMException;
@@ -1157,6 +1408,39 @@ export class VoiceRoomManager {
       monitor.gain.gain.value = this.isDeafened ? 0 : clamped;
     }
     this.emit();
+  }
+
+  setOutputDevice(deviceId: string): Promise<boolean> {
+    const attemptId = this.joinAttemptId;
+    const run = () => this.performSetOutputDevice(deviceId, attemptId);
+    const next = this.outputSwitchChain.then(run, run);
+    this.outputSwitchChain = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  }
+
+  private async performSetOutputDevice(deviceId: string, attemptId: number): Promise<boolean> {
+    if (this.joinAttemptId !== attemptId) return false;
+    const nextDeviceId = deviceId || '';
+    const previousDeviceId = this.selectedOutputDeviceId;
+    this.selectedOutputDeviceId = nextDeviceId;
+    try {
+      this.rebuildPlayback();
+      await this.applyOutputDevice(nextDeviceId);
+      if (this.joinAttemptId !== attemptId) return false;
+    } catch (err) {
+      if (this.joinAttemptId !== attemptId) return false;
+      this.selectedOutputDeviceId = previousDeviceId;
+      this.rebuildPlayback();
+      await this.applyOutputDevice(previousDeviceId).catch(() => {});
+      if (this.joinAttemptId !== attemptId) return false;
+      this.emit();
+      throw err instanceof Error ? err : new Error('切换语音输出设备失败');
+    }
+    this.emit();
+    return true;
   }
 
   private async replaceAudioTrackAcrossPeers(
@@ -1398,10 +1682,12 @@ export class VoiceRoomManager {
     }
     this.peerAudioElements.clear();
     this.peerStreams.clear();
+    this.peerPlaybackModes.clear();
     this.peerMeta.clear();
     this.peerVolumes.clear();
     this.peerNetworkStats.clear();
     this.prevRtpCounts.clear();
+    this.prevByteCounts.clear();
     this.connectedPeerIds.clear();
 
     if (this.ws) {
@@ -1426,6 +1712,7 @@ export class VoiceRoomManager {
     this.roomId = '';
     this.selfPeerId = '';
     this.selectedDeviceId = '';
+    this.selectedOutputDeviceId = '';
     this.pendingMicTrack = null;
     this.pendingMicStream = null;
     this.warning = null;

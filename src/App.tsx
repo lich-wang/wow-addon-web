@@ -657,6 +657,7 @@ export function App() {
             onToggleDeafen={() => voiceRoomManager.toggleDeafen()}
             onSetPeerVolume={(peerId, vol) => voiceRoomManager.setPeerVolume(peerId, vol)}
             onSwitchMicrophone={(deviceId) => voiceRoomManager.switchMicrophone(deviceId)}
+            onSwitchOutputDevice={(deviceId) => voiceRoomManager.setOutputDevice(deviceId)}
             onSendMessage={(text) => voiceRoomManager.sendChatMessage(text)}
             onResumePlayback={() => voiceRoomManager.resumePlayback()}
           />
