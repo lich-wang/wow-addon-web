@@ -719,8 +719,13 @@ export class VoiceRoomManager {
             cleanupInit();
             reject(new Error('语音信令连接已关闭'));
           } else if (this.joinAttemptId === attemptId && this.status === 'connected') {
-            this.warning = '信令连接已断开，新成员可能无法加入，建议重新进入房间。';
-            this.emit();
+            void this.resetInternalState().then(() => {
+              if (this.joinAttemptId === attemptId) {
+                this.status = 'error';
+                this.error = '语音信令连接已断开，请重新加入房间。';
+                this.emit();
+              }
+            });
           }
         });
       });

@@ -114,12 +114,28 @@ export class VoiceRoom {
         return;
       }
       const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
+      const existingSockets = this.ctx.getWebSockets();
+      const duplicatePeer = existingSockets.some((other) => {
+        if (other === ws) return false;
+        const otherAtt = getAttachment(other);
+        return Boolean(otherAtt && otherAtt.authHash === msg.authHash && otherAtt.peerId === msg.peerId);
+      });
+      if (duplicatePeer) {
+        safeSend(ws, { type: 'error', code: 'duplicate-peer-id' });
+        try {
+          ws.close(4009, 'Duplicate peerId');
+        } catch {
+          // Socket already closed
+        }
+        return;
+      }
+
       setAttachment(ws, { peerId: msg.peerId, authHash: msg.authHash, meta });
 
       const matchingPeers: Array<{ peerId: string; meta: Record<string, unknown> }> = [];
       let hasAuthMismatch = false;
 
-      for (const other of this.ctx.getWebSockets()) {
+      for (const other of existingSockets) {
         if (other === ws) continue;
         const otherAtt = getAttachment(other);
         if (!otherAtt) continue;
