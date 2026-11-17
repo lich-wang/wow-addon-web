@@ -248,14 +248,20 @@ export const VoiceDeviceCheck: React.FC<VoiceDeviceCheckProps> = ({
 
   useEffect(
     () => () => {
-      speakerTokenRef.current++;
       stopMicTest();
+    },
+    [micDeviceId, stopMicTest]
+  );
+
+  useEffect(
+    () => () => {
+      speakerTokenRef.current++;
       speakerCleanupRef.current?.();
       speakerCleanupRef.current = null;
       setSpeakerTesting(false);
       setSpeakerStatus(null);
     },
-    [micDeviceId, stopMicTest]
+    [outputDeviceId]
   );
 
   const level = inRoom ? Math.min(1, selfAudioLevel) : micLevel;

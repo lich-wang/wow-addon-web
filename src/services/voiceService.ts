@@ -1157,7 +1157,13 @@ export class VoiceRoomManager {
 
     try {
       this.ensureAudioContext();
-      void this.applyOutputDevice(this.selectedOutputDeviceId).catch(() => {});
+      void this.applyOutputDevice(this.selectedOutputDeviceId).catch(() => {
+        if (this.listenOnly) {
+          this.selectedOutputDeviceId = '';
+          this.warning = '所选语音输出设备不可用，已回退到系统默认输出。';
+          this.emit();
+        }
+      });
 
       if (!this.listenOnly) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {

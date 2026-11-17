@@ -163,12 +163,20 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const switchSeqRef = useRef(0);
+  const deviceEnumSeqRef = useRef(0);
+  const voiceStateRef = useRef(voiceState);
   const lastMessageId = voiceState.messages[voiceState.messages.length - 1]?.id;
+
+  useEffect(() => {
+    voiceStateRef.current = voiceState;
+  }, [voiceState]);
 
   const loadAudioDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
+    const seq = ++deviceEnumSeqRef.current;
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
+      if (deviceEnumSeqRef.current !== seq) return;
       setAudioInputs(devices.filter((d) => d.kind === 'audioinput'));
       setAudioOutputs(devices.filter((d) => d.kind === 'audiooutput'));
     } catch {
@@ -293,11 +301,15 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     const mediaDevices = navigator.mediaDevices as MediaDevices & {
       selectAudioOutput?: () => Promise<MediaDeviceInfo>;
     };
+    const sessionRoom = voiceStateRef.current.roomId;
+    const sessionStatus = voiceStateRef.current.status;
     try {
       if (mediaDevices.selectAudioOutput) {
         const device = await mediaDevices.selectAudioOutput();
+        const current = voiceStateRef.current;
+        if (current.roomId !== sessionRoom || current.status !== sessionStatus) return;
         if (device?.deviceId) {
-          if (voiceState.status === 'connected') {
+          if (current.status === 'connected') {
             await handleSwitchOutputChange(device.deviceId);
           } else {
             handleSelectOutputDevice(device.deviceId);
@@ -328,6 +340,15 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const isInRoom = voiceState.status === 'connected' || voiceState.status === 'connecting';
   const displayError = localError || voiceState.error;
   const selfAudioLevel = voiceState.participants.find((participant) => participant.isSelf)?.audioLevel ?? 0;
+  const roomOutputDeviceId = pendingOutputDeviceId ?? voiceState.selectedOutputDeviceId;
+  const isSelectedOutputMissing =
+    Boolean(selectedOutputDeviceId) &&
+    audioOutputs.length > 0 &&
+    !audioOutputs.some((device) => device.deviceId === selectedOutputDeviceId);
+  const isRoomOutputMissing =
+    Boolean(roomOutputDeviceId) &&
+    audioOutputs.length > 0 &&
+    !audioOutputs.some((device) => device.deviceId === roomOutputDeviceId);
 
   if (!isInRoom) {
     return (
@@ -471,6 +492,9 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                     className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500/60 focus:outline-none text-sm text-slate-200"
                   >
                     <option value="">系统默认输出</option>
+                    {isSelectedOutputMissing && (
+                      <option value={selectedOutputDeviceId}>已断开的输出设备</option>
+                    )}
                     {audioOutputs.map((device, idx) => (
                       <option key={device.deviceId || idx} value={device.deviceId}>
                         {device.label || `输出设备 ${idx + 1}`}
@@ -757,31 +781,39 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               </select>
             )}
 
-            {audioOutputs.length > 0 && (
-              <div className="flex items-center gap-1">
-                <select
-                  value={pendingOutputDeviceId ?? voiceState.selectedOutputDeviceId}
-                  disabled={voiceState.status !== 'connected' || pendingOutputDeviceId !== null}
-                  onChange={(e) => {
-                    void handleSwitchOutputChange(e.target.value);
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
-                >
-                  <option value="">切换输出：默认</option>
-                  {audioOutputs.map((d, idx) => (
-                    <option key={d.deviceId || idx} value={d.deviceId}>
-                      {d.label || `输出 ${idx + 1}`}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => void handlePickOutputDevice()}
-                  title="检测/选择输出设备"
-                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 hover:text-amber-300 cursor-pointer"
-                >
-                  检测
-                </button>
+            {(audioOutputs.length > 0 || isRoomOutputMissing) && (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-1">
+                  <select
+                    value={roomOutputDeviceId}
+                    disabled={voiceState.status !== 'connected' || pendingOutputDeviceId !== null}
+                    onChange={(e) => {
+                      void handleSwitchOutputChange(e.target.value);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
+                  >
+                    <option value="">切换输出：默认</option>
+                    {isRoomOutputMissing && (
+                      <option value={roomOutputDeviceId}>已断开的输出设备</option>
+                    )}
+                    {audioOutputs.map((d, idx) => (
+                      <option key={d.deviceId || idx} value={d.deviceId}>
+                        {d.label || `输出 ${idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void handlePickOutputDevice()}
+                    title="检测/选择输出设备"
+                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 hover:text-amber-300 cursor-pointer"
+                  >
+                    检测
+                  </button>
+                </div>
+                {isRoomOutputMissing && (
+                  <span className="text-[10px] text-amber-400">输出设备已断开，请切回“默认”输出。</span>
+                )}
               </div>
             )}
           </div>
