@@ -18,7 +18,7 @@ interface IceServerEntry {
 }
 
 interface CloudflareTurnResponse {
-  iceServers?: IceServerEntry[];
+  iceServers?: unknown;
 }
 
 const TURN_CREDENTIAL_TTL_SECONDS = 3600;
@@ -112,7 +112,7 @@ async function fetchCloudflareTurnServers(tokenId: string, apiToken: string): Pr
       }
     );
     if (!response.ok) return [];
-    const data = (await response.json()) as { iceServers?: unknown };
+    const data = (await response.json()) as CloudflareTurnResponse;
     return Array.isArray(data.iceServers) ? data.iceServers.filter(isValidIceServerEntry) : [];
   } catch {
     return [];
