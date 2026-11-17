@@ -764,7 +764,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               <span>频道成员 ({voiceState.participants.length})</span>
             </h3>
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-nowrap items-center justify-end gap-2 ml-auto">
               {!voiceState.listenOnly && audioInputs.length > 1 && (
                 <select
                   value={pendingDeviceId ?? voiceState.selectedDeviceId}
