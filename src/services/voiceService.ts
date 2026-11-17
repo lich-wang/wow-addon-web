@@ -178,6 +178,7 @@ export class VoiceRoomManager {
   private selectedDeviceId = '';
   private warning: string | null = null;
   private autoplayBlocked = false;
+  private playbackBlockVersion = 0;
   private error: string | null = null;
   private messages: VoiceChatMessage[] = [];
   private connectedPeerIds = new Set<string>();
@@ -393,12 +394,17 @@ export class VoiceRoomManager {
     this.peerLevels.delete(key);
   }
 
+  private markAutoplayBlocked(): void {
+    this.autoplayBlocked = true;
+    this.playbackBlockVersion++;
+    this.emit();
+  }
+
   private attachPlayback(peerId: string, stream: MediaStream): void {
     if (this.attachMonitor(peerId, stream, true)) {
       this.clearFallbackAudio(peerId);
       if (this.audioContext?.state === 'suspended') {
-        this.autoplayBlocked = true;
-        this.emit();
+        this.markAutoplayBlocked();
       }
       return;
     }
@@ -416,8 +422,7 @@ export class VoiceRoomManager {
     void audio.play().catch(() => {
       if (this.joinAttemptId !== attemptId) return;
       if (this.peerAudioElements.get(peerId) !== audio) return;
-      this.autoplayBlocked = true;
-      this.emit();
+      this.markAutoplayBlocked();
     });
   }
 
@@ -1318,6 +1323,7 @@ export class VoiceRoomManager {
 
   resumePlayback(): void {
     const attemptId = this.joinAttemptId;
+    const resumeVersion = this.playbackBlockVersion;
     const fallbackPlaybacks = Array.from(this.peerAudioElements.values()).map((audio) => {
       if (!audio.paused) return Promise.resolve(true);
       return audio
@@ -1336,8 +1342,13 @@ export class VoiceRoomManager {
 
     void Promise.all([contextReady, ...fallbackPlaybacks]).then((results) => {
       if (this.joinAttemptId !== attemptId) return;
-      this.autoplayBlocked = !results.every(Boolean);
-      this.emit();
+      const allFallbackPlaying = Array.from(this.peerAudioElements.values()).every((audio) => !audio.paused);
+      if (results.every(Boolean) && this.playbackBlockVersion === resumeVersion && allFallbackPlaying) {
+        this.autoplayBlocked = false;
+        this.emit();
+      } else if (!results.every(Boolean)) {
+        this.markAutoplayBlocked();
+      }
     });
   }
 
@@ -1419,6 +1430,7 @@ export class VoiceRoomManager {
     this.pendingMicStream = null;
     this.warning = null;
     this.autoplayBlocked = false;
+    this.playbackBlockVersion++;
     this.error = null;
     this.messages = [];
     this.emit();
