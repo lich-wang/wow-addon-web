@@ -2494,6 +2494,18 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       const startDetail = firstStep ? questCache[String(firstStep.id)] : null;
       const startSide = startDetail?.sides?.[factionOverride] || startDetail?.sides?.one || null;
 
+      const topNpc = (hasPrereq && firstStep?.npc) || sideData?.npc || '';
+      const topZone = (hasPrereq && firstStep?.zone) || sideData?.zone || q.zone || dungeon.entranceZone || dungeon.zone;
+      const topX = hasPrereq ? (firstStep?.x ?? null) : (sideData?.x ?? null);
+      const topY = hasPrereq ? (firstStep?.y ?? null) : (sideData?.y ?? null);
+      const singleEndNpc = !steps ? (sideData?.endNpc || '') : '';
+      const singleEndZone = !steps ? (sideData?.endZone || '') : '';
+      const singleEndX = !steps ? (sideData?.endX ?? null) : null;
+      const singleEndY = !steps ? (sideData?.endY ?? null) : null;
+      const hasSingleDiffEnd =
+        singleEndNpc &&
+        (singleEndNpc !== topNpc || singleEndZone !== topZone || singleEndX !== topX || singleEndY !== topY);
+
       return {
         id: q.id,
         name: q.name,
@@ -2503,11 +2515,14 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
         faction: factionOverride,
         ...(q.classes ? { classes: q.classes } : {}),
         hasPrereq,
-        npc: (hasPrereq && firstStep?.npc) || sideData?.npc || '',
-        zone: (hasPrereq && firstStep?.zone) || sideData?.zone || q.zone || dungeon.entranceZone || dungeon.zone,
+        npc: topNpc,
+        zone: topZone,
         place: '',
-        x: hasPrereq ? (firstStep?.x ?? null) : (sideData?.x ?? null),
-        y: hasPrereq ? (firstStep?.y ?? null) : (sideData?.y ?? null),
+        x: topX,
+        y: topY,
+        ...(hasSingleDiffEnd
+          ? { endNpc: singleEndNpc, endZone: singleEndZone, endX: singleEndX, endY: singleEndY }
+          : {}),
         stepCount: steps ? steps.length : 1,
         steps,
         finalObjective: sideData?.objective || '',
@@ -4482,12 +4497,14 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
     if sid and sid > 0 and stepById[sid] then
       local stZone = (st.zone and st.zone ~= "") and st.zone or parentZone
       local isPrimary = (sid == primaryId)
+      local canFallbackCoords = isPrimary and (not st.npc or st.npc == "" or st.npc == q.npc) and (not st.zone or st.zone == "" or st.zone == q.zone)
+      local hasStepCoords = (st.x ~= nil and st.y ~= nil)
       local effSt = {
         id = sid,
         npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
         zone = stZone,
-        x = st.x or (isPrimary and q.x or nil),
-        y = st.y or (isPrimary and q.y or nil),
+        x = hasStepCoords and st.x or (canFallbackCoords and q.x or nil),
+        y = hasStepCoords and st.y or (canFallbackCoords and q.y or nil),
         endNpc = st.endNpc,
         endZone = st.endZone,
         endX = st.endX,
@@ -4513,7 +4530,9 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
       local emitted = {}
       local visiting = {}
       local function emitStep(sid)
-        if not sid or emitted[sid] or visiting[sid] or not stepById[sid] then return 0 end
+        if not sid or not stepById[sid] then return 0 end
+        if emitted[sid] then return depthById[sid] or 0 end
+        if visiting[sid] then return 0 end
         visiting[sid] = true
         local st = stepById[sid].step
         local maxParentDepth = -1
@@ -4546,9 +4565,12 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
       if lastStepId then
         emitStep(lastStepId)
       end
-      for _, ent in ipairs(stepEntries) do
-        if not emitted[ent.id] then
-          emitStep(ent.id)
+      if #orderedEntries ~= #stepEntries then
+        orderedEntries = {}
+        depthById = {}
+        for i, ent in ipairs(stepEntries) do
+          depthById[ent.id] = i - 1
+          table.insert(orderedEntries, ent)
         end
       end
     else
@@ -4561,7 +4583,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
     local treeLines = {}
     for _, ent in ipairs(orderedEntries) do
       local d = depthById[ent.id] or 0
-      local indent = baseIndent .. string.rep("  ", d)
+      local indent = (d > 0) and (baseIndent .. string.rep("  ", d - 1) .. "|cff99e6ff└> |r") or baseIndent
       local npcPart = (ent.npcInfo ~= "") and ("  " .. ent.npcInfo) or ""
       table.insert(treeLines, indent .. ent.link .. npcPart)
     end
@@ -4697,6 +4719,9 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
         table.insert(outLines, line)
         local leading = string.match(line, "^(%s*)") or ""
         local relDepth = math.floor(math.max(0, #leading - #baseIndent) / 2)
+        if string.find(line, "└>", 1, true) then
+          relDepth = relDepth + 1
+        end
         if relDepth > maxPrefixDepth then maxPrefixDepth = relDepth end
       end
     end
@@ -4732,7 +4757,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
         local coloredLink = isPrimary and link or ("|cff99e6ff" .. link .. "|r")
         local npcPart = FormatStepNpcInfo(stepObj, stZone)
         local d = branchBaseDepth + (si - (k + 1))
-        local indent = baseIndent .. string.rep("  ", d)
+        local indent = (d > 0) and (baseIndent .. string.rep("  ", d - 1) .. "|cff99e6ff└> |r") or baseIndent
         table.insert(outLines, indent .. coloredLink .. ((npcPart ~= "") and ("  " .. npcPart) or ""))
       end
     end
@@ -5630,17 +5655,19 @@ local function RenderTabSmartMatch()
         qCount = qCount + #grp.quests
         local q = grp.quests[1]
         local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
-        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内接取)" or "")
         local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
+        local npcInfo = FormatStepNpcInfo(q, qZone)
+        if npcInfo == "" and q.inside then npcInfo = "(副本内接取)" end
+        local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
         if #grp.quests > 1 and grp.prefixLen >= 1 then
           local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "        ")
           local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
-          table.insert(dLines, string.format("    └ 任务: %s%s%s — %s %s%s", headerPrefix, branchTag, acceptTag, q.zone or "", q.npc or "", qc))
+          table.insert(dLines, string.format("    └ 任务: %s%s%s%s", headerPrefix, branchTag, acceptTag, npcSuffix))
           table.insert(dLines, treeBody)
         else
           local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
           local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "        ")
-          table.insert(dLines, string.format("    └ 任务: %s%s%s — %s %s%s", qLink, acceptTag, chainTag, q.zone or "", q.npc or "", qc))
+          table.insert(dLines, string.format("    └ 任务: %s%s%s%s", qLink, acceptTag, chainTag, npcSuffix))
           if qTree then table.insert(dLines, qTree) end
         end
       end
@@ -6204,17 +6231,19 @@ local function RenderTabDungeons()
             local fTag = q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")
             local cTag = state.dungeonFilter ~= "MATCH" and FormatQuestClassTag(q) or ""
             local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
-            local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or (q.inside and " (副本内触发)" or "")
             local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
+            local npcInfo = FormatStepNpcInfo(q, qZone)
+            if npcInfo == "" and q.inside then npcInfo = "(副本内触发)" end
+            local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
             if #grp.quests > 1 and grp.prefixLen >= 1 then
               local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "      ")
               local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
-              table.insert(lines, string.format("  - %s%s%s%s%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, headerPrefix, branchTag, acceptTag, q.zone or "", q.place or "", q.npc or "", qc))
+              table.insert(lines, string.format("  - %s%s%s%s%s%s", fTag, cTag, headerPrefix, branchTag, acceptTag, npcSuffix))
               table.insert(lines, treeBody)
             else
               local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
               local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "      ")
-              table.insert(lines, string.format("  - %s%s%s%s%s — %s %s |cff00ffcc%s|r%s", fTag, cTag, qLink, acceptTag, chainTag, q.zone or "", q.place or "", q.npc or "", qc))
+              table.insert(lines, string.format("  - %s%s%s%s%s%s", fTag, cTag, qLink, acceptTag, chainTag, npcSuffix))
               if qTree then table.insert(lines, qTree) end
             end
           end
