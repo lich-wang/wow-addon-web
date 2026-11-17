@@ -13,6 +13,10 @@ export interface PeerNetworkStats {
   transport: TransportMode;
   protocol: TransportProtocol;
   relay: RelayProvider;
+  uplinkKbps: number | null;
+  downlinkKbps: number | null;
+  uplinkRttMs: number | null;
+  downlinkRttMs: number | null;
 }
 
 export interface VoiceParticipant {

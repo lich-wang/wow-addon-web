@@ -88,6 +88,15 @@ function formatPlaybackLabel(mode: PlaybackMode): string {
   return '';
 }
 
+function formatRate(kbps: number | null): string {
+  if (kbps === null) return '--';
+  return kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${kbps} kbps`;
+}
+
+function formatLatency(ms: number | null): string {
+  return ms === null ? '--' : `${ms}ms`;
+}
+
 interface VoiceChatProps {
   voiceState: VoiceStateSnapshot;
   initialRoomId?: string;
@@ -288,7 +297,11 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       if (mediaDevices.selectAudioOutput) {
         const device = await mediaDevices.selectAudioOutput();
         if (device?.deviceId) {
-          handleSelectOutputDevice(device.deviceId);
+          if (voiceState.status === 'connected') {
+            await handleSwitchOutputChange(device.deviceId);
+          } else {
+            handleSelectOutputDevice(device.deviceId);
+          }
         }
       }
       await loadAudioDevices();
@@ -588,6 +601,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                     : `当前在线 ${voiceState.participants.length} 人`}
                 </span>
               </p>
+              {voiceState.networkSummary && (
+                <p className="text-[11px] text-slate-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span>↑ 上行 {formatRate(voiceState.networkSummary.uplinkKbps)}</span>
+                  <span>↓ 下行 {formatRate(voiceState.networkSummary.downlinkKbps)}</span>
+                  <span>上行延迟 {formatLatency(voiceState.networkSummary.uplinkRttMs)}</span>
+                  <span>下行延迟 {formatLatency(voiceState.networkSummary.downlinkRttMs)}</span>
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -820,6 +841,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                           </span>
                         )}
                       </div>
+                      {!p.isSelf && p.network && (
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          ↑ {formatRate(p.network.uplinkKbps)} · ↓ {formatRate(p.network.downlinkKbps)} · 上行{' '}
+                          {formatLatency(p.network.uplinkRttMs)} / 下行 {formatLatency(p.network.downlinkRttMs)}
+                        </div>
+                      )}
                       <div className="flex items-center space-x-2 text-[11px] mt-0.5">
                         {p.isSpeaking ? (
                           <span className="text-emerald-400 font-medium">正在说话...</span>

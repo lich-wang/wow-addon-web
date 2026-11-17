@@ -109,7 +109,9 @@ function isValidSignalPayload(data: unknown): data is SignalPayload {
 }
 
 function normalizeProtocol(value: unknown): TransportProtocol {
-  return value === 'udp' || value === 'tcp' ? value : 'unknown';
+  if (value === 'udp') return 'udp';
+  if (value === 'tcp' || value === 'tls') return 'tcp';
+  return 'unknown';
 }
 
 function detectRelayProvider(candidate: {
@@ -191,6 +193,10 @@ export class VoiceRoomManager {
   private peerLevels = new Map<string, { level: number; speaking: boolean }>();
   private peerNetworkStats = new Map<string, PeerNetworkStats>();
   private prevRtpCounts = new Map<string, Map<string, { received: number; lost: number }>>();
+  private prevByteCounts = new Map<
+    string,
+    { timestamp: number; inboundBytes: number; outboundBytes: number }
+  >();
   private levelTimer: number | null = null;
   private statsTimer: number | null = null;
 
@@ -304,8 +310,12 @@ export class VoiceRoomManager {
     let maxRtt: number | null = null;
     let maxLoss: number | null = null;
     let transport: TransportMode = 'unknown';
-    let protocol: TransportProtocol = 'unknown';
-    let relay: RelayProvider = 'unknown';
+    let totalUplink: number | null = null;
+    let totalDownlink: number | null = null;
+    let maxUplinkRtt: number | null = null;
+    let maxDownlinkRtt: number | null = null;
+    const protocols = new Set<TransportProtocol>();
+    const relays = new Set<RelayProvider>();
 
     for (const peerId of this.peerConnections.keys()) {
       const stat = this.peerNetworkStats.get(peerId);
@@ -330,23 +340,32 @@ export class VoiceRoomManager {
         transport = 'p2p';
       }
       if (stat.protocol !== 'unknown') {
-        protocol = protocol === 'unknown' || protocol === stat.protocol ? stat.protocol : 'unknown';
+        protocols.add(stat.protocol);
       }
-      if (stat.relay === 'vps' || stat.relay === 'cloudflare') {
-        if (relay === 'unknown') {
-          relay = stat.relay;
-        } else if (relay !== stat.relay) {
-          relay = 'mixed';
-        }
-      } else if (stat.relay === 'custom' && relay === 'unknown') {
-        relay = 'custom';
+      if (stat.relay !== 'unknown' && stat.relay !== 'none') {
+        relays.add(stat.relay);
+      }
+      if (stat.uplinkKbps !== null) {
+        totalUplink = (totalUplink ?? 0) + stat.uplinkKbps;
+      }
+      if (stat.downlinkKbps !== null) {
+        totalDownlink = (totalDownlink ?? 0) + stat.downlinkKbps;
+      }
+      if (stat.uplinkRttMs !== null && (maxUplinkRtt === null || stat.uplinkRttMs > maxUplinkRtt)) {
+        maxUplinkRtt = stat.uplinkRttMs;
+      }
+      if (stat.downlinkRttMs !== null && (maxDownlinkRtt === null || stat.downlinkRttMs > maxDownlinkRtt)) {
+        maxDownlinkRtt = stat.downlinkRttMs;
       }
     }
 
+    const protocol: TransportProtocol =
+      protocols.size === 0 ? 'unknown' : protocols.size === 1 ? Array.from(protocols)[0] : 'unknown';
+    let relay: RelayProvider = 'unknown';
     if (transport === 'p2p') {
       relay = 'none';
-    } else if (transport === 'unknown') {
-      relay = 'unknown';
+    } else if (transport === 'relay') {
+      relay = relays.size === 0 ? 'unknown' : relays.size === 1 ? Array.from(relays)[0] : 'mixed';
     }
 
     return {
@@ -356,6 +375,10 @@ export class VoiceRoomManager {
       transport,
       protocol,
       relay,
+      uplinkKbps: totalUplink,
+      downlinkKbps: totalDownlink,
+      uplinkRttMs: maxUplinkRtt,
+      downlinkRttMs: maxDownlinkRtt,
     };
   }
 
@@ -622,12 +645,15 @@ export class VoiceRoomManager {
             {
               candidateType?: string;
               protocol?: string;
+              relayProtocol?: string;
               address?: string;
               relatedAddress?: string;
               url?: string;
             }
           >();
-          const inboundStreams = new Map<string, { received: number; lost: number }>();
+          const inboundStreams = new Map<string, { received: number; lost: number; bytes: number }>();
+          const outboundStreams = new Map<string, { sent: number; bytes: number }>();
+          let remoteInboundRtt: number | null = null;
 
           report.forEach((stat) => {
             if (stat.type === 'transport') {
@@ -653,18 +679,48 @@ export class VoiceRoomManager {
                 stat as unknown as {
                   candidateType?: string;
                   protocol?: string;
+                  relayProtocol?: string;
                   address?: string;
                   relatedAddress?: string;
                   url?: string;
                 }
               );
             } else if (stat.type === 'inbound-rtp') {
-              const rtp = stat as unknown as { kind?: string; mediaType?: string; packetsReceived?: number; packetsLost?: number };
+              const rtp = stat as unknown as {
+                kind?: string;
+                mediaType?: string;
+                packetsReceived?: number;
+                packetsLost?: number;
+                bytesReceived?: number;
+              };
               if (rtp.kind === 'audio' || rtp.mediaType === 'audio') {
                 inboundStreams.set(stat.id, {
                   received: rtp.packetsReceived ?? 0,
                   lost: rtp.packetsLost ?? 0,
+                  bytes: rtp.bytesReceived ?? 0,
                 });
+              }
+            } else if (stat.type === 'outbound-rtp') {
+              const rtp = stat as unknown as {
+                kind?: string;
+                mediaType?: string;
+                packetsSent?: number;
+                bytesSent?: number;
+              };
+              if (rtp.kind === 'audio' || rtp.mediaType === 'audio') {
+                outboundStreams.set(stat.id, {
+                  sent: rtp.packetsSent ?? 0,
+                  bytes: rtp.bytesSent ?? 0,
+                });
+              }
+            } else if (stat.type === 'remote-inbound-rtp') {
+              const rtp = stat as unknown as { roundTripTime?: number; kind?: string; mediaType?: string };
+              if (
+                (rtp.kind === 'audio' || rtp.mediaType === 'audio') &&
+                typeof rtp.roundTripTime === 'number' &&
+                Number.isFinite(rtp.roundTripTime)
+              ) {
+                remoteInboundRtt = Math.max(remoteInboundRtt ?? 0, rtp.roundTripTime);
               }
             }
           });
@@ -701,7 +757,10 @@ export class VoiceRoomManager {
               transport = 'p2p';
               relay = 'none';
             }
-            protocol = normalizeProtocol(localCandidate?.protocol ?? remoteCandidate?.protocol);
+            const localRelayProtocol = localType === 'relay' ? localCandidate?.relayProtocol : undefined;
+            protocol = normalizeProtocol(
+              localRelayProtocol ?? localCandidate?.protocol ?? remoteCandidate?.protocol
+            );
           }
 
           let packetLossPct: number | null = null;
@@ -731,6 +790,36 @@ export class VoiceRoomManager {
             this.prevRtpCounts.delete(peerId);
           }
 
+          let inboundBytes = 0;
+          for (const stream of inboundStreams.values()) {
+            inboundBytes += stream.bytes;
+          }
+          let outboundBytes = 0;
+          for (const stream of outboundStreams.values()) {
+            outboundBytes += stream.bytes;
+          }
+          const now = performance.now();
+          const prevBytes = this.prevByteCounts.get(peerId);
+          let uplinkKbps: number | null = null;
+          let downlinkKbps: number | null = null;
+          if (prevBytes && now > prevBytes.timestamp) {
+            const seconds = (now - prevBytes.timestamp) / 1000;
+            if (seconds > 0) {
+              downlinkKbps = Math.max(
+                0,
+                Math.round(((inboundBytes - prevBytes.inboundBytes) * 8) / 1000 / seconds)
+              );
+              uplinkKbps = Math.max(
+                0,
+                Math.round(((outboundBytes - prevBytes.outboundBytes) * 8) / 1000 / seconds)
+              );
+            }
+          }
+          this.prevByteCounts.set(peerId, { timestamp: now, inboundBytes, outboundBytes });
+
+          const uplinkRttMs = remoteInboundRtt !== null ? Math.round(remoteInboundRtt * 1000) : rttMs;
+          const downlinkRttMs = rttMs;
+
           let quality: NetworkQualityLevel;
           if (pc.connectionState === 'failed') {
             quality = 'poor';
@@ -749,7 +838,18 @@ export class VoiceRoomManager {
             }
           }
 
-          const nextStat: PeerNetworkStats = { quality, rttMs, packetLossPct, transport, protocol, relay };
+          const nextStat: PeerNetworkStats = {
+            quality,
+            rttMs,
+            packetLossPct,
+            transport,
+            protocol,
+            relay,
+            uplinkKbps,
+            downlinkKbps,
+            uplinkRttMs,
+            downlinkRttMs,
+          };
           const prevStat = this.peerNetworkStats.get(peerId);
           if (
             !prevStat ||
@@ -758,7 +858,11 @@ export class VoiceRoomManager {
             prevStat.packetLossPct !== nextStat.packetLossPct ||
             prevStat.transport !== nextStat.transport ||
             prevStat.protocol !== nextStat.protocol ||
-            prevStat.relay !== nextStat.relay
+            prevStat.relay !== nextStat.relay ||
+            prevStat.uplinkKbps !== nextStat.uplinkKbps ||
+            prevStat.downlinkKbps !== nextStat.downlinkKbps ||
+            prevStat.uplinkRttMs !== nextStat.uplinkRttMs ||
+            prevStat.downlinkRttMs !== nextStat.downlinkRttMs
           ) {
             this.peerNetworkStats.set(peerId, nextStat);
             changed = true;
@@ -935,6 +1039,7 @@ export class VoiceRoomManager {
     this.restartedIcePeers.delete(peerId);
     this.peerNetworkStats.delete(peerId);
     this.prevRtpCounts.delete(peerId);
+    this.prevByteCounts.delete(peerId);
     this.detachMonitor(peerId);
 
     const cancelers = this.peerTrackCancelers.get(peerId);
@@ -1300,14 +1405,17 @@ export class VoiceRoomManager {
   async setOutputDevice(deviceId: string): Promise<void> {
     const nextDeviceId = deviceId || '';
     const previousDeviceId = this.selectedOutputDeviceId;
+    const attemptId = this.joinAttemptId;
     this.selectedOutputDeviceId = nextDeviceId;
     try {
       this.rebuildPlayback();
       await this.applyOutputDevice(nextDeviceId);
     } catch (err) {
-      this.selectedOutputDeviceId = previousDeviceId;
-      this.rebuildPlayback();
-      await this.applyOutputDevice(previousDeviceId).catch(() => {});
+      if (this.joinAttemptId === attemptId) {
+        this.selectedOutputDeviceId = previousDeviceId;
+        this.rebuildPlayback();
+        await this.applyOutputDevice(previousDeviceId).catch(() => {});
+      }
       this.emit();
       throw err instanceof Error ? err : new Error('切换语音输出设备失败');
     }
@@ -1558,6 +1666,7 @@ export class VoiceRoomManager {
     this.peerVolumes.clear();
     this.peerNetworkStats.clear();
     this.prevRtpCounts.clear();
+    this.prevByteCounts.clear();
     this.connectedPeerIds.clear();
 
     if (this.ws) {
