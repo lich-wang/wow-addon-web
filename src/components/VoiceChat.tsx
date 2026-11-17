@@ -759,64 +759,66 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         {/* Participants List */}
         <div className="lg:col-span-2 rounded-2xl bg-slate-900/60 border border-slate-800 p-4 sm:p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
+            <h3 className="text-sm font-bold text-slate-200 flex items-center space-x-2 shrink-0">
               <Radio className="w-4 h-4 text-amber-400" />
               <span>频道成员 ({voiceState.participants.length})</span>
             </h3>
 
-            {!voiceState.listenOnly && audioInputs.length > 1 && (
-              <select
-                value={pendingDeviceId ?? voiceState.selectedDeviceId}
-                disabled={voiceState.status !== 'connected'}
-                onChange={(e) => {
-                  void handleSwitchMicChange(e.target.value);
-                }}
-                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
-              >
-                <option value="">切换麦克风：默认</option>
-                {audioInputs.map((d, idx) => (
-                  <option key={d.deviceId || idx} value={d.deviceId}>
-                    {d.label || `麦克风 ${idx + 1}`}
-                  </option>
-                ))}
-              </select>
-            )}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {!voiceState.listenOnly && audioInputs.length > 1 && (
+                <select
+                  value={pendingDeviceId ?? voiceState.selectedDeviceId}
+                  disabled={voiceState.status !== 'connected'}
+                  onChange={(e) => {
+                    void handleSwitchMicChange(e.target.value);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
+                >
+                  <option value="">麦克风：默认</option>
+                  {audioInputs.map((d, idx) => (
+                    <option key={d.deviceId || idx} value={d.deviceId}>
+                      {d.label || `麦克风 ${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
+              )}
 
-            {(audioOutputs.length > 0 || isRoomOutputMissing) && (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-1">
-                  <select
-                    value={roomOutputDeviceId}
-                    disabled={voiceState.status !== 'connected' || pendingOutputDeviceId !== null}
-                    onChange={(e) => {
-                      void handleSwitchOutputChange(e.target.value);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
-                  >
-                    <option value="">切换输出：默认</option>
-                    {isRoomOutputMissing && (
-                      <option value={roomOutputDeviceId}>已断开的输出设备</option>
-                    )}
-                    {audioOutputs.map((d, idx) => (
-                      <option key={d.deviceId || idx} value={d.deviceId}>
-                        {d.label || `输出 ${idx + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => void handlePickOutputDevice()}
-                    title="检测/选择输出设备"
-                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 hover:text-amber-300 cursor-pointer"
-                  >
-                    检测
-                  </button>
+              {(audioOutputs.length > 0 || isRoomOutputMissing) && (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={roomOutputDeviceId}
+                      disabled={voiceState.status !== 'connected' || pendingOutputDeviceId !== null}
+                      onChange={(e) => {
+                        void handleSwitchOutputChange(e.target.value);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
+                    >
+                      <option value="">输出：默认</option>
+                      {isRoomOutputMissing && (
+                        <option value={roomOutputDeviceId}>已断开的输出设备</option>
+                      )}
+                      {audioOutputs.map((d, idx) => (
+                        <option key={d.deviceId || idx} value={d.deviceId}>
+                          {d.label || `输出 ${idx + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void handlePickOutputDevice()}
+                      title="检测/选择输出设备"
+                      className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 hover:text-amber-300 cursor-pointer"
+                    >
+                      检测
+                    </button>
+                  </div>
+                  {isRoomOutputMissing && (
+                    <span className="text-[10px] text-amber-400">输出设备已断开，请切回“默认”输出。</span>
+                  )}
                 </div>
-                {isRoomOutputMissing && (
-                  <span className="text-[10px] text-amber-400">输出设备已断开，请切回“默认”输出。</span>
-                )}
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {voiceState.participants.length <= 1 && (
