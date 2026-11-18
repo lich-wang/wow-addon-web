@@ -3346,6 +3346,103 @@ local ROUTE_ORDER = {
   "orc", "undead", "tauren", "troll", "skyborne-horde"
 }
 
+-- 无限服常用游戏命令/控制台变量速查表（仅收录在无限服客户端可用的命令）
+-- 每条: { title, category, code, desc, note }
+-- code 为可直接粘贴到聊天框执行的命令；note 标注无限服下的注意事项。
+local COMMON_COMMANDS = {
+  {
+    title = "最大镜头距离",
+    category = "画面 / 镜头",
+    code = "/console cameraDistanceMaxZoomFactor 4",
+    desc = "把镜头拉到最远（无限服上限约 50 码），视野更开阔，做任务与副本走位更舒服。",
+    note = "无限服客户端使用 4（上限 50 码）；若该条无效，可改用下方旧版命令 cameraDistanceMax 50。",
+  },
+  {
+    title = "旧版镜头距离上限 (1.12)",
+    category = "画面 / 镜头",
+    code = "/console cameraDistanceMax 50",
+    desc = "旧版（7.0 以前）客户端直接设置镜头最远距离 50 码。",
+    note = "无限服 1.12 客户端可用，作为上一条无效时的备用命令。",
+  },
+  {
+    title = "物品/任务目标闪光高亮",
+    category = "物品 / 拾取",
+    code = "/console outlineModeShowLootEffectWhenDisabled 1",
+    desc = "关闭轮廓模式时，用闪光特效标出地上的拾取物与可交互目标。",
+    note = "无限服专属 CVar；需先关闭轮廓模式（/console outlineMode 0）才会生效。",
+  },
+  {
+    title = "自动拾取",
+    category = "物品 / 拾取",
+    code = "/console autoLootDefault 1",
+    desc = "默认开启自动拾取，拾取尸体不再逐个点选；按住 Shift 可临时关闭。",
+    note = "无限服可用。",
+  },
+  {
+    title = "关闭全屏泛光（提帧）",
+    category = "画面 / 性能",
+    code = "/console ffxGlow 0",
+    desc = "关闭屏幕泛光特效，低配机器或团本掉帧时可明显提升帧数。",
+    note = "无限服可用；想恢复改为 1。",
+  },
+  {
+    title = "解除帧数上限",
+    category = "画面 / 性能",
+    code = "/console maxFPS 0",
+    desc = "取消帧率硬性上限（0 = 使用软上限），也可设为 60 / 144 等固定值。",
+    note = "无限服可用；0 表示不限制，设 60/144 可固定帧率。",
+  },
+  {
+    title = "镜头平滑关闭",
+    category = "画面 / 镜头",
+    code = "/console cameraSmoothStyle 0",
+    desc = "关闭镜头平滑跟随，旋转视角更跟手，PvP 与走位更精准。",
+    note = "无限服可用。",
+  },
+  {
+    title = "角色环境光（旧版）",
+    category = "画面 / 镜头",
+    code = "/console characterAmbient",
+    desc = "切换角色模型的环境光照，让人物颜色更自然；再输入一次可切回。",
+    note = "无限服 1.12/经典客户端可用；该命令不要带数值，直接输入即可切换。",
+  },
+  {
+    title = "显示 Lua 报错",
+    category = "调试 / 其他",
+    code = "/console scriptErrors 1",
+    desc = "开启 Lua 错误弹窗，排查插件报错与兼容性问题时必备。",
+    note = "无限服可用；查完问题建议改回 0。",
+  },
+  {
+    title = "重置界面设置",
+    category = "调试 / 其他",
+    code = "/console cvar_default",
+    desc = "把所有界面控制台变量恢复为默认值，界面错乱时的终极自救。",
+    note = "会重置所有 CVar 改动，包括上面这些设置；单独重置某项用 /console cvar_default 变量名。",
+  },
+  {
+    title = "重载界面",
+    category = "调试 / 其他",
+    code = "/reload",
+    desc = "重载游戏界面（等价于 /rl），安装或更新插件后使其生效。",
+    note = "无限服通用斜杠命令。",
+  },
+  {
+    title = "清理聊天窗口",
+    category = "调试 / 其他",
+    code = "/clearChat",
+    desc = "清空当前聊天窗口的文字，刷屏或截屏前整理界面时使用。",
+    note = "无限服通用斜杠命令。",
+  },
+  {
+    title = "暂离 / 请勿打扰",
+    category = "调试 / 其他",
+    code = "/afk",
+    desc = "标记自己为暂离（自动回复），再输入一次或移动即取消；/dnd 则为请勿打扰。",
+    note = "无限服通用斜杠命令。",
+  },
+}
+
 local state = {
   autoFollow = true,
   level = 1,
@@ -6578,7 +6675,20 @@ local function RenderTabMacros()
   local cardIdx = 1
   local y = 6
   local cls = GetCurrentClassData()
-  local macros = (cls and cls.macros) or {}
+  local rawMacros = (cls and cls.macros) or {}
+
+  -- 按需求等级从低到高整理宏列表（浅拷贝，避免改动原始数据）：
+  -- 等级相同时按标题排序，保证展示顺序稳定；无等级视为 1 级。
+  local macros = {}
+  for _, m in ipairs(rawMacros) do
+    macros[#macros + 1] = m
+  end
+  table.sort(macros, function(a, b)
+    local la = tonumber(a and a.level) or 1
+    local lb = tonumber(b and b.level) or 1
+    if la ~= lb then return la < lb end
+    return tostring(a and a.title or "") < tostring(b and b.title or "")
+  end)
 
   local introCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
@@ -6609,6 +6719,49 @@ local function RenderTabMacros()
         "一键写入宏",
         function()
           CreateOrUpdateGameMacro(m.title, m.code)
+        end
+      )
+    end
+  end
+
+  HideUnusedCards(cardIdx)
+  contentChild:SetHeight(math.max(y + 20, 480))
+end
+
+-- 常用命令速查：分类整理 /console 控制台变量与斜杠命令，支持搜索与一键复制
+local function RenderTabCommands()
+  local cardIdx = 1
+  local y = 6
+
+  local introCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    introCard, y,
+    "|cff00ffcc[常用命令] 魔兽世界通用命令 / 控制台变量速查|r",
+    "面向《魔兽世界：无限服》整理、均可在无限服客户端使用的常用命令。每条命令都可点击右上角 |cff00ff00[复制命令]|r 按钮，或直接把命令粘贴到聊天框回车执行。|cffff8800注意：/console 属于客户端设置，请在非战斗中执行。|r",
+    { 0.0, 0.75, 0.95, 0.9 },
+    { 0.05, 0.10, 0.16, 0.92 },
+    "共 " .. tostring(#COMMON_COMMANDS) .. " 条"
+  )
+
+  for _, c in ipairs(COMMON_COMMANDS) do
+    if MatchesSearch((c.title or "") .. " " .. (c.category or "") .. " " .. (c.code or "") .. " " .. (c.desc or "") .. " " .. (c.note or "")) then
+      local bodyLines = {
+        "|cff99e6ff分类:|r " .. (c.category or "其他"),
+        "|cff99e6ff说明:|r " .. (c.desc or ""),
+        "\n|cffffd100命令:|r\n|cffaaffaa" .. (c.code or "") .. "|r",
+        "\n|cff888888注意:|r |cffbbbbbb" .. (c.note or "") .. "|r",
+      }
+      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+      y = LayoutCard(
+        card, y,
+        "|cff00ccff" .. (c.title or "命令") .. "|r",
+        table.concat(bodyLines, "\n"),
+        { 0.2, 0.55, 0.8, 0.85 },
+        { 0.06, 0.09, 0.14, 0.94 },
+        nil,
+        "复制命令",
+        function()
+          ShowCopyMacroDialog(c.title or "命令", c.code or "")
         end
       )
     end
@@ -6977,6 +7130,8 @@ RefreshUI = function(preserveScroll)
     RenderTabMacros()
   elseif state.activeTab == 5 then
     RenderTabDungeons()
+  elseif state.activeTab == 7 then
+    RenderTabCommands()
   else
     RenderTabForeverAndNews()
   end
@@ -7182,7 +7337,7 @@ local function CreateMainWindow()
     self:ClearFocus()
   end)
 
-  -- 六大功能标签栏
+  -- 七大功能标签栏
   local TAB_DEFS = {
     { id = 1, label = "智能匹配" },
     { id = 2, label = "升级路线" },
@@ -7190,12 +7345,13 @@ local function CreateMainWindow()
     { id = 4, label = "一键宏库" },
     { id = 5, label = "地下城百科" },
     { id = 6, label = "专业&无限特色" },
+    { id = 7, label = "常用命令" },
   }
 
   for i, def in ipairs(TAB_DEFS) do
     local btn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
-    btn:SetSize(125, 26)
-    btn:SetPoint("TOPLEFT", 12 + (i - 1) * 129, -82)
+    btn:SetSize(105, 26)
+    btn:SetPoint("TOPLEFT", 12 + (i - 1) * 108, -82)
     btn:SetText(def.label)
     btn:SetScript("OnClick", function()
       state.activeTab = def.id
@@ -7411,6 +7567,8 @@ SlashCmdList["WOWF"] = function(msg)
   SyncPlayerCharacter()
   if cmd == "macro" or cmd == "macros" then
     ToggleMainWindow(4)
+  elseif cmd == "cmd" or cmd == "commands" or cmd == "console" then
+    ToggleMainWindow(7)
   elseif cmd == "dungeon" or cmd == "dungeons" then
     ToggleMainWindow(5)
   elseif cmd == "route" or cmd == "level" then
