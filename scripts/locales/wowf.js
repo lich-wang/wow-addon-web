@@ -4624,6 +4624,33 @@ local function DedupeQuestieQuests(quests)
     ResolveQuestChainFromQuestieDB(q)
     table.insert(list, q)
   end
+  local function classesCover(holder, target)
+    local hCls = type(holder) == "table" and holder.classes or nil
+    if type(hCls) ~= "table" or #hCls == 0 then
+      return true
+    end
+    local tCls = type(target) == "table" and target.classes or nil
+    if type(tCls) ~= "table" or #tCls == 0 then
+      return false
+    end
+    local hSet = {}
+    for _, c in ipairs(hCls) do hSet[c] = true end
+    for _, c in ipairs(tCls) do
+      if not hSet[c] then return false end
+    end
+    return true
+  end
+  local function sameStepDeps(s1, s2)
+    if not s1 or not s2 then return s1 == s2 end
+    if s1.preId ~= s2.preId then return false end
+    local r1, r2 = s1.reqAll, s2.reqAll
+    if type(r1) ~= "table" and type(r2) ~= "table" then return true end
+    if type(r1) ~= "table" or type(r2) ~= "table" or #r1 ~= #r2 then return false end
+    for idx = 1, #r1 do
+      if r1[idx] ~= r2[idx] then return false end
+    end
+    return true
+  end
   local out = {}
   for i, q in ipairs(list) do
     local ids = {}
@@ -4634,7 +4661,7 @@ local function DedupeQuestieQuests(quests)
     end
     local redundant = false
     for j, other in ipairs(list) do
-      if i ~= j and (other.faction == q.faction or other.faction == "both") then
+      if i ~= j and (other.faction == q.faction or other.faction == "both") and classesCover(other, q) then
         local oIds = {}
         if type(other.steps) == "table" and #other.steps > 0 then
           for _, st in ipairs(other.steps) do table.insert(oIds, tonumber(st.id)) end
@@ -4658,12 +4685,19 @@ local function DedupeQuestieQuests(quests)
           end
         elseif #oIds == #ids then
           local match = true
+          local sameSteps = (type(other.steps) == "table" and type(q.steps) == "table")
           for k = 1, #oIds do
-            if oIds[k] ~= ids[k] then match = false break end
+            if oIds[k] ~= ids[k] or (sameSteps and not sameStepDeps(other.steps[k], q.steps[k])) then
+              match = false
+              break
+            end
           end
-          if match and ((other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i)) then
-            redundant = true
-            break
+          if match then
+            local sameClassScope = classesCover(q, other)
+            if (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
+              redundant = true
+              break
+            end
           end
         end
       end
