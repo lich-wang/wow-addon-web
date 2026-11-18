@@ -4697,14 +4697,14 @@ local function DedupeQuestieQuests(quests)
     end
     return true
   end
-  local function navCovers(holder, target, offset)
+  local function navCovers(holder, target, targetOffset)
     local hFallbackZone = holder.zone or ""
     local tFallbackZone = target.zone or ""
     if type(holder.steps) == "table" and type(target.steps) == "table" then
-      local off = offset or 0
-      for k = 1, #target.steps do
-        local hs = holder.steps[off + k]
-        local ts = target.steps[k]
+      local off = targetOffset or 0
+      for k = 1, #holder.steps do
+        local hs = holder.steps[k]
+        local ts = target.steps[off + k]
         if (not stepPickupCovers(hs, ts, hFallbackZone, tFallbackZone)) or (not stepTurninCovers(hs, ts, hFallbackZone, tFallbackZone)) then
           return false
         end
@@ -4780,7 +4780,7 @@ local function DedupeQuestieQuests(quests)
             for k = 1, #oIds do
               if oIds[k] ~= ids[offset + k] then match = false break end
             end
-            if match and areOmittedStepsBreadcrumbs(ids, offset, q.steps) then redundant = true break end
+            if match and areOmittedStepsBreadcrumbs(ids, offset, q.steps) and navCovers(other, q, offset) then redundant = true break end
           end
         elseif #oIds == #ids and #ids > 0 then
           local match = true
@@ -4791,10 +4791,14 @@ local function DedupeQuestieQuests(quests)
               break
             end
           end
-          if match and navCovers(other, q, 0) then
+          local qMin = tonumber(q.minLevel) or 0
+          local oMin = tonumber(other.minLevel) or 0
+          local minLevelCovers = (oMin == qMin) or (oMin > 0 and (qMin <= 0 or oMin < qMin))
+          if match and minLevelCovers and navCovers(other, q, 0) then
             local sameClassScope = classesCover(q, other)
             local strictlyBetterNav = not navCovers(q, other, 0)
-            if strictlyBetterNav or (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
+            local strictlyBetterMinLevel = (oMin > 0 and (qMin <= 0 or oMin < qMin))
+            if strictlyBetterNav or strictlyBetterMinLevel or (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
               redundant = true
               break
             end
