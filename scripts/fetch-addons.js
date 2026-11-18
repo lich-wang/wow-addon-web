@@ -729,6 +729,10 @@ async function processQuestieForever() {
     }
   }
   await zip.loadAsync(dbBuf);
+  const camelotToc = zip.file('QuestieDB/QuestieDB_Camelot.toc');
+  if (camelotToc && !zip.file('QuestieDB/QuestieDB_Forever.toc')) {
+    zip.file('QuestieDB/QuestieDB_Forever.toc', await camelotToc.async('nodebuffer'));
+  }
   await patchQuestieDB(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
