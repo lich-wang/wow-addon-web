@@ -7,7 +7,12 @@ import { patchBagnon } from './locales/bagnon.js';
 import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import { patchMapzeroth } from './locales/mapzeroth.js';
-import { buildWoWFAddon, hasValidZoneQuestsIndex } from './locales/wowf.js';
+import {
+  buildWoWFAddon,
+  hasValidZoneQuestsBuffer,
+  hasValidZoneQuestsIndex,
+  isValidZoneQuestsData,
+} from './locales/wowf.js';
 import { buildForeverTransitAddon } from './locales/foreverTransit.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
@@ -538,12 +543,7 @@ function hasCachedZoneQuestsSnapshot() {
   if (!fs.existsSync(snapshotPath)) return false;
   try {
     const data = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
-    return Boolean(
-      data?.zoneQuests &&
-        Object.keys(data.zoneQuests).length > 0 &&
-        data?.zoneAreaIds &&
-        Object.keys(data.zoneAreaIds).length > 0
-    );
+    return isValidZoneQuestsData(data?.zoneQuests, data?.zoneAreaIds);
   } catch {
     return false;
   }
@@ -652,7 +652,7 @@ async function processQuestieForever() {
       const cachedZip = await JSZip.loadAsync(cachedBuf);
       const cachedToc =
         cachedZip.file('QuestieDB/QuestieDB_Forever.toc') || cachedZip.file('QuestieDB/QuestieDB_Camelot.toc');
-      if (!cachedToc || !(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR))) {
+      if (!cachedToc || !(await hasValidZoneQuestsBuffer(cachedBuf))) {
         throw err;
       }
       await cachedToc.async('string');
@@ -688,6 +688,7 @@ async function processQuestieForever() {
     `${coreUrl} + ${dbUrl}`
   );
   console.log(`[✓] questie-forever.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  return dbBuf;
 }
 
 // ---------------------------------------------------------------------------
@@ -772,8 +773,8 @@ async function processSpellActivationOverlay() {
 // ---------------------------------------------------------------------------
 // 11. WoWF Companion (wowf.io In-Game Dynamic Guide for WoW Forever)
 // ---------------------------------------------------------------------------
-async function processWoWF() {
-  const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl);
+async function processWoWF(questieDbBuf = null) {
+  const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl, questieDbBuf);
   recordBundledVersion('wowf', await readTocVersion(zip, 'WoWF/WoWF.toc'), source);
 }
 
@@ -843,11 +844,11 @@ async function main() {
   await processDungeonsForever();
   await processBagnon();
   await processLueur();
-  await processQuestieForever();
+  const questieDbBuf = await processQuestieForever();
   await processForeverMouseTooltip();
   await processMapzeroth();
   await processSpellActivationOverlay();
-  await processWoWF();
+  await processWoWF(questieDbBuf);
   await processForeverTransit();
   writeBundledVersions();
   console.log('=== All 12 Addons successfully bundled & localized into public/addons/ ===');

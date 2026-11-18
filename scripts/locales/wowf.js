@@ -2073,13 +2073,17 @@ function decodeCborValue(buf, state = { offset: 0 }) {
  * 从本地缓存的 questie-db-forever.zip 读取无限服官方 QuestieDB 的任务前置关系 (preQuestSingle / preQuestGroup)
  * 用于补全 wowf.io 网页端遗漏的前置任务链
  */
-async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zip') {
+async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zip', zipBuffer = null) {
   const dbMap = new Map();
   let parseErrors = 0;
-  const zipPath = path.join(cacheDir, zipFilename);
-  if (!fs.existsSync(zipPath)) return dbMap;
+  let buf = zipBuffer;
+  if (!buf) {
+    const zipPath = path.join(cacheDir, zipFilename);
+    if (!fs.existsSync(zipPath)) return dbMap;
+    buf = fs.readFileSync(zipPath);
+  }
   try {
-    const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
+    const zip = await JSZip.loadAsync(buf);
     const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
     if (!tocFile) return dbMap;
     const toc = await tocFile.async('string');
@@ -2498,30 +2502,35 @@ function buildZoneQuestsIndex(questiePrereqs) {
       }
     }
 
-    // 按适用种族校验每个区域起点的可接任务在运行时回溯深度 (depth < 12) 内是否可达；对存在未覆盖种族的步骤保留独立入口
+    // 按适用种族校验每个区域起点的可接任务在运行时回溯深度 (depth < 12) 内是否可达；
+    // 使用与 Lua ResolveQuestChainFromQuestieDB 一致的 per-root visited 规则，避免长分支提前占位导致短路径被跳过
     const reachableByRace = new Map();
-    const markReachable = (curId, depth, pathRaces) => {
-      if (depth >= 12 || pathRaces === 0n) return;
-      const cur = questiePrereqs.get(curId);
-      const eff = cur ? pathRaces & effectiveRaces(cur.races) : pathRaces;
-      if (eff === 0n) return;
-      const prev = reachableByRace.get(curId) || 0n;
-      if ((prev & eff) === eff) return;
-      reachableByRace.set(curId, prev | eff);
-      if (!cur) return;
-      const preIds =
-        Array.isArray(cur.preGroup) && cur.preGroup.length > 0
-          ? cur.preGroup
-          : Array.isArray(cur.preSingle) && cur.preSingle.length === 1
-            ? [cur.preSingle[0]]
-            : [];
-      for (const pid of preIds) {
-        if (pid) markReachable(pid, depth + 1, eff);
-      }
+    const markRootReachable = (rootId, rootRaces) => {
+      const rootVisited = new Set();
+      const dfs = (curId, depth, pathRaces) => {
+        if (depth >= 12 || rootVisited.has(curId)) return;
+        rootVisited.add(curId);
+        const cur = questiePrereqs.get(curId);
+        const eff = cur ? pathRaces & effectiveRaces(cur.races) : pathRaces;
+        if (eff !== 0n) {
+          reachableByRace.set(curId, (reachableByRace.get(curId) || 0n) | eff);
+        }
+        if (!cur) return;
+        const preIds =
+          Array.isArray(cur.preGroup) && cur.preGroup.length > 0
+            ? cur.preGroup
+            : Array.isArray(cur.preSingle) && cur.preSingle.length === 1
+              ? [cur.preSingle[0]]
+              : [];
+        for (const pid of preIds) {
+          if (pid) dfs(pid, depth + 1, eff);
+        }
+      };
+      dfs(rootId, 0, rootRaces);
     };
     for (const [qid, info] of list) {
       if (!covered.has(qid)) {
-        markReachable(qid, 0, effectiveRaces(info.races));
+        markRootReachable(qid, effectiveRaces(info.races));
       }
     }
     for (const [qid, info] of list) {
@@ -2530,7 +2539,7 @@ function buildZoneQuestsIndex(questiePrereqs) {
         const reached = reachableByRace.get(qid) || 0n;
         if ((needed & ~reached) !== 0n) {
           covered.delete(qid);
-          markReachable(qid, 0, needed);
+          markRootReachable(qid, needed);
         }
       }
     }
@@ -2594,12 +2603,39 @@ function buildZoneQuestsIndex(questiePrereqs) {
   return out;
 }
 
+export function isValidZoneQuestsData(zoneQuests, zoneAreaIds) {
+  if (!zoneQuests || typeof zoneQuests !== 'object' || !zoneAreaIds || typeof zoneAreaIds !== 'object') {
+    return false;
+  }
+  const zones = Object.keys(zoneQuests);
+  if (zones.length < 30) return false;
+  return zones.every(
+    z =>
+      Array.isArray(zoneQuests[z]) &&
+      zoneQuests[z].length > 0 &&
+      Array.isArray(zoneAreaIds[z]) &&
+      zoneAreaIds[z].length > 0
+  );
+}
+
+export async function hasValidZoneQuestsBuffer(zipBuffer) {
+  try {
+    if (!zipBuffer || zipBuffer.length === 0) return false;
+    const prereqs = await loadQuestiePrereqs('', 'questie-db-forever.zip', zipBuffer);
+    if (!prereqs || prereqs.size === 0 || (prereqs._parseErrors || 0) > 0) return false;
+    const index = buildZoneQuestsIndex(prereqs);
+    return isValidZoneQuestsData(index, ZONE_NAME_TO_AREA_IDS);
+  } catch {
+    return false;
+  }
+}
+
 export async function hasValidZoneQuestsIndex(cacheDir, zipFilename = 'questie-db-forever.zip') {
   try {
     const prereqs = await loadQuestiePrereqs(cacheDir, zipFilename);
     if (!prereqs || prereqs.size === 0 || (prereqs._parseErrors || 0) > 0) return false;
     const index = buildZoneQuestsIndex(prereqs);
-    return Object.keys(index).length >= 30;
+    return isValidZoneQuestsData(index, ZONE_NAME_TO_AREA_IDS);
   } catch {
     return false;
   }
@@ -3105,7 +3141,7 @@ function toLuaValue(val, indent = 0) {
 /**
  * 构建完整数据集：优先从 wowf.io 实时抓取并缓存，断网或局部请求失败时按粒度回退到已有缓存
  */
-async function buildWoWFDataset(cacheDir, getHeaders) {
+async function buildWoWFDataset(cacheDir, getHeaders, questieDbBuf = null) {
   const cacheFile = path.join(cacheDir, 'wowf-dataset.json');
   let cachedDataset = null;
   if (fs.existsSync(cacheFile)) {
@@ -3651,7 +3687,7 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     foreverSystems: FOREVER_SYSTEMS_DATA,
     news,
   };
-  const livePrereqs = await loadQuestiePrereqs(cacheDir);
+  const livePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
   annotateDatasetPrereqs(dataset, livePrereqs);
   if ((!dataset.zoneQuests || Object.keys(dataset.zoneQuests).length === 0) && cachedDataset?.zoneQuests && cachedDataset?.zoneAreaIds) {
     dataset.zoneQuests = cachedDataset.zoneQuests;
@@ -4593,8 +4629,9 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
   if type(q) ~= "table" then return end
   local qid = tonumber(q.id or q.questId)
   if not qid or qid <= 0 then return end
+  local hasNavCtx = (q._navCtx ~= nil and q._navCtx ~= "")
   local metaKey = GetQuestMetaKey(qid, q.faction, q._navCtx)
-  local prev = (metaKey and questMetaByKey[metaKey]) or questMetaById[qid] or {}
+  local prev = (metaKey and questMetaByKey[metaKey]) or (not hasNavCtx and questMetaById[qid]) or {}
   local resolvedZone = (q.zone and q.zone ~= "") and q.zone or (q.place and q.place ~= "" and q.place) or fallbackZone or prev.zone or ""
   local sameZone = (not prev.zone or prev.zone == "" or resolvedZone == prev.zone)
   local qx = tonumber(q.x)
@@ -4613,7 +4650,9 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
     teaches = (q.teaches and q.teaches ~= "") and q.teaches or prev.teaches or "",
     steps = q.steps or prev.steps,
   }
-  questMetaById[qid] = entry
+  if not hasNavCtx then
+    questMetaById[qid] = entry
+  end
   if metaKey then
     questMetaByKey[metaKey] = entry
   end
@@ -6370,7 +6409,7 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
 
   for _, q in ipairs(pool) do
     local factionOk = (q.faction == "both" or q.faction == state.faction)
-    if factionOk and MatchesQuestRace(q) and q.min <= lvl and q.maxLv >= minOkLv then
+    if factionOk and MatchesQuestRace(q) and q.min <= lvl and q.maxLv >= minOkLv and GetQuestieQuestInfo(q.id) ~= nil then
       ResolveQuestChainFromQuestieDB(q)
       local cand = CloneZoneQuestCandidate(q)
 
@@ -8569,11 +8608,11 @@ end
  * @param {(url: string) => Record<string, string>} getHeaders
  * @returns {Promise<{ zip: JSZip, outPath: string, version: string, source: string }>}
  */
-export async function buildWoWFAddon(outputDir, cacheDir, getHeaders) {
+export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbBuf = null) {
   console.log('Synchronizing live data from https://wowf.io/zh for WoWF Companion...');
-  const dataset = await buildWoWFDataset(cacheDir, getHeaders);
-  if (!dataset.zoneQuests || Object.keys(dataset.zoneQuests).length === 0) {
-    throw new Error('[WoWF] 缺少区域任务链索引 (zoneQuests)，请确认 .cache/upstream-addons/questie-db-forever.zip 可读。');
+  const dataset = await buildWoWFDataset(cacheDir, getHeaders, questieDbBuf);
+  if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds)) {
+    throw new Error('[WoWF] 缺少完整的区域任务链索引 (zoneQuests/zoneAreaIds)，请确认 .cache/upstream-addons/questie-db-forever.zip 可读。');
   }
   enrichRoutesWithAltZones(dataset.routes);
   normalizeWowfDatasetText(dataset);
