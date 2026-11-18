@@ -548,10 +548,15 @@ async function promoteValidQuestieDBTemp(tmpFilename) {
   const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
   const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
   try {
-    if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR, tmpFilename)) {
-      fs.renameSync(tmpPath, dbCachePath);
-      return true;
+    if (!(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR, tmpFilename))) {
+      return false;
     }
+    try {
+      fs.renameSync(tmpPath, dbCachePath);
+    } catch (renameErr) {
+      console.warn(`[Questie] Failed to promote QuestieDB cache (${renameErr.message}); continuing with validated archive.`);
+    }
+    return true;
   } finally {
     if (fs.existsSync(tmpPath)) {
       try {
@@ -561,7 +566,6 @@ async function promoteValidQuestieDBTemp(tmpFilename) {
       }
     }
   }
-  return false;
 }
 
 async function ensureValidQuestieDBCache() {
