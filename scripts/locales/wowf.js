@@ -6295,18 +6295,30 @@ local function IsZoneStepUnlocked(st)
       end
     end
   end
-  if _G.QuestDB and GetFactionInfoByID then
+  if _G.QuestDB then
+    local function getRepStanding(fid)
+      if GetFactionInfoByID then
+        local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, fid)
+        if ok and type(barValue) == "number" then return barValue end
+      elseif C_Reputation and C_Reputation.GetFactionDataByID then
+        local ok, data = pcall(C_Reputation.GetFactionDataByID, fid)
+        if ok and type(data) == "table" and type(data.currentStanding) == "number" then
+          return data.currentStanding
+        end
+      end
+      return nil
+    end
     local reqMinRep = _G.QuestDB.requiredMinRep and _G.QuestDB.requiredMinRep(sid)
     if type(reqMinRep) == "table" and tonumber(reqMinRep[1]) and tonumber(reqMinRep[2]) then
-      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, tonumber(reqMinRep[1]))
-      if ok and type(barValue) == "number" and barValue < tonumber(reqMinRep[2]) then
+      local barValue = getRepStanding(tonumber(reqMinRep[1]))
+      if type(barValue) ~= "number" or barValue < tonumber(reqMinRep[2]) then
         return false
       end
     end
     local reqMaxRep = _G.QuestDB.requiredMaxRep and _G.QuestDB.requiredMaxRep(sid)
     if type(reqMaxRep) == "table" and tonumber(reqMaxRep[1]) and tonumber(reqMaxRep[2]) then
-      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, tonumber(reqMaxRep[1]))
-      if ok and type(barValue) == "number" and barValue >= tonumber(reqMaxRep[2]) then
+      local barValue = getRepStanding(tonumber(reqMaxRep[1]))
+      if type(barValue) ~= "number" or barValue >= tonumber(reqMaxRep[2]) then
         return false
       end
     end

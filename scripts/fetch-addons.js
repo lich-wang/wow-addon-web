@@ -549,47 +549,60 @@ function hasCachedZoneQuestsSnapshot() {
   }
 }
 
-async function isValidQuestieDBArchiveBuffer(buf) {
-  try {
-    if (!buf || buf.length === 0) return false;
-    const zip = await JSZip.loadAsync(buf, { checkCRC32: true });
-    const foreverToc = zip.file('QuestieDB/QuestieDB_Forever.toc');
-    const camelotToc = zip.file('QuestieDB/QuestieDB_Camelot.toc');
-    const tocFile = foreverToc || camelotToc;
-    if (!tocFile) return false;
-    if (foreverToc && camelotToc) {
-      const [foreverBuf, camelotBuf] = await Promise.all([
-        foreverToc.async('nodebuffer'),
-        camelotToc.async('nodebuffer'),
-      ]);
-      if (!foreverBuf.equals(camelotBuf)) return false;
-    }
-    const tocText = await tocFile.async('string');
-    const fileIndex = new Set(Object.keys(zip.files).map(p => p.toLowerCase()));
-    let tocFileCount = 0;
-    let hasApiEntry = false;
-    for (const rawLine of tocText.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith('#')) continue;
-      const rel = line.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
-      if (!rel) continue;
-      const lowerRel = rel.toLowerCase();
-      if (!fileIndex.has(`questiedb/${lowerRel}`)) {
-        return false;
-      }
-      tocFileCount++;
-      if (lowerRel === 'src/api.lua') hasApiEntry = true;
-    }
-    if (tocFileCount === 0 || !hasApiEntry) return false;
-    return await hasValidZoneQuestsBuffer(buf);
-  } catch {
-    return false;
+async function validateQuestieDBArchiveBuffer(buf) {
+  if (!buf || buf.length === 0) {
+    return { valid: false, reason: 'QuestieDB archive buffer is empty.' };
   }
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(buf, { checkCRC32: true });
+  } catch (err) {
+    return { valid: false, reason: `QuestieDB ZIP integrity/CRC32 check failed: ${err.message}` };
+  }
+  const foreverToc = zip.file('QuestieDB/QuestieDB_Forever.toc');
+  const camelotToc = zip.file('QuestieDB/QuestieDB_Camelot.toc');
+  const tocFile = foreverToc || camelotToc;
+  if (!tocFile) {
+    return { valid: false, reason: 'QuestieDB archive is missing QuestieDB_Forever.toc / QuestieDB_Camelot.toc.' };
+  }
+  if (foreverToc && camelotToc) {
+    const [foreverBuf, camelotBuf] = await Promise.all([
+      foreverToc.async('nodebuffer'),
+      camelotToc.async('nodebuffer'),
+    ]);
+    if (!foreverBuf.equals(camelotBuf)) {
+      return { valid: false, reason: 'QuestieDB_Forever.toc and QuestieDB_Camelot.toc contents differ.' };
+    }
+  }
+  const tocText = await tocFile.async('string');
+  const fileIndex = new Set(Object.keys(zip.files).map(p => p.toLowerCase()));
+  let tocFileCount = 0;
+  let hasApiEntry = false;
+  for (const rawLine of tocText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const rel = line.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+    if (!rel) continue;
+    const lowerRel = rel.toLowerCase();
+    if (!fileIndex.has(`questiedb/${lowerRel}`)) {
+      return { valid: false, reason: `QuestieDB TOC references missing file: QuestieDB/${rel}` };
+    }
+    tocFileCount++;
+    if (lowerRel === 'src/api.lua') hasApiEntry = true;
+  }
+  if (tocFileCount === 0 || !hasApiEntry) {
+    return { valid: false, reason: 'QuestieDB TOC is missing required runtime entry src/api.lua.' };
+  }
+  if (!(await hasValidZoneQuestsBuffer(buf))) {
+    return { valid: false, reason: 'QuestieDB archive produced an empty or incomplete zoneQuests index.' };
+  }
+  return { valid: true, reason: '' };
 }
 
 async function promoteValidQuestieDBBuffer(dbBuf, dbUrl = '') {
-  if (!(await isValidQuestieDBArchiveBuffer(dbBuf))) {
-    return { valid: false, promoted: false };
+  const check = await validateQuestieDBArchiveBuffer(dbBuf);
+  if (!check.valid) {
+    return { valid: false, promoted: false, reason: check.reason };
   }
   const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
   const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
@@ -630,7 +643,8 @@ async function ensureValidQuestieDBCache() {
   if (fs.existsSync(dbCachePath)) {
     try {
       const cachedBuf = fs.readFileSync(dbCachePath);
-      if (await isValidQuestieDBArchiveBuffer(cachedBuf)) {
+      const check = await validateQuestieDBArchiveBuffer(cachedBuf);
+      if (check.valid) {
         return { questieDbBuf: cachedBuf, useSnapshotOnly: false };
       }
     } catch {
@@ -639,9 +653,9 @@ async function ensureValidQuestieDBCache() {
   }
   try {
     const { dbUrl, dbBuf } = await downloadQuestieDBForever();
-    const { valid } = await promoteValidQuestieDBBuffer(dbBuf, dbUrl);
+    const { valid, reason } = await promoteValidQuestieDBBuffer(dbBuf, dbUrl);
     if (!valid) {
-      throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
+      throw new Error(reason || 'Downloaded questie-db-forever.zip failed archive validation.');
     }
     return { questieDbBuf: dbBuf, useSnapshotOnly: false };
   } catch (err) {
@@ -677,9 +691,9 @@ async function processQuestieForever() {
       throw new Error('Downloaded QuestieDB archive is missing QuestieDB TOC.');
     }
     await tocFile.async('string');
-    const { valid } = await promoteValidQuestieDBBuffer(res.dbBuf, dbUrl);
+    const { valid, reason } = await promoteValidQuestieDBBuffer(res.dbBuf, dbUrl);
     if (!valid) {
-      throw new Error('Downloaded QuestieDB archive produced an empty zoneQuests index.');
+      throw new Error(reason || 'Downloaded QuestieDB archive failed validation.');
     }
     dbBuf = res.dbBuf;
   } catch (err) {
@@ -687,7 +701,8 @@ async function processQuestieForever() {
     const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
     if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
       const cachedBuf = fs.readFileSync(dbCachePath);
-      if (!(await isValidQuestieDBArchiveBuffer(cachedBuf))) {
+      const cachedCheck = await validateQuestieDBArchiveBuffer(cachedBuf);
+      if (!cachedCheck.valid) {
         throw err;
       }
       const cachedSha256 = crypto.createHash('sha256').update(cachedBuf).digest('hex');
