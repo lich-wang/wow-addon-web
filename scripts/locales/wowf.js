@@ -4669,7 +4669,8 @@ local function DedupeQuestieQuests(quests)
     end
     local redundant = false
     for j, other in ipairs(list) do
-      local factionCovers = (other.faction == q.faction) or (other.faction == "both" and ((not hasNavInfo(q)) or hasNavInfo(other)))
+      local navCovers = (not hasNavInfo(q)) or hasNavInfo(other)
+      local factionCovers = (other.faction == q.faction or other.faction == "both") and navCovers
       if i ~= j and factionCovers and classesCover(other, q) then
         local oIds = {}
         if type(other.steps) == "table" and #other.steps > 0 then
@@ -4703,7 +4704,8 @@ local function DedupeQuestieQuests(quests)
           end
           if match then
             local sameClassScope = classesCover(q, other)
-            if (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
+            local strictlyBetterNav = hasNavInfo(other) and (not hasNavInfo(q))
+            if strictlyBetterNav or (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
               redundant = true
               break
             end
