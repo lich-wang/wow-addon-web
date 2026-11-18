@@ -4738,10 +4738,23 @@ local function DedupeQuestieQuests(quests)
       for k = offset + 1, #qSteps do
         local st = qSteps[k]
         if st then
-          if st.preId and omittedSet[tonumber(st.preId)] then return false end
           if type(st.reqAll) == "table" then
             for _, rid in ipairs(st.reqAll) do
               if omittedSet[tonumber(rid)] then return false end
+            end
+          end
+          local sid = tonumber(st.id)
+          local qInfo = sid and GetQuestieQuestInfo(sid) or nil
+          if qInfo then
+            if type(qInfo.preSingle) == "table" then
+              for _, pid in ipairs(qInfo.preSingle) do
+                if omittedSet[tonumber(pid)] then return false end
+              end
+            end
+            if type(qInfo.preGroup) == "table" then
+              for _, pid in ipairs(qInfo.preGroup) do
+                if omittedSet[tonumber(pid)] then return false end
+              end
             end
           end
         end
