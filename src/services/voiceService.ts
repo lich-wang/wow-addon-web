@@ -32,6 +32,66 @@ type SinkableAudioElement = HTMLAudioElement & { setSinkId?: (sinkId: string) =>
 const NAT_WARNING_TEXT = '与部分成员的语音直连失败，可能受网络（NAT）限制，请更换网络或稍后重试。';
 const AUTH_MISMATCH_WARNING_TEXT = '检测到同房间存在密码不匹配的成员，对方无法与您建立语音连接，请核对房间密码。';
 
+const MIC_NOISE_SUPPRESSION_STORAGE_KEY = 'wow_voice_mic_noise_suppression';
+const ECHO_GUARD_STORAGE_KEY = 'wow_voice_echo_guard';
+
+/** 远端语音电平达到该值即视为“扬声器正在放音”，外放保护会暂时闭麦。 */
+const ECHO_GUARD_OPEN_LEVEL = 0.05;
+/** 远端语音停止后再保持闭麦一小段时间，避免逐字开合造成爆音。 */
+const ECHO_GUARD_HOLD_MS = 350;
+
+/** 输出设备名里出现这些关键词时视为耳机/耳麦，auto 模式不再启用外放保护。 */
+const HEADPHONE_LABEL_PATTERN =
+  /耳机|耳麦|耳塞|头戴|head-?phones?|headsets?|earphones?|earbuds?|airpods?|buds|wh-?\d{3,}|arctis|hyperx/i;
+
+export type EchoGuardMode = 'auto' | 'on' | 'off';
+
+export interface MicProcessingSettings {
+  /** 降噪：请求回声消除 + 噪声抑制 + 自动增益 + 人声隔离。 */
+  noiseSuppression: boolean;
+  /** 外放免回声：检测到扬声器放音时暂时闭麦，避免把扬声器里的声音送回队友。 */
+  echoGuard: EchoGuardMode;
+}
+
+export interface MicProcessingState extends MicProcessingSettings {
+  /** 当前是否真的启用了外放保护（auto 模式会按输出设备名判断）。 */
+  echoGuardActive: boolean;
+  /** 当前是否因为外放保护而暂时闭麦。 */
+  echoGuardMuted: boolean;
+  /** 浏览器/设备实际生效的回声消除；未知时为 null。 */
+  echoCancellationActive: boolean | null;
+  /** 浏览器/设备实际生效的噪声抑制；未知时为 null。 */
+  noiseSuppressionActive: boolean | null;
+}
+
+function readStoredBool(key: string, fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === '1';
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredBool(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, value ? '1' : '0');
+  } catch {
+    // Ignore storage errors (private mode / disabled storage)
+  }
+}
+
+function readStoredEchoGuardMode(): EchoGuardMode {
+  try {
+    const raw = localStorage.getItem(ECHO_GUARD_STORAGE_KEY);
+    if (raw === 'on' || raw === 'off' || raw === 'auto') return raw;
+  } catch {
+    // Ignore storage errors
+  }
+  return 'auto';
+}
+
 function isValidIceServer(entry: unknown): entry is RTCIceServer {
   if (!entry || typeof entry !== 'object') return false;
   const obj = entry as Record<string, unknown>;
@@ -169,6 +229,7 @@ export interface VoiceStateSnapshot {
   selectedOutputDeviceId: string;
   playbackMode: PlaybackMode;
   networkSummary: PeerNetworkStats | null;
+  micProcessing: MicProcessingState;
 }
 
 type StateListener = (snapshot: VoiceStateSnapshot) => void;
@@ -223,6 +284,17 @@ export class VoiceRoomManager {
   private micSwitchChain: Promise<void> = Promise.resolve();
   private outputSwitchChain: Promise<void> = Promise.resolve();
   private cachedIceServers: { iceServers: RTCIceServer[]; expiresAt: number } | null = null;
+  private micNoiseSuppression = readStoredBool(MIC_NOISE_SUPPRESSION_STORAGE_KEY, true);
+  private echoGuardMode: EchoGuardMode = readStoredEchoGuardMode();
+  private echoGuardMuted = false;
+  private echoGuardHoldUntil = 0;
+  private micAppliedSettings: {
+    echoCancellation: boolean | null;
+    noiseSuppression: boolean | null;
+    autoGainControl: boolean | null;
+  } | null = null;
+  private outputDeviceLabels = new Map<string, string>();
+  private deviceChangeHandler: (() => void) | null = null;
 
   subscribe(listener: StateListener): () => void {
     this.listeners.add(listener);
@@ -284,6 +356,18 @@ export class VoiceRoomManager {
       selectedOutputDeviceId: this.selectedOutputDeviceId,
       playbackMode: this.computePlaybackMode(),
       networkSummary: this.computeNetworkSummary(),
+      micProcessing: this.computeMicProcessing(),
+    };
+  }
+
+  private computeMicProcessing(): MicProcessingState {
+    return {
+      noiseSuppression: this.micNoiseSuppression,
+      echoGuard: this.echoGuardMode,
+      echoGuardActive: this.resolveEchoGuardActive(),
+      echoGuardMuted: this.echoGuardMuted,
+      echoCancellationActive: this.micAppliedSettings?.echoCancellation ?? null,
+      noiseSuppressionActive: this.micAppliedSettings?.noiseSuppression ?? null,
     };
   }
 
@@ -581,6 +665,11 @@ export class VoiceRoomManager {
           this.peerLevels.set(key, { level, speaking });
           changed = true;
         }
+      }
+
+      // 外放保护要跟着远端电平实时开合，因此放在同一个轮询里。
+      if (this.updateEchoGuard()) {
+        changed = true;
       }
 
       if (changed) {
@@ -1126,6 +1215,260 @@ export class VoiceRoomManager {
     }
   }
 
+  /**
+   * 麦克风采集约束。
+   * Chrome 的 WebRTC AEC 不会把 Web Audio 播放（本项目远端语音的播放方式）当作回声参考信号，
+   * 因此外放时仍可能把扬声器里的队友声音送回对端；这里先尽量打开浏览器自带处理，
+   * 真正的兜底由 `updateEchoGuard` 的半双工外放保护完成。
+   */
+  private buildMicConstraints(
+    deviceId: string | undefined,
+    noiseSuppression: boolean,
+    includeLegacy = true
+  ): MediaTrackConstraints {
+    const constraints: Record<string, unknown> = {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      echoCancellation: noiseSuppression,
+      noiseSuppression,
+      autoGainControl: noiseSuppression,
+    };
+    if (noiseSuppression && includeLegacy) {
+      // Chrome 扩展约束：人声隔离 + 高频/键入噪声过滤，不支持的浏览器会忽略未知约束。
+      constraints.voiceIsolation = true;
+      constraints.googEchoCancellation = true;
+      constraints.googNoiseSuppression = true;
+      constraints.googAutoGainControl = true;
+      constraints.googHighpassFilter = true;
+      constraints.googTypingNoiseDetection = true;
+    }
+    return constraints as MediaTrackConstraints;
+  }
+
+  private async acquireMicStream(deviceId: string | undefined): Promise<MediaStream> {
+    const attempts: MediaTrackConstraints[] = [
+      this.buildMicConstraints(deviceId, this.micNoiseSuppression),
+      this.buildMicConstraints(deviceId, this.micNoiseSuppression, false),
+    ];
+    let lastError: unknown = null;
+    for (const audio of attempts) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+        this.rememberMicSettings(stream);
+        return stream;
+      } catch (err) {
+        lastError = err;
+        const name = (err as DOMException)?.name;
+        // 只有“约束不被支持”时才降级重试，权限/设备错误直接抛出。
+        if (name !== 'OverconstrainedError' && name !== 'TypeError') {
+          throw err;
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('无法获取麦克风');
+  }
+
+  private rememberMicSettings(stream: MediaStream): void {
+    const track = stream.getAudioTracks()[0];
+    let settings: MediaTrackSettings | undefined;
+    try {
+      settings = track?.getSettings?.();
+    } catch {
+      settings = undefined;
+    }
+    if (!settings) {
+      this.micAppliedSettings = null;
+      return;
+    }
+    const read = (key: 'echoCancellation' | 'noiseSuppression' | 'autoGainControl'): boolean | null => {
+      const value = settings?.[key];
+      return typeof value === 'boolean' ? value : null;
+    };
+    this.micAppliedSettings = {
+      echoCancellation: read('echoCancellation'),
+      noiseSuppression: read('noiseSuppression'),
+      autoGainControl: read('autoGainControl'),
+    };
+  }
+
+  /** 麦克风音轨当前是否应该出声（未被手动闭麦、也没被外放保护临时静音）。 */
+  private isMicSending(): boolean {
+    return !this.isMuted && !this.echoGuardMuted;
+  }
+
+  private applyMicTrackEnabled(): void {
+    const enabled = this.isMicSending();
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        track.enabled = enabled;
+      }
+    }
+    if (this.pendingMicTrack) {
+      this.pendingMicTrack.enabled = enabled;
+    }
+  }
+
+  private async refreshOutputDeviceLabels(): Promise<void> {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const labels = new Map<string, string>();
+      for (const device of devices) {
+        if (device.kind === 'audiooutput') {
+          labels.set(device.deviceId, device.label || '');
+        }
+      }
+      this.outputDeviceLabels = labels;
+    } catch {
+      // Device labels are optional; auto mode falls back to "not headphones".
+    }
+  }
+
+  /** 插拔耳机后 auto 模式需要重新判断，监听设备变化即可。 */
+  private watchOutputDevices(): void {
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices?.addEventListener || this.deviceChangeHandler) return;
+    this.deviceChangeHandler = () => {
+      void this.refreshOutputDeviceLabels().then(() => {
+        this.updateEchoGuard();
+        this.emit();
+      });
+    };
+    mediaDevices.addEventListener('devicechange', this.deviceChangeHandler);
+  }
+
+  private unwatchOutputDevices(): void {
+    if (!this.deviceChangeHandler) return;
+    navigator.mediaDevices?.removeEventListener?.('devicechange', this.deviceChangeHandler);
+    this.deviceChangeHandler = null;
+  }
+
+  private outputLooksLikeHeadphones(): boolean {
+    const labels: string[] = [];
+    if (this.selectedOutputDeviceId) {
+      const label = this.outputDeviceLabels.get(this.selectedOutputDeviceId);
+      if (label) labels.push(label);
+    } else {
+      const defaultLabel =
+        this.outputDeviceLabels.get('default') ?? this.outputDeviceLabels.get('communications');
+      if (defaultLabel && !/^(default|默认)/i.test(defaultLabel.trim())) {
+        labels.push(defaultLabel);
+      }
+      if (labels.length === 0) {
+        // 默认项只有 “Default” 这种无信息名称时，退化为看所有输出设备名。
+        for (const label of this.outputDeviceLabels.values()) {
+          if (label.trim()) labels.push(label);
+        }
+      }
+    }
+    // 判断不出来时按“可能外放”处理：宁可多一层保护，用户也可以在界面上关掉。
+    if (labels.length === 0) return false;
+    return labels.every((label) => HEADPHONE_LABEL_PATTERN.test(label));
+  }
+
+  private resolveEchoGuardActive(): boolean {
+    if (this.echoGuardMode === 'off') return false;
+    if (this.echoGuardMode === 'on') return true;
+    return !this.outputLooksLikeHeadphones();
+  }
+
+  /**
+   * 外放保护（半双工）：只要远端有人在说话，就先把本地麦克风闭麦，
+   * 避免扬声器里的声音被麦克风收进去再传回给对方。远端停下来后延迟一小段时间恢复。
+   * @returns 状态是否发生变化（需要向前端推送）
+   */
+  private updateEchoGuard(): boolean {
+    const active =
+      this.resolveEchoGuardActive() &&
+      !this.listenOnly &&
+      !this.isDeafened &&
+      !this.isMuted &&
+      Boolean(this.localStream);
+    if (!active) {
+      this.echoGuardHoldUntil = 0;
+      if (!this.echoGuardMuted) return false;
+      this.echoGuardMuted = false;
+      this.applyMicTrackEnabled();
+      return true;
+    }
+
+    let remoteLevel = 0;
+    for (const [key, level] of this.peerLevels.entries()) {
+      if (key === 'self') continue;
+      // 只有真的从扬声器放出来的声音才会被麦克风收回去，本地音量 0 的队友不触发闭麦。
+      const played = level.level * (this.peerVolumes.get(key) ?? 1);
+      if (played > remoteLevel) remoteLevel = played;
+    }
+
+    const now = Date.now();
+    if (remoteLevel >= ECHO_GUARD_OPEN_LEVEL) {
+      this.echoGuardHoldUntil = now + ECHO_GUARD_HOLD_MS;
+      if (this.echoGuardMuted) return false;
+      this.echoGuardMuted = true;
+      this.applyMicTrackEnabled();
+      return true;
+    }
+
+    if (this.echoGuardMuted && now >= this.echoGuardHoldUntil) {
+      this.echoGuardMuted = false;
+      this.applyMicTrackEnabled();
+      return true;
+    }
+    return false;
+  }
+
+  async setMicProcessing(patch: Partial<MicProcessingSettings>): Promise<void> {
+    let changed = false;
+    if (patch.noiseSuppression !== undefined && patch.noiseSuppression !== this.micNoiseSuppression) {
+      this.micNoiseSuppression = patch.noiseSuppression;
+      writeStoredBool(MIC_NOISE_SUPPRESSION_STORAGE_KEY, this.micNoiseSuppression);
+      changed = true;
+    }
+    if (patch.echoGuard !== undefined && patch.echoGuard !== this.echoGuardMode) {
+      this.echoGuardMode = patch.echoGuard;
+      try {
+        localStorage.setItem(ECHO_GUARD_STORAGE_KEY, this.echoGuardMode);
+      } catch {
+        // Ignore storage errors
+      }
+      changed = true;
+    }
+    if (!changed) return;
+
+    // 先把开关状态推给界面，再去做可能耗时的重新采集。
+    this.emit();
+
+    if (patch.noiseSuppression !== undefined && this.localStream && !this.listenOnly) {
+      await this.applyMicNoiseSuppression();
+    }
+    if (patch.echoGuard !== undefined) {
+      this.updateEchoGuard();
+    }
+    this.emit();
+  }
+
+  private async applyMicNoiseSuppression(): Promise<void> {
+    const stream = this.localStream;
+    const track = stream?.getAudioTracks()[0];
+    if (!stream || !track) return;
+    const wantsOn = this.micNoiseSuppression;
+    try {
+      // applyConstraints 不接受 deviceId，这里只传音频处理相关约束。
+      await track.applyConstraints(this.buildMicConstraints(undefined, wantsOn, false));
+      this.rememberMicSettings(stream);
+    } catch {
+      // Fall through to re-acquisition below.
+    }
+    const applied = this.micAppliedSettings;
+    const matched =
+      applied !== null &&
+      applied.echoCancellation === wantsOn &&
+      applied.noiseSuppression === wantsOn;
+    if (!matched) {
+      // 设备忽略了 applyConstraints（部分 USB 麦克风），用新约束重新采集一次。
+      await this.switchMicrophone(this.selectedDeviceId).catch(() => {});
+    }
+  }
+
   async join(options: VoiceJoinOptions): Promise<void> {
     const trimmedRoom = options.roomId.trim();
     const trimmedPassword = options.password;
@@ -1171,15 +1514,7 @@ export class VoiceRoomManager {
           throw new Error('当前浏览器不支持麦克风采集，请使用 HTTPS 或现代浏览器，或选择“仅收听模式”加入。');
         }
         try {
-          const acquiredStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              deviceId: options.deviceId ? { exact: options.deviceId } : undefined,
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-            video: false,
-          });
+          const acquiredStream = await this.acquireMicStream(options.deviceId);
           if (this.joinAttemptId !== attemptId) {
             for (const track of acquiredStream.getTracks()) {
               track.stop();
@@ -1187,8 +1522,13 @@ export class VoiceRoomManager {
             return;
           }
           this.localStream = acquiredStream;
+          this.applyMicTrackEnabled();
           this.attachMonitor('self', this.localStream);
+          this.watchOutputDevices();
           void this.applyOutputDevice(this.selectedOutputDeviceId).catch(() => {});
+          void this.refreshOutputDeviceLabels().then(() => {
+            if (this.joinAttemptId === attemptId) this.emit();
+          });
         } catch (err) {
           if (this.joinAttemptId !== attemptId) return;
           const domErr = err as DOMException;
@@ -1371,18 +1711,15 @@ export class VoiceRoomManager {
   toggleMute(): void {
     if (this.listenOnly || !this.localStream) return;
     this.isMuted = !this.isMuted;
-    for (const track of this.localStream.getAudioTracks()) {
-      track.enabled = !this.isMuted;
-    }
-    if (this.pendingMicTrack) {
-      this.pendingMicTrack.enabled = !this.isMuted;
-    }
+    this.applyMicTrackEnabled();
+    this.updateEchoGuard();
     this.sendWs({ type: 'meta', meta: this.buildSelfMeta() });
     this.emit();
   }
 
   toggleDeafen(): void {
     this.isDeafened = !this.isDeafened;
+    this.updateEchoGuard();
     for (const [peerId, audio] of this.peerAudioElements.entries()) {
       const peerVol = this.peerVolumes.get(peerId) ?? 1;
       audio.volume = this.isDeafened ? 0 : peerVol;
@@ -1439,6 +1776,9 @@ export class VoiceRoomManager {
       this.emit();
       throw err instanceof Error ? err : new Error('切换语音输出设备失败');
     }
+    // auto 外放保护依赖输出设备名判断是否耳机，切换后要重新算一遍。
+    await this.refreshOutputDeviceLabels();
+    this.updateEchoGuard();
     this.emit();
     return true;
   }
@@ -1512,15 +1852,7 @@ export class VoiceRoomManager {
         return;
       }
 
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: false,
-      });
+      const newStream = await this.acquireMicStream(deviceId || undefined);
 
       if (this.joinAttemptId !== expectedAttemptId || !this.ws || !this.localStream) {
         for (const track of newStream.getTracks()) {
@@ -1540,7 +1872,7 @@ export class VoiceRoomManager {
       const oldTrack = this.localStream.getAudioTracks()[0];
       this.pendingMicTrack = newTrack;
       this.pendingMicStream = newStream;
-      newTrack.enabled = !this.isMuted;
+      newTrack.enabled = this.isMicSending();
 
       try {
         await this.replaceAudioTrackAcrossPeers(oldTrack, newTrack, newStream, expectedAttemptId);
@@ -1557,7 +1889,6 @@ export class VoiceRoomManager {
       } finally {
         if (this.pendingMicTrack === newTrack) {
           this.pendingMicTrack = null;
-    this.pendingMicStream = null;
           this.pendingMicStream = null;
         }
       }
@@ -1569,11 +1900,12 @@ export class VoiceRoomManager {
         return;
       }
 
-      newTrack.enabled = !this.isMuted;
+      this.applyMicTrackEnabled();
       if (oldTrack) {
         oldTrack.stop();
       }
       this.localStream = newStream;
+      this.applyMicTrackEnabled();
       this.selectedDeviceId = deviceId;
       this.attachMonitor('self', newStream);
       this.emit();
@@ -1644,6 +1976,7 @@ export class VoiceRoomManager {
   private async resetInternalState(): Promise<void> {
     this.stopLevelPolling();
     this.stopStatsPolling();
+    this.unwatchOutputDevices();
 
     if (this.pingTimer !== null) {
       window.clearInterval(this.pingTimer);
@@ -1660,6 +1993,9 @@ export class VoiceRoomManager {
       }
       this.localStream = null;
     }
+    this.echoGuardMuted = false;
+    this.echoGuardHoldUntil = 0;
+    this.micAppliedSettings = null;
 
     for (const cancelers of this.peerTrackCancelers.values()) {
       for (const cancel of cancelers) {
