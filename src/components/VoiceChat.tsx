@@ -360,6 +360,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     !audioOutputs.some((device) => device.deviceId === roomOutputDeviceId);
   const showMicSwitcher = !voiceState.listenOnly && audioInputs.length > 1;
   const showOutputSwitcher = audioOutputs.length > 0 || isRoomOutputMissing;
+  const showDeviceSwitchers = showMicSwitcher || showOutputSwitcher;
 
   if (!isInRoom) {
     return (
@@ -720,9 +721,9 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         </div>
       </details>
 
-      {/* Device Switchers: right below 设备自检, above the member (online) list */}
-      {(showMicSwitcher || showOutputSwitcher) && (
-        <div className="rounded-2xl bg-slate-900/60 border border-slate-800 px-4 py-3">
+      {/* Device Switchers + mic processing: right below 设备自检, above the member (online) list */}
+      <div className="rounded-2xl bg-slate-900/60 border border-slate-800 px-4 py-3">
+        {showDeviceSwitchers && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-slate-300 shrink-0">音频设备</span>
 
@@ -782,8 +783,13 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               </div>
             )}
           </div>
+        )}
 
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-800/70 pt-2">
+        <div
+          className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${
+            showDeviceSwitchers ? 'mt-2 border-t border-slate-800/70 pt-2' : ''
+          }`}
+        >
             <label
               className="inline-flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none"
               title="回声消除 + 噪声抑制 + 自动增益 + 人声隔离，减少键盘、风扇和外放回采"
@@ -828,7 +834,6 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             )}
           </div>
         </div>
-      )}
 
       {/* Autoplay Blocked Banner */}
       {voiceState.autoplayBlocked && (

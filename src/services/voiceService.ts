@@ -294,6 +294,8 @@ export class VoiceRoomManager {
     autoGainControl: boolean | null;
   } | null = null;
   private outputDeviceLabels = new Map<string, string>();
+  /** 每轮轮询的原始远端电平（不做变化过滤），外放保护只认这里的实时值。 */
+  private remoteLevels = new Map<string, number>();
   private deviceChangeHandler: (() => void) | null = null;
 
   subscribe(listener: StateListener): () => void {
@@ -648,6 +650,7 @@ export class VoiceRoomManager {
     this.stopLevelPolling();
     this.levelTimer = window.setInterval(() => {
       let changed = false;
+      const rawLevels = new Map<string, number>();
 
       for (const [key, monitor] of this.monitors.entries()) {
         monitor.analyser.getByteTimeDomainData(monitor.dataArray);
@@ -659,6 +662,7 @@ export class VoiceRoomManager {
         const rms = Math.sqrt(sumSquares / monitor.dataArray.length);
         const level = Math.min(1, rms * 3.5);
         const speaking = level > 0.06;
+        rawLevels.set(key, level);
 
         const prev = this.peerLevels.get(key);
         if (!prev || prev.speaking !== speaking || Math.abs(prev.level - level) > 0.05) {
@@ -666,6 +670,10 @@ export class VoiceRoomManager {
           changed = true;
         }
       }
+
+      // peerLevels 为了少渲染做过变化过滤，外放保护必须看每轮的原始电平，
+      // 否则电平降下来但没超过过滤阈值时，闭麦会被旧值一直续期。
+      this.remoteLevels = rawLevels;
 
       // 外放保护要跟着远端电平实时开合，因此放在同一个轮询里。
       if (this.updateEchoGuard()) {
@@ -1350,9 +1358,10 @@ export class VoiceRoomManager {
     } else {
       const defaultLabel =
         this.outputDeviceLabels.get('default') ?? this.outputDeviceLabels.get('communications');
-      if (defaultLabel && !/^(default|默认)/i.test(defaultLabel.trim())) {
-        labels.push(defaultLabel);
-      }
+      // 默认项可能只有 “Default”，也可能是 “Default - USB Headphones”：
+      // 去掉前缀后如果还留有设备名，就按这个设备名判断，避免耳机用户被误判成外放。
+      const stripped = defaultLabel?.replace(/^(default|默认)\s*[-–—:：]?\s*/i, '').trim() ?? '';
+      if (stripped) labels.push(stripped);
       if (labels.length === 0) {
         // 默认项只有 “Default” 这种无信息名称时，退化为看所有输出设备名。
         for (const label of this.outputDeviceLabels.values()) {
@@ -1392,10 +1401,10 @@ export class VoiceRoomManager {
     }
 
     let remoteLevel = 0;
-    for (const [key, level] of this.peerLevels.entries()) {
+    for (const [key, level] of this.remoteLevels.entries()) {
       if (key === 'self') continue;
       // 只有真的从扬声器放出来的声音才会被麦克风收回去，本地音量 0 的队友不触发闭麦。
-      const played = level.level * (this.peerVolumes.get(key) ?? 1);
+      const played = level * (this.peerVolumes.get(key) ?? 1);
       if (played > remoteLevel) remoteLevel = played;
     }
 
@@ -1852,6 +1861,7 @@ export class VoiceRoomManager {
         return;
       }
 
+      const requestedNoiseSuppression = this.micNoiseSuppression;
       const newStream = await this.acquireMicStream(deviceId || undefined);
 
       if (this.joinAttemptId !== expectedAttemptId || !this.ws || !this.localStream) {
@@ -1867,6 +1877,16 @@ export class VoiceRoomManager {
           track.stop();
         }
         throw new Error('未获取到有效的麦克风音轨');
+      }
+
+      // 采集是异步的，期间用户可能刚改过降噪开关：按最新设置补一次约束，避免装上过期音轨。
+      if (requestedNoiseSuppression !== this.micNoiseSuppression) {
+        try {
+          await newTrack.applyConstraints(this.buildMicConstraints(undefined, this.micNoiseSuppression, false));
+          this.rememberMicSettings(newStream);
+        } catch {
+          // 个别设备不支持二次约束，保留本次采集结果，避免切麦失败。
+        }
       }
 
       const oldTrack = this.localStream.getAudioTracks()[0];
@@ -1996,6 +2016,7 @@ export class VoiceRoomManager {
     this.echoGuardMuted = false;
     this.echoGuardHoldUntil = 0;
     this.micAppliedSettings = null;
+    this.remoteLevels.clear();
 
     for (const cancelers of this.peerTrackCancelers.values()) {
       for (const cancel of cancelers) {
