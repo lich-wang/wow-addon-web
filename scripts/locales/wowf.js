@@ -3360,6 +3360,7 @@ local state = {
   dungeonFilter = "MATCH", -- "MATCH" | "NEW" | "ALL"
   featureFilter = "MATCH", -- "MATCH" | "ALL"
   searchQuery = "",
+  expandedChains = {}, -- 已手动展开的副本任务链（默认折叠已完成的前置步骤）
 }
 
 -- ============================================================================
@@ -4602,6 +4603,88 @@ local function IsQuestCompleted(q)
   return IsQuestCompletedById(q.id or q.questId)
 end
 
+-- 统计任务链树中从起点开始连续已完成的前置步骤数，用于默认折叠已完成的前置任务
+local function CountLeadingCompletedChainSteps(entries)
+  local count = 0
+  for _, ent in ipairs(entries or {}) do
+    local sid = tonumber(ent and ent.id)
+    if not sid or sid <= 0 then break end
+    if IsQuestCompletedById(sid) and not IsQuestActiveById(sid) then
+      count = count + 1
+    else
+      break
+    end
+  end
+  return count
+end
+
+local function GetQuestChainFoldKey(q)
+  local qid = tonumber(q and (q.id or q.questId))
+  if not qid or qid <= 0 then return nil end
+  return string.format("%d:%s", qid, tostring(q.faction or ""))
+end
+
+local function GetQuestStepFoldKey(sid, faction)
+  local stepId = tonumber(sid)
+  if not stepId or stepId <= 0 then return nil end
+  return string.format("step:%d:%s", stepId, tostring(faction or ""))
+end
+
+local function GetSharedPrefixFoldKey(sid, faction)
+  local stepId = tonumber(sid)
+  if not stepId or stepId <= 0 then return nil end
+  return string.format("prefix:%d:%s", stepId, tostring(faction or ""))
+end
+
+local function IsQuestChainFoldExpanded(foldKey)
+  return foldKey ~= nil and state.expandedChains and state.expandedChains[foldKey] == true
+end
+
+local function FormatStepTreeIndent(baseIndent, depth)
+  if depth <= 0 then return baseIndent end
+  return baseIndent .. string.rep("  ", depth - 1) .. "|cff99e6ff└> |r"
+end
+
+-- 折叠前置后按仍可见的依赖重新计算树形层级，避免隐藏父级后出现悬空缩进
+local function RecomputeVisibleStepDepths(orderedEntries, firstVisibleIdx, hasPrereqMeta, depthById)
+  if firstVisibleIdx > #orderedEntries then return {} end
+  local visibleById = {}
+  for i = firstVisibleIdx, #orderedEntries do
+    visibleById[orderedEntries[i].id] = true
+  end
+  local baseDepth = depthById[orderedEntries[firstVisibleIdx].id] or 0
+  local depths = {}
+  for i = firstVisibleIdx, #orderedEntries do
+    local ent = orderedEntries[i]
+    local d = 0
+    if hasPrereqMeta then
+      local st = ent.step or {}
+      local maxParentDepth = -1
+      local parentIds = {}
+      if type(st.reqAll) == "table" then
+        for _, pid in ipairs(st.reqAll) do
+          local npid = tonumber(pid)
+          if npid and visibleById[npid] then table.insert(parentIds, npid) end
+        end
+      end
+      if #parentIds == 0 then
+        local npid = tonumber(st.preId)
+        if npid and visibleById[npid] then table.insert(parentIds, npid) end
+      end
+      for _, pid in ipairs(parentIds) do
+        local pd = depths[pid]
+        if pd and pd > maxParentDepth then maxParentDepth = pd end
+      end
+      d = maxParentDepth + 1
+    else
+      d = (depthById[ent.id] or 0) - baseDepth
+      if d < 0 then d = 0 end
+    end
+    depths[ent.id] = d
+  end
+  return depths
+end
+
 local function IsQuestLineStarted(q)
   if type(q) ~= "table" then return false end
   ResolveQuestChainFromQuestieDB(q)
@@ -4698,7 +4781,8 @@ local function FormatQuestClassTag(q)
   return "|cffc79c6e[" .. table.concat(names, "/") .. "]|r "
 end
 
-local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
+-- 生成任务链展示；foldCompletedPrefix 为 true 时默认折叠开头连续已完成的前置步骤（可点击展开/收起）
+local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, foldCompletedPrefix, foldKeyOverride)
   if type(q) == "table" then ResolveQuestChainFromQuestieDB(q) end
   if type(q) ~= "table" or type(q.steps) ~= "table" or #q.steps <= 1 then
     return FormatQuestLink(q, fallbackLevel, fallbackZone), nil
@@ -4864,12 +4948,46 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent)
       end
     end
 
+    -- 默认折叠任务链开头连续已完成的前置步骤，仅保留一行可点击的摘要
+    local foldCount = 0
+    local foldKey = nil
+    local isFolded = false
+    if foldCompletedPrefix then
+      foldCount = CountLeadingCompletedChainSteps(orderedEntries)
+      if foldCount > 0 then
+        foldKey = foldKeyOverride or GetQuestChainFoldKey(q)
+        if not foldKey then
+          foldCount = 0
+        else
+          isFolded = not IsQuestChainFoldExpanded(foldKey)
+        end
+      end
+    end
+
+    local firstVisibleIdx = 1
+    local visibleDepths = nil
+    if foldCount > 0 and isFolded then
+      firstVisibleIdx = foldCount + 1
+      visibleDepths = RecomputeVisibleStepDepths(orderedEntries, firstVisibleIdx, hasAnyPrereqMeta, depthById)
+    end
+
     local treeLines = {}
-    for _, ent in ipairs(orderedEntries) do
-      local d = depthById[ent.id] or 0
-      local indent = (d > 0) and (baseIndent .. string.rep("  ", d - 1) .. "|cff99e6ff└> |r") or baseIndent
-      local npcPart = (ent.npcInfo ~= "") and ("  " .. ent.npcInfo) or ""
-      table.insert(treeLines, indent .. ent.link .. npcPart)
+    if foldCount > 0 then
+      local foldText
+      if isFolded then
+        foldText = string.format("|cff888888|Hwowfchain:%s|h[已完成前 %d 步 · 点击展开]|h|r", foldKey, foldCount)
+      else
+        foldText = string.format("|cff00ffcc|Hwowfchain:%s|h[已展开 %d 步已完成前置 · 点击收起]|h|r", foldKey, foldCount)
+      end
+      table.insert(treeLines, baseIndent .. foldText)
+    end
+    for i, ent in ipairs(orderedEntries) do
+      if i >= firstVisibleIdx then
+        local d = visibleDepths and (visibleDepths[ent.id] or 0) or (depthById[ent.id] or 0)
+        local indent = FormatStepTreeIndent(baseIndent, d)
+        local npcPart = (ent.npcInfo ~= "") and ("  " .. ent.npcInfo) or ""
+        table.insert(treeLines, indent .. ent.link .. npcPart)
+      end
     end
     if #treeLines > 0 then
       return primary, table.concat(treeLines, "\n")
@@ -4947,7 +5065,7 @@ local function GroupQuestsBySharedPrefix(quests)
   return groups
 end
 
-local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseIndent)
+local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseIndent, foldCompletedPrefix)
   local quests = grp.quests
   local k = grp.prefixLen
   local q1 = quests[1]
@@ -4960,6 +5078,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
   local preZone = (lastPre.zone and lastPre.zone ~= "") and lastPre.zone or q1Zone
   local outLines = {}
   local maxPrefixDepth = 0
+  local prefixHasVisibleStep = false
 
   if #prefixSteps == 1 then
     local st = prefixSteps[1]
@@ -4981,7 +5100,19 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
     }
     local link = FormatQuestLink(stepObj, fallbackLevel, preZone, false)
     local npcPart = FormatStepNpcInfo(stepObj, preZone)
-    table.insert(outLines, baseIndent .. link .. ((npcPart ~= "") and ("  " .. npcPart) or ""))
+    local stepFoldKey = nil
+    if foldCompletedPrefix and sid and IsQuestCompletedById(sid) and not IsQuestActiveById(sid) then
+      stepFoldKey = GetQuestStepFoldKey(sid, q1.faction)
+    end
+    if stepFoldKey and not IsQuestChainFoldExpanded(stepFoldKey) then
+      table.insert(outLines, baseIndent .. string.format("|cff888888|Hwowfchain:%s|h[已完成前置 · 点击展开]|h|r", stepFoldKey))
+    else
+      if stepFoldKey then
+        table.insert(outLines, baseIndent .. string.format("|cff00ffcc|Hwowfchain:%s|h[已展开前置 · 点击收起]|h|r", stepFoldKey))
+      end
+      table.insert(outLines, baseIndent .. link .. ((npcPart ~= "") and ("  " .. npcPart) or ""))
+      prefixHasVisibleStep = true
+    end
     maxPrefixDepth = 0
   else
     local prefixQuest = {
@@ -4998,10 +5129,15 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
       y = (lastPre.y ~= nil) and lastPre.y or q1.y,
       steps = prefixSteps,
     }
-    local _, prefixTree = FormatQuestWithSteps(prefixQuest, q1.minLevel or fallbackLevel, q1Zone, baseIndent)
+    local prefixFoldKey = GetSharedPrefixFoldKey(lastPre.id, q1.faction)
+    local _, prefixTree = FormatQuestWithSteps(prefixQuest, q1.minLevel or fallbackLevel, q1Zone, baseIndent, foldCompletedPrefix, prefixFoldKey)
     if prefixTree and prefixTree ~= "" then
+      local prefixVisibleLines = 0
       for line in string.gmatch(prefixTree, "[^\n]+") do
         table.insert(outLines, line)
+        if not string.find(line, "|Hwowfchain:", 1, true) then
+          prefixVisibleLines = prefixVisibleLines + 1
+        end
         local leading = string.match(line, "^(%s*)") or ""
         local relDepth = math.floor(math.max(0, #leading - #baseIndent) / 2)
         if string.find(line, "└>", 1, true) then
@@ -5009,14 +5145,16 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
         end
         if relDepth > maxPrefixDepth then maxPrefixDepth = relDepth end
       end
+      prefixHasVisibleStep = prefixVisibleLines > 0
     end
   end
 
-  local branchBaseDepth = maxPrefixDepth + 1
+  local branchBaseDepth = prefixHasVisibleStep and (maxPrefixDepth + 1) or 0
   for _, bq in ipairs(quests) do
     local bDone = IsQuestCompleted(bq)
     local bZone = (bq.zone and bq.zone ~= "") and bq.zone or fallbackZone
     local bPrimaryId = tonumber(bq.id or bq.questId)
+    local suffixEntries = {}
     for si = k + 1, #bq.steps do
       local st = bq.steps[si]
       local sid = tonumber(st.id)
@@ -5041,10 +5179,32 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
         local link = FormatQuestLink(stepObj, fallbackLevel, stZone, bDone)
         local coloredLink = isPrimary and link or ("|cff99e6ff" .. link .. "|r")
         local npcPart = FormatStepNpcInfo(stepObj, stZone)
-        local d = branchBaseDepth + (si - (k + 1))
-        local indent = (d > 0) and (baseIndent .. string.rep("  ", d - 1) .. "|cff99e6ff└> |r") or baseIndent
-        table.insert(outLines, indent .. coloredLink .. ((npcPart ~= "") and ("  " .. npcPart) or ""))
+        table.insert(suffixEntries, { id = sid, step = st, link = coloredLink, npcInfo = npcPart })
       end
+    end
+
+    -- 共享前缀之后，每一条分支自身的开头连续已完成步骤也默认折叠
+    local branchFoldCount = foldCompletedPrefix and CountLeadingCompletedChainSteps(suffixEntries) or 0
+    local branchFoldKey = nil
+    local branchFolded = false
+    if branchFoldCount > 0 then
+      branchFoldKey = GetQuestChainFoldKey(bq)
+      branchFolded = branchFoldKey ~= nil and not IsQuestChainFoldExpanded(branchFoldKey)
+    end
+    local startIdx = branchFolded and (branchFoldCount + 1) or 1
+    if branchFoldCount > 0 and branchFoldKey then
+      local marker
+      if branchFolded then
+        marker = string.format("|cff888888|Hwowfchain:%s|h[已完成前 %d 步 · 点击展开]|h|r", branchFoldKey, branchFoldCount)
+      else
+        marker = string.format("|cff00ffcc|Hwowfchain:%s|h[已展开 %d 步已完成前置 · 点击收起]|h|r", branchFoldKey, branchFoldCount)
+      end
+      table.insert(outLines, FormatStepTreeIndent(baseIndent, branchBaseDepth) .. marker)
+    end
+    for idx = startIdx, #suffixEntries do
+      local ent = suffixEntries[idx]
+      local d = branchBaseDepth + (idx - startIdx)
+      table.insert(outLines, FormatStepTreeIndent(baseIndent, d) .. ent.link .. ((ent.npcInfo ~= "") and ("  " .. ent.npcInfo) or ""))
     end
   end
   return "", table.concat(outLines, "\n")
@@ -5466,6 +5626,12 @@ local function OnCardHyperlinkEnter(self, link)
       GameTooltip:AddLine("|cff00ff00右键点击:|r 打开世界地图标记接取坐标")
     end
     GameTooltip:Show()
+  elseif linkType == "wowfchain" then
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine("|cff00ffcc[任务链显示]|r")
+    GameTooltip:AddLine("已完成的前置任务已自动折叠")
+    GameTooltip:AddLine("|cff00ff00点击:|r 展开 / 收起已完成前置步骤")
+    GameTooltip:Show()
   else
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
     GameTooltip:Show()
@@ -5515,6 +5681,17 @@ local function OnCardHyperlinkClick(self, link, text, button)
       end
     end
     InsertLinkToChat(chatLink)
+  elseif linkType == "wowfchain" then
+    local foldKey = (payload and payload ~= "") and payload or nil
+    if foldKey then
+      state.expandedChains = state.expandedChains or {}
+      if state.expandedChains[foldKey] then
+        state.expandedChains[foldKey] = nil
+      else
+        state.expandedChains[foldKey] = true
+      end
+      RefreshUI(true)
+    end
   else
     if (IsModifiedClick and IsModifiedClick("CHATLINK")) or (IsShiftKeyDown and IsShiftKeyDown()) then
       InsertLinkToChat((text and text ~= "") and text or link)
@@ -5945,13 +6122,13 @@ local function RenderTabSmartMatch()
         if npcInfo == "" and q.inside then npcInfo = "(副本内接取)" end
         local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
         if #grp.quests > 1 and grp.prefixLen >= 1 then
-          local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "        ")
+          local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "        ", true)
           local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
           table.insert(dLines, string.format("    └ 任务: %s%s%s%s", headerPrefix, branchTag, acceptTag, npcSuffix))
           table.insert(dLines, treeBody)
         else
           local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
-          local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "        ")
+          local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "        ", true)
           table.insert(dLines, string.format("    └ 任务: %s%s%s%s", qLink, acceptTag, chainTag, npcSuffix))
           if qTree then table.insert(dLines, qTree) end
         end
@@ -6521,13 +6698,13 @@ local function RenderTabDungeons()
             if npcInfo == "" and q.inside then npcInfo = "(副本内触发)" end
             local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
             if #grp.quests > 1 and grp.prefixLen >= 1 then
-              local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "      ")
+              local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "      ", true)
               local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
               table.insert(lines, string.format("  - %s%s%s%s%s%s", fTag, cTag, headerPrefix, branchTag, acceptTag, npcSuffix))
               table.insert(lines, treeBody)
             else
               local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
-              local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "      ")
+              local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "      ", true)
               table.insert(lines, string.format("  - %s%s%s%s%s%s", fTag, cTag, qLink, acceptTag, chainTag, npcSuffix))
               if qTree then table.insert(lines, qTree) end
             end
