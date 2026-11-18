@@ -6210,11 +6210,14 @@ local function FormatBandZonesTitle(band)
     return string.format("|cff00ffcc%s|r (%s)", band.zone or "", hubName or "")
   end
   local names = {}
+  local seen = {}
   if band.zone and band.zone ~= "" then
+    seen[band.zone] = true
     table.insert(names, band.zone)
   end
   for _, az in ipairs(band.altZones) do
-    if az.zone and az.zone ~= "" then
+    if az.zone and az.zone ~= "" and not seen[az.zone] then
+      seen[az.zone] = true
       table.insert(names, az.zone)
     end
   end
@@ -8683,13 +8686,19 @@ local function CreateMinimapButton()
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cff00ffccWoWF Companion|r |cffffd100(wowf.io 无限服百科)|r")
     local zoneList = {}
+    local seenZones = {}
     if band and band.zone and band.zone ~= "" then
+      seenZones[band.zone] = true
       table.insert(zoneList, band.zone)
     end
     if band and band.altZones then
-      for i = 1, math.min(3, #band.altZones) do
-        if band.altZones[i].zone and band.altZones[i].zone ~= "" then
-          table.insert(zoneList, band.altZones[i].zone)
+      local altAdded = 0
+      for _, az in ipairs(band.altZones) do
+        if az.zone and az.zone ~= "" and not seenZones[az.zone] then
+          seenZones[az.zone] = true
+          table.insert(zoneList, az.zone)
+          altAdded = altAdded + 1
+          if altAdded >= 3 then break end
         end
       end
     end
