@@ -1269,11 +1269,12 @@ function enrichRoutesWithAltZones(routesData) {
         scored.push({ az, overlap });
       }
       scored.sort((a, b) => b.overlap - a.overlap || a.az.from - b.az.from);
-      const seenZones = new Set();
+      const seenZoneEntries = new Set();
       const picked = [];
       for (const item of scored) {
-        if (seenZones.has(item.az.zone)) continue;
-        seenZones.add(item.az.zone);
+        const key = `${item.az.zone}:${item.az.from}:${item.az.to}:${item.az.hub || ''}`;
+        if (seenZoneEntries.has(key)) continue;
+        seenZoneEntries.add(key);
         picked.push({
           zone: item.az.zone,
           hub: item.az.hub,
@@ -1283,7 +1284,6 @@ function enrichRoutesWithAltZones(routesData) {
           y: item.az.y,
           note: item.az.note,
         });
-        if (picked.length >= 5) break;
       }
       band.altZones = picked;
     }
@@ -2508,6 +2508,7 @@ function annotateDatasetPrereqs(dataset, questiePrereqs) {
   if (Object.keys(builtZoneQuests).length > 0) {
     dataset.zoneQuests = builtZoneQuests;
   }
+  dataset.zoneAreaIds = ZONE_NAME_TO_AREA_IDS;
   return dataset;
 }
 
@@ -4671,32 +4672,46 @@ local function ResolveSingleQuestieEntity(entityId, db, cache)
     cache[entityId] = false
     return nil
   end
-  local res = { npc = name, zone = zoneName, x = x, y = y }
+  local res = { npc = name, zone = zoneName, areaId = areaId, spawns = spawns, x = x, y = y }
   cache[entityId] = res
   return res
 end
 
-local function ResolveQuestieEntity(entityIds, db, cache, preferredZone)
+local function ResolveQuestieEntity(entityIds, db, cache, preferredAreaIds)
   if type(entityIds) ~= "table" or not db then return nil end
   local fallback = nil
   for _, eid in ipairs(entityIds) do
     local res = ResolveSingleQuestieEntity(eid, db, cache)
     if res then
       if not fallback then fallback = res end
-      if preferredZone and preferredZone ~= "" and res.zone == preferredZone then
-        return res
+      if type(preferredAreaIds) == "table" then
+        if res.areaId and preferredAreaIds[res.areaId] then
+          return res
+        end
+        if type(res.spawns) == "table" then
+          for aid, pts in pairs(res.spawns) do
+            if preferredAreaIds[aid] and type(pts) == "table" and type(pts[1]) == "table" then
+              local zName = res.zone
+              if C_Map and C_Map.GetAreaInfo then
+                local ok, z = pcall(C_Map.GetAreaInfo, aid)
+                if ok and type(z) == "string" then zName = z end
+              end
+              return { npc = res.npc, zone = zName, areaId = aid, spawns = res.spawns, x = pts[1][1], y = pts[1][2] }
+            end
+          end
+        end
       end
     end
   end
   return fallback
 end
 
-local function ResolveQuestieNpc(npcIds, preferredZone)
-  return ResolveQuestieEntity(npcIds, _G.NpcDB, questieNpcCache, preferredZone)
+local function ResolveQuestieNpc(npcIds, preferredAreaIds)
+  return ResolveQuestieEntity(npcIds, _G.NpcDB, questieNpcCache, preferredAreaIds)
 end
 
-local function ResolveQuestieObject(objectIds, preferredZone)
-  return ResolveQuestieEntity(objectIds, _G.ObjectDB, questieObjectCache, preferredZone)
+local function ResolveQuestieObject(objectIds, preferredAreaIds)
+  return ResolveQuestieEntity(objectIds, _G.ObjectDB, questieObjectCache, preferredAreaIds)
 end
 
 local questieQuestInfoCache = {}
@@ -6202,6 +6217,11 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
 
       if not cand._zoneIneligible then
         local cleanZone = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
+        local areaSet = {}
+        local areaList = Data.zoneAreaIds and Data.zoneAreaIds[cleanZone]
+        if type(areaList) == "table" then
+          for _, aid in ipairs(areaList) do areaSet[aid] = true end
+        end
         local matchedStep = nil
         local matchedStarter = nil
         local acceptLv = nil
@@ -6211,17 +6231,15 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
           end
           local mId = tonumber(stObj and stObj.id)
           local started = mId and _G.QuestDB and _G.QuestDB.startedBy and _G.QuestDB.startedBy(mId)
-          local zoneStarter = started and (ResolveQuestieNpc(started[1], cleanZone) or ResolveQuestieObject(started[2], cleanZone)) or nil
-          local mInfo = mId and GetQuestieQuestInfo(mId) or nil
-          local mZone = (zoneStarter and zoneStarter.zone ~= "" and zoneStarter.zone)
-            or (stObj.zone and stObj.zone ~= "" and stObj.zone)
-            or (mInfo and mInfo.zone) or ""
-          local inThisZone = (mZone == "" or mZone == cleanZone or (mId and IsQuestActiveById(mId)))
+          local zoneStarter = started and (ResolveQuestieNpc(started[1], areaSet) or ResolveQuestieObject(started[2], areaSet)) or nil
+          local starterInZone = zoneStarter and zoneStarter.areaId and areaSet[zoneStarter.areaId]
+          local hasAnyStarterArea = zoneStarter and zoneStarter.areaId ~= nil
+          local inThisZone = (mId and IsQuestActiveById(mId)) or starterInZone or (not hasAnyStarterArea)
           if not inThisZone then
             return false
           end
           matchedStep = stObj
-          matchedStarter = (zoneStarter and zoneStarter.zone == cleanZone) and zoneStarter or nil
+          matchedStarter = starterInZone and zoneStarter or nil
           acceptLv = curMin
           return true
         end
@@ -6247,6 +6265,34 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
         end
 
         if matchedStep then
+          if matchedStarter then
+            local msNpc = matchedStarter.npc or ""
+            local msZone = (matchedStarter.zone and matchedStarter.zone ~= "") and matchedStarter.zone or cleanZone
+            if type(cand.steps) == "table" and #cand.steps > 0 then
+              local newSteps = {}
+              for _, st in ipairs(cand.steps) do
+                if st == matchedStep then
+                  local stCopy = {}
+                  for k, v in pairs(st) do stCopy[k] = v end
+                  if msNpc ~= "" then stCopy.npc = msNpc end
+                  stCopy.zone = msZone
+                  stCopy.x = matchedStarter.x
+                  stCopy.y = matchedStarter.y
+                  matchedStep = stCopy
+                  table.insert(newSteps, stCopy)
+                else
+                  table.insert(newSteps, st)
+                end
+              end
+              cand.steps = newSteps
+            end
+            if cand == matchedStep or (tonumber(cand.id) == tonumber(matchedStep.id)) then
+              if msNpc ~= "" then cand.npc = msNpc end
+              cand.zone = msZone
+              cand.x = matchedStarter.x
+              cand.y = matchedStarter.y
+            end
+          end
           cand._matchedStarter = matchedStarter
           cand._matchedStep = matchedStep
           cand._acceptLv = acceptLv
@@ -6257,10 +6303,9 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
   end
 
   if #candidates == 0 then return {} end
-  local deduped = DedupeQuestieQuests(candidates)
   local exactUnique = {}
   local seenSeq = {}
-  for _, q in ipairs(deduped) do
+  for _, q in ipairs(candidates) do
     local parts = { tostring(q.faction or "both") }
     if type(q.steps) == "table" and #q.steps > 0 then
       for _, st in ipairs(q.steps) do
@@ -6278,7 +6323,7 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
   return GroupQuestsBySharedPrefix(exactUnique)
 end
 
-local function CollectBandZoneInfos(band)
+local function CollectBandZoneInfos(band, lvl)
   local out = {}
   local seen = {}
   local function addZone(zName, hubName, hubZone, fromLv, toLv, x, y, note)
@@ -6299,7 +6344,12 @@ local function CollectBandZoneInfos(band)
   addZone(band.zone, band.hub and band.hub.name, band.hub and band.hub.zone, band.from, band.to, band.hub and band.hub.x, band.hub and band.hub.y, nil)
   if type(band.altZones) == "table" then
     for _, az in ipairs(band.altZones) do
-      addZone(az.zone, az.hub, az.zone, az.from or band.from, az.to or band.to, az.x, az.y, az.note)
+      local azFrom = az.from or band.from or 1
+      local azTo = az.to or band.to or 60
+      if not lvl or (azFrom <= lvl and lvl <= azTo) then
+        addZone(az.zone, az.hub, az.zone, azFrom, azTo, az.x, az.y, az.note)
+        if #out >= 6 then break end
+      end
     end
   end
   return out
@@ -7203,7 +7253,7 @@ local function RenderTabRoutes()
 
     -- 为当前等级所在阶段的多个适龄区域分别展示任务链形式的适合可接任务（已全部完成过滤，部分完成自动折叠前置）
     if isCurrent then
-      for _, zInfo in ipairs(CollectBandZoneInfos(b)) do
+      for _, zInfo in ipairs(CollectBandZoneInfos(b, lvl)) do
         if zInfo.from <= lvl and lvl <= zInfo.to then
           local groups = GetZoneSuitableQuestChains(zInfo.zone, lvl)
           if #groups > 0 then

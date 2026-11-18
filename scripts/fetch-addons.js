@@ -57,13 +57,13 @@ const UPSTREAM_CACHE_DIR = path.resolve('.cache/upstream-addons');
  * @param {string} [releaseTag] - 与本次下载对应的 Release 标签，成功时随缓存一并保存，回退时挂在返回 Buffer 的 releaseTag 属性上
  * @returns {Promise<Buffer & { releaseTag?: string }>} 下载完成或读取回退的二进制数据
  */
-async function downloadBuffer(url, cacheName, releaseTag) {
+async function downloadBuffer(url, cacheName, releaseTag, signal) {
   const SafeName = cacheName ? path.basename(cacheName) : null;
   const cachePath = SafeName ? path.join(UPSTREAM_CACHE_DIR, SafeName) : null;
   const tagPath = cachePath ? `${cachePath}.tag` : null;
   try {
     console.log(`Downloading: ${url}...`);
-    const res = await fetch(url, { headers: getHeadersForUrl(url) });
+    const res = await fetch(url, { headers: getHeadersForUrl(url), ...(signal ? { signal } : {}) });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -196,10 +196,10 @@ function writeBundledVersions() {
  * @param {(name: string) => boolean} assetMatch - 资产文件名匹配断言函数
  * @returns {Promise<{ tag: string, url: string } | null>} 匹配到的标签与下载链接，失败时返回 null
  */
-async function getLatestGitHubRelease(repo, assetMatch) {
+async function getLatestGitHubRelease(repo, assetMatch, signal) {
   try {
     const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
-    const res = await fetch(apiUrl, { headers: GITHUB_HEADERS });
+    const res = await fetch(apiUrl, { headers: GITHUB_HEADERS, ...(signal ? { signal } : {}) });
     if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
     const data = await res.json();
     const tag = data.tag_name;
@@ -519,11 +519,16 @@ function makeTempQuestieDBFilename() {
   return `questie-db-forever.${process.pid}.${Date.now()}.tmp.zip`;
 }
 
-async function downloadQuestieDBForever(cacheFilename = makeTempQuestieDBFilename()) {
+async function downloadQuestieDBForever(cacheFilename = makeTempQuestieDBFilename(), deadlineMs = 30000) {
+  const signal = AbortSignal.timeout(deadlineMs);
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
-  const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
+  const latestDB = await getLatestGitHubRelease(
+    'Questie/QuestieDB',
+    name => name.includes('Forever') && name.endsWith('.zip'),
+    signal
+  );
   if (latestDB?.url) dbUrl = latestDB.url;
-  const dbBuf = await downloadBuffer(dbUrl, cacheFilename);
+  const dbBuf = await downloadBuffer(dbUrl, cacheFilename, undefined, signal);
   return { dbUrl, dbBuf, cacheFilename };
 }
 
