@@ -515,11 +515,11 @@ async function processLueur() {
 // ---------------------------------------------------------------------------
 // 7. Questie Forever
 // ---------------------------------------------------------------------------
-async function downloadQuestieDBForever() {
+async function downloadQuestieDBForever(cacheFilename = 'questie-db-forever.zip') {
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
   const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
   if (latestDB?.url) dbUrl = latestDB.url;
-  const dbBuf = await downloadBuffer(dbUrl, 'questie-db-forever.zip');
+  const dbBuf = await downloadBuffer(dbUrl, cacheFilename);
   return { dbUrl, dbBuf };
 }
 
@@ -539,28 +539,23 @@ async function ensureValidQuestieDBCache() {
   if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR)) {
     return;
   }
-  let prevBuf = null;
+  const tmpFilename = 'questie-db-forever.tmp.zip';
+  const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
   try {
-    if (fs.existsSync(dbCachePath)) {
-      prevBuf = fs.readFileSync(dbCachePath);
+    if (fs.existsSync(tmpPath)) {
+      fs.unlinkSync(tmpPath);
     }
-  } catch {
-    prevBuf = null;
-  }
-  try {
-    if (fs.existsSync(dbCachePath)) {
-      fs.unlinkSync(dbCachePath);
-    }
-    await downloadQuestieDBForever();
-    if (!(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR))) {
+    await downloadQuestieDBForever(tmpFilename);
+    if (!(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR, tmpFilename))) {
       throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
     }
+    fs.renameSync(tmpPath, dbCachePath);
   } catch (err) {
-    if (prevBuf && !fs.existsSync(dbCachePath)) {
+    if (fs.existsSync(tmpPath)) {
       try {
-        fs.writeFileSync(dbCachePath, prevBuf);
+        fs.unlinkSync(tmpPath);
       } catch {
-        // ignore restore error
+        // ignore cleanup error
       }
     }
     if (hasCachedZoneQuestsSnapshot()) {

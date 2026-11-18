@@ -2058,9 +2058,9 @@ function decodeCborValue(buf, state = { offset: 0 }) {
  * 从本地缓存的 questie-db-forever.zip 读取无限服官方 QuestieDB 的任务前置关系 (preQuestSingle / preQuestGroup)
  * 用于补全 wowf.io 网页端遗漏的前置任务链
  */
-async function loadQuestiePrereqs(cacheDir) {
+async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zip') {
   const dbMap = new Map();
-  const zipPath = path.join(cacheDir, 'questie-db-forever.zip');
+  const zipPath = path.join(cacheDir, zipFilename);
   if (!fs.existsSync(zipPath)) return dbMap;
   try {
     const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
@@ -2371,6 +2371,35 @@ function buildZoneQuestsIndex(questiePrereqs) {
       }
     }
 
+    // 确保每个区域起点的可接任务在运行时回溯深度 (depth < 12) 内都可达；超出深度的前置保留独立入口
+    const reachable = new Set();
+    const markReachable = (curId, depth) => {
+      if (depth >= 12 || reachable.has(curId)) return;
+      reachable.add(curId);
+      const cur = questiePrereqs.get(curId);
+      if (!cur) return;
+      const preIds =
+        Array.isArray(cur.preGroup) && cur.preGroup.length > 0
+          ? cur.preGroup
+          : Array.isArray(cur.preSingle) && cur.preSingle.length === 1
+            ? [cur.preSingle[0]]
+            : [];
+      for (const pid of preIds) {
+        if (pid) markReachable(pid, depth + 1);
+      }
+    };
+    for (const [qid] of list) {
+      if (!covered.has(qid)) {
+        markReachable(qid, 0);
+      }
+    }
+    for (const [qid] of list) {
+      if (covered.has(qid) && !reachable.has(qid)) {
+        covered.delete(qid);
+        markReachable(qid, 0);
+      }
+    }
+
     const entries = [];
     for (const [qid, info] of list) {
       if (covered.has(qid)) continue;
@@ -2432,9 +2461,9 @@ function buildZoneQuestsIndex(questiePrereqs) {
   return out;
 }
 
-export async function hasValidZoneQuestsIndex(cacheDir) {
+export async function hasValidZoneQuestsIndex(cacheDir, zipFilename = 'questie-db-forever.zip') {
   try {
-    const prereqs = await loadQuestiePrereqs(cacheDir);
+    const prereqs = await loadQuestiePrereqs(cacheDir, zipFilename);
     if (!prereqs || prereqs.size === 0) return false;
     const index = buildZoneQuestsIndex(prereqs);
     return Object.keys(index).length > 0;
@@ -4597,16 +4626,17 @@ local function IsQuestActiveById(qid)
 end
 
 local questieNpcCache = {}
-local function ResolveQuestieNpc(npcIds)
-  if type(npcIds) ~= "table" or not _G.NpcDB then return nil end
-  local npcId = tonumber(npcIds[1])
-  if not npcId or npcId <= 0 then return nil end
-  if questieNpcCache[npcId] ~= nil then
-    return questieNpcCache[npcId] or nil
+local questieObjectCache = {}
+local function ResolveQuestieEntity(entityIds, db, cache)
+  if type(entityIds) ~= "table" or not db then return nil end
+  local entityId = tonumber(entityIds[1])
+  if not entityId or entityId <= 0 then return nil end
+  if cache[entityId] ~= nil then
+    return cache[entityId] or nil
   end
-  local name = _G.NpcDB.name and _G.NpcDB.name(npcId) or ""
-  local spawns = _G.NpcDB.spawns and _G.NpcDB.spawns(npcId)
-  local prefZoneId = _G.NpcDB.zoneID and _G.NpcDB.zoneID(npcId)
+  local name = db.name and db.name(entityId) or ""
+  local spawns = db.spawns and db.spawns(entityId)
+  local prefZoneId = db.zoneID and db.zoneID(entityId)
   local areaId, x, y = nil, nil, nil
   if type(spawns) == "table" then
     if prefZoneId and type(spawns[prefZoneId]) == "table" and type(spawns[prefZoneId][1]) == "table" then
@@ -4630,12 +4660,20 @@ local function ResolveQuestieNpc(npcIds)
     if ok and type(z) == "string" then zoneName = z end
   end
   if name == "" and not x then
-    questieNpcCache[npcId] = false
+    cache[entityId] = false
     return nil
   end
   local res = { npc = name, zone = zoneName, x = x, y = y }
-  questieNpcCache[npcId] = res
+  cache[entityId] = res
   return res
+end
+
+local function ResolveQuestieNpc(npcIds)
+  return ResolveQuestieEntity(npcIds, _G.NpcDB, questieNpcCache)
+end
+
+local function ResolveQuestieObject(objectIds)
+  return ResolveQuestieEntity(objectIds, _G.ObjectDB, questieObjectCache)
 end
 
 local questieQuestInfoCache = {}
@@ -4653,8 +4691,8 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
       local qMinLevel = _G.QuestDB.requiredLevel and _G.QuestDB.requiredLevel(qid)
       local started = _G.QuestDB.startedBy and _G.QuestDB.startedBy(qid)
       local finished = _G.QuestDB.finishedBy and _G.QuestDB.finishedBy(qid)
-      local startInfo = ResolveQuestieNpc(started and started[1])
-      local endInfo = ResolveQuestieNpc(finished and finished[1])
+      local startInfo = ResolveQuestieNpc(started and started[1]) or ResolveQuestieObject(started and started[2])
+      local endInfo = ResolveQuestieNpc(finished and finished[1]) or ResolveQuestieObject(finished and finished[2])
       local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(qid)
       local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(qid)
       local nextQ = _G.QuestDB.nextQuestInChain and _G.QuestDB.nextQuestInChain(qid)
@@ -5956,6 +5994,32 @@ local function IsZoneStepUnlocked(st)
     local nextQ = _G.QuestDB.nextQuestInChain(sid)
     if type(nextQ) == "number" and nextQ > 0 and (IsQuestCompletedById(nextQ) or IsQuestActiveById(nextQ)) then
       return false
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.exclusiveTo then
+    local ex = _G.QuestDB.exclusiveTo(sid)
+    if type(ex) == "table" then
+      for _, eid in ipairs(ex) do
+        if IsQuestCompletedById(eid) or IsQuestActiveById(eid) then
+          return false
+        end
+      end
+    end
+  end
+  if _G.QuestDB and GetFactionInfoByID then
+    local reqMinRep = _G.QuestDB.requiredMinRep and _G.QuestDB.requiredMinRep(sid)
+    if type(reqMinRep) == "table" and tonumber(reqMinRep[1]) and tonumber(reqMinRep[2]) then
+      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, tonumber(reqMinRep[1]))
+      if ok and type(barValue) == "number" and barValue < tonumber(reqMinRep[2]) then
+        return false
+      end
+    end
+    local reqMaxRep = _G.QuestDB.requiredMaxRep and _G.QuestDB.requiredMaxRep(sid)
+    if type(reqMaxRep) == "table" and tonumber(reqMaxRep[1]) and tonumber(reqMaxRep[2]) then
+      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, tonumber(reqMaxRep[1]))
+      if ok and type(barValue) == "number" and barValue > tonumber(reqMaxRep[2]) then
+        return false
+      end
     end
   end
   if _G.QuestDB then
