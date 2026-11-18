@@ -4788,8 +4788,32 @@ local function DedupeQuestieQuests(quests)
               if not oFirstRep then
                 local offset = #ids - #oIds
                 local match = true
+                local sameSteps = (type(other.steps) == "table" and type(q.steps) == "table")
                 for k = 1, #oIds do
-                  if oIds[k] ~= ids[offset + k] then match = false break end
+                  if oIds[k] ~= ids[offset + k] then
+                    match = false
+                    break
+                  end
+                  if sameSteps then
+                    local os, qs = other.steps[k], q.steps[offset + k]
+                    if k == 1 then
+                      local oPre = os and tonumber(os.preId)
+                      local qPre = qs and tonumber(qs.preId)
+                      local preOk = (oPre == qPre) or (oPre == nil and qPre == ids[offset])
+                      local r1, r2 = os and os.reqAll, qs and qs.reqAll
+                      local reqOk = (type(r1) ~= "table" and type(r2) ~= "table")
+                      if not reqOk and type(r1) == "table" and type(r2) == "table" and #r1 == #r2 then
+                        reqOk = true
+                        for idx = 1, #r1 do
+                          if r1[idx] ~= r2[idx] then reqOk = false break end
+                        end
+                      end
+                      if not preOk or not reqOk then match = false break end
+                    elseif not sameStepDeps(os, qs) then
+                      match = false
+                      break
+                    end
+                  end
                 end
                 if match and areOmittedStepsBreadcrumbs(ids, offset, q.steps) and navCovers(other, q, offset) then redundant = true break end
               end
