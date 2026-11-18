@@ -566,15 +566,21 @@ async function isValidQuestieDBArchiveBuffer(buf) {
     }
     const tocText = await tocFile.async('string');
     const fileIndex = new Set(Object.keys(zip.files).map(p => p.toLowerCase()));
+    let tocFileCount = 0;
+    let hasApiEntry = false;
     for (const rawLine of tocText.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
       const rel = line.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
       if (!rel) continue;
-      if (!fileIndex.has(`questiedb/${rel.toLowerCase()}`)) {
+      const lowerRel = rel.toLowerCase();
+      if (!fileIndex.has(`questiedb/${lowerRel}`)) {
         return false;
       }
+      tocFileCount++;
+      if (lowerRel === 'src/api.lua') hasApiEntry = true;
     }
+    if (tocFileCount === 0 || !hasApiEntry) return false;
     return await hasValidZoneQuestsBuffer(buf);
   } catch {
     return false;
