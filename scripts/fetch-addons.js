@@ -552,7 +552,7 @@ function hasCachedZoneQuestsSnapshot() {
 async function isValidQuestieDBArchiveBuffer(buf) {
   try {
     if (!buf || buf.length === 0) return false;
-    const zip = await JSZip.loadAsync(buf);
+    const zip = await JSZip.loadAsync(buf, { checkCRC32: true });
     const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
     if (!tocFile) return false;
     const tocText = await tocFile.async('string');
