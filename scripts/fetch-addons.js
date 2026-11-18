@@ -10,7 +10,6 @@ import { patchMapzeroth } from './locales/mapzeroth.js';
 import {
   buildWoWFAddon,
   hasValidZoneQuestsBuffer,
-  hasValidZoneQuestsIndex,
   isValidZoneQuestsData,
 } from './locales/wowf.js';
 import { buildForeverTransitAddon } from './locales/foreverTransit.js';
@@ -584,8 +583,16 @@ async function promoteValidQuestieDBBuffer(dbBuf, dbUrl = '') {
 }
 
 async function ensureValidQuestieDBCache() {
-  if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR)) {
-    return null;
+  const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+  if (fs.existsSync(dbCachePath)) {
+    try {
+      const cachedBuf = fs.readFileSync(dbCachePath);
+      if (await hasValidZoneQuestsBuffer(cachedBuf)) {
+        return cachedBuf;
+      }
+    } catch {
+      // fall through to download
+    }
   }
   try {
     const { dbUrl, dbBuf } = await downloadQuestieDBForever();

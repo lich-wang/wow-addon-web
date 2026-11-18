@@ -5188,11 +5188,12 @@ end
 local function GetQuestChainFoldKey(q, ctxZone)
   local qid = tonumber(q and (q.id or q.questId))
   if not qid or qid <= 0 then return nil end
+  local origin = q and q._originId and (":" .. tostring(q._originId)) or ""
   local z = (ctxZone and ctxZone ~= "") and ctxZone or (q and q._navCtx)
   if z and z ~= "" then
-    return string.format("%d:%s:%s", qid, tostring(q.faction or ""), z)
+    return string.format("%d:%s:%s%s", qid, tostring(q.faction or ""), z, origin)
   end
-  return string.format("%d:%s", qid, tostring(q.faction or ""))
+  return string.format("%d:%s%s", qid, tostring(q.faction or ""), origin)
 end
 
 local function GetQuestStepFoldKey(sid, faction, ctxZone)
@@ -6326,6 +6327,7 @@ local function CloneZoneQuestCandidate(q)
   for k, v in pairs(q) do
     if k ~= "steps" then copy[k] = v end
   end
+  copy._originId = tonumber(q.id or q.questId)
   if type(q.steps) == "table" and #q.steps > 0 then
     local ineligibleIds = {}
     local blockingIneligibleIds = {}
