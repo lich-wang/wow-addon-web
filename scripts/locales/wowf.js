@@ -4749,58 +4749,71 @@ local function DedupeQuestieQuests(quests)
     end
     return true
   end
+  local function extractIds(entry)
+    local ids = {}
+    if type(entry.steps) == "table" and #entry.steps > 0 then
+      for _, st in ipairs(entry.steps) do
+        local sid = tonumber(st and st.id)
+        if not sid or sid <= 0 then
+          return ids, true
+        end
+        table.insert(ids, sid)
+      end
+      return ids, false
+    end
+    local qid = tonumber(entry.id or entry.questId)
+    if not qid or qid <= 0 then
+      return ids, true
+    end
+    table.insert(ids, qid)
+    return ids, false
+  end
   local out = {}
   for i, q in ipairs(list) do
-    local ids = {}
-    if type(q.steps) == "table" and #q.steps > 0 then
-      for _, st in ipairs(q.steps) do table.insert(ids, tonumber(st.id)) end
-    else
-      table.insert(ids, tonumber(q.id or q.questId))
-    end
+    local ids, qInvalid = extractIds(q)
     local redundant = false
-    for j, other in ipairs(list) do
-      local factionCovers = (other.faction == q.faction or other.faction == "both")
-      if i ~= j and factionCovers and classesCover(other, q) then
-        local oIds = {}
-        if type(other.steps) == "table" and #other.steps > 0 then
-          for _, st in ipairs(other.steps) do table.insert(oIds, tonumber(st.id)) end
-        else
-          table.insert(oIds, tonumber(other.id or other.questId))
-        end
-        if #oIds < #ids then
-          local oFirstRep
-          if type(other.steps) == "table" and other.steps[1] then
-            oFirstRep = other.steps[1].repeatable
-          else
-            oFirstRep = other.repeatable
-          end
-          if not oFirstRep then
-            local offset = #ids - #oIds
-            local match = true
-            for k = 1, #oIds do
-              if oIds[k] ~= ids[offset + k] then match = false break end
-            end
-            if match and areOmittedStepsBreadcrumbs(ids, offset, q.steps) and navCovers(other, q, offset) then redundant = true break end
-          end
-        elseif #oIds == #ids and #ids > 0 then
-          local match = true
-          local sameSteps = (type(other.steps) == "table" and type(q.steps) == "table")
-          for k = 1, #oIds do
-            if (not oIds[k]) or oIds[k] <= 0 or oIds[k] ~= ids[k] or (sameSteps and not sameStepDeps(other.steps[k], q.steps[k])) then
-              match = false
-              break
-            end
-          end
-          local qMin = tonumber(q.minLevel) or 0
-          local oMin = tonumber(other.minLevel) or 0
-          local minLevelCovers = (oMin == qMin) or (oMin > 0 and (qMin <= 0 or oMin < qMin))
-          if match and minLevelCovers and navCovers(other, q, 0) then
-            local sameClassScope = classesCover(q, other)
-            local strictlyBetterNav = not navCovers(q, other, 0)
-            local strictlyBetterMinLevel = (oMin > 0 and (qMin <= 0 or oMin < qMin))
-            if strictlyBetterNav or strictlyBetterMinLevel or (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
-              redundant = true
-              break
+    if not qInvalid then
+      for j, other in ipairs(list) do
+        local factionCovers = (other.faction == q.faction or other.faction == "both")
+        if i ~= j and factionCovers and classesCover(other, q) then
+          local oIds, oInvalid = extractIds(other)
+          if not oInvalid then
+            if #oIds < #ids then
+              local oFirstRep
+              if type(other.steps) == "table" and other.steps[1] then
+                oFirstRep = other.steps[1].repeatable
+              else
+                oFirstRep = other.repeatable
+              end
+              if not oFirstRep then
+                local offset = #ids - #oIds
+                local match = true
+                for k = 1, #oIds do
+                  if oIds[k] ~= ids[offset + k] then match = false break end
+                end
+                if match and areOmittedStepsBreadcrumbs(ids, offset, q.steps) and navCovers(other, q, offset) then redundant = true break end
+              end
+            elseif #oIds == #ids and #ids > 0 then
+              local match = true
+              local sameSteps = (type(other.steps) == "table" and type(q.steps) == "table")
+              for k = 1, #oIds do
+                if oIds[k] ~= ids[k] or (sameSteps and not sameStepDeps(other.steps[k], q.steps[k])) then
+                  match = false
+                  break
+                end
+              end
+              local qMin = tonumber(q.minLevel) or 0
+              local oMin = tonumber(other.minLevel) or 0
+              local minLevelCovers = (oMin == qMin) or (oMin > 0 and (qMin <= 0 or oMin < qMin))
+              if match and minLevelCovers and navCovers(other, q, 0) then
+                local sameClassScope = classesCover(q, other)
+                local strictlyBetterNav = not navCovers(q, other, 0)
+                local strictlyBetterMinLevel = (oMin > 0 and (qMin <= 0 or oMin < qMin))
+                if strictlyBetterNav or strictlyBetterMinLevel or (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
+                  redundant = true
+                  break
+                end
+              end
             end
           end
         end
