@@ -3712,12 +3712,17 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     news,
   };
   const useSnapshotOnly = Boolean(questieSource && typeof questieSource === 'object' && !Buffer.isBuffer(questieSource) && questieSource.useSnapshotOnly);
+  const prevalidatedSnapshot =
+    useSnapshotOnly && questieSource && typeof questieSource === 'object' ? questieSource.snapshot || null : null;
   const questieDbBuf = Buffer.isBuffer(questieSource)
     ? questieSource
     : questieSource && typeof questieSource === 'object'
       ? questieSource.questieDbBuf || null
       : null;
-  if (!useSnapshotOnly) {
+  if (useSnapshotOnly && prevalidatedSnapshot) {
+    dataset.zoneQuests = prevalidatedSnapshot.zoneQuests;
+    dataset.zoneAreaIds = prevalidatedSnapshot.zoneAreaIds;
+  } else if (!useSnapshotOnly) {
     const livePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
     annotateDatasetPrereqs(dataset, livePrereqs);
   }

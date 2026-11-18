@@ -538,14 +538,15 @@ async function downloadQuestieDBForever(deadlineMs = 30000) {
   return { dbUrl, dbBuf };
 }
 
-function hasCachedZoneQuestsSnapshot() {
+function getValidatedZoneQuestsSnapshot() {
   const snapshotPath = path.join(UPSTREAM_CACHE_DIR, 'wowf-dataset.json');
-  if (!fs.existsSync(snapshotPath)) return false;
+  if (!fs.existsSync(snapshotPath)) return null;
   try {
     const data = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
-    return isValidZoneQuestsData(data?.zoneQuests, data?.zoneAreaIds);
+    if (!isValidZoneQuestsData(data?.zoneQuests, data?.zoneAreaIds)) return null;
+    return { zoneQuests: data.zoneQuests, zoneAreaIds: data.zoneAreaIds };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -577,7 +578,8 @@ async function validateQuestieDBArchiveBuffer(buf) {
   const tocText = await tocFile.async('string');
   const fileIndex = new Set(Object.keys(zip.files).map(p => p.toLowerCase()));
   let tocFileCount = 0;
-  let hasApiEntry = false;
+  let bakedIdx = -1;
+  let apiIdx = -1;
   for (const rawLine of tocText.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;
@@ -587,11 +589,12 @@ async function validateQuestieDBArchiveBuffer(buf) {
     if (!fileIndex.has(`questiedb/${lowerRel}`)) {
       return { valid: false, reason: `QuestieDB TOC references missing file: QuestieDB/${rel}` };
     }
+    if (lowerRel === 'src/read/baked.lua' && bakedIdx < 0) bakedIdx = tocFileCount;
+    if (lowerRel === 'src/api.lua' && apiIdx < 0) apiIdx = tocFileCount;
     tocFileCount++;
-    if (lowerRel === 'src/api.lua') hasApiEntry = true;
   }
-  if (tocFileCount === 0 || !hasApiEntry) {
-    return { valid: false, reason: 'QuestieDB TOC is missing required runtime entry src/api.lua.' };
+  if (tocFileCount === 0 || bakedIdx < 0 || apiIdx <= bakedIdx) {
+    return { valid: false, reason: 'QuestieDB TOC must declare src/read/baked.lua before src/api.lua.' };
   }
   if (!(await hasValidZoneQuestsBuffer(buf))) {
     return { valid: false, reason: 'QuestieDB archive produced an empty or incomplete zoneQuests index.' };
@@ -659,9 +662,10 @@ async function ensureValidQuestieDBCache() {
     }
     return { questieDbBuf: dbBuf, useSnapshotOnly: false };
   } catch (err) {
-    if (hasCachedZoneQuestsSnapshot()) {
+    const snapshot = getValidatedZoneQuestsSnapshot();
+    if (snapshot) {
       console.warn(`[WoWF] QuestieDB refresh failed (${err.message}); falling back to cached zoneQuests snapshot.`);
-      return { questieDbBuf: null, useSnapshotOnly: true };
+      return { questieDbBuf: null, useSnapshotOnly: true, snapshot };
     }
     throw err;
   }
