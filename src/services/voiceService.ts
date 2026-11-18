@@ -1887,6 +1887,13 @@ export class VoiceRoomManager {
         } catch {
           // 个别设备不支持二次约束，保留本次采集结果，避免切麦失败。
         }
+        // 等待期间用户可能已经退房/换房，这里必须重新校验，否则会装到新房间上。
+        if (this.joinAttemptId !== expectedAttemptId || !this.ws || !this.localStream) {
+          for (const track of newStream.getTracks()) {
+            track.stop();
+          }
+          return;
+        }
       }
 
       const oldTrack = this.localStream.getAudioTracks()[0];
