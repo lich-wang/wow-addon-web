@@ -4652,17 +4652,27 @@ local function DedupeQuestieQuests(quests)
     return true
   end
   local function stepPickupCovers(hStep, tStep)
-    if type(tStep) ~= "table" or tStep.x == nil or tStep.y == nil then
-      return true
-    end
-    if type(hStep) ~= "table" or hStep.x == nil or hStep.y == nil then
+    if type(tStep) ~= "table" then return true end
+    local tHasNpc = (tStep.npc and tStep.npc ~= "")
+    local tHasCoords = (tStep.x ~= nil and tStep.y ~= nil)
+    if not tHasNpc and not tHasCoords then return true end
+    if type(hStep) ~= "table" then return false end
+    if tHasNpc and (hStep.npc or "") ~= tStep.npc then
       return false
     end
-    local tz = tStep.zone or ""
-    if tz ~= "" and (hStep.zone or "") ~= tz then
-      return false
+    if tHasCoords then
+      if hStep.x == nil or hStep.y == nil then
+        return false
+      end
+      local tz = tStep.zone or ""
+      if tz ~= "" and (hStep.zone or "") ~= tz then
+        return false
+      end
+      if hStep.x ~= tStep.x or hStep.y ~= tStep.y then
+        return false
+      end
     end
-    return hStep.x == tStep.x and hStep.y == tStep.y
+    return true
   end
   local function stepTurninCovers(hStep, tStep)
     if type(tStep) ~= "table" then return true end
@@ -4670,11 +4680,12 @@ local function DedupeQuestieQuests(quests)
     local tHasCoords = (tStep.endX ~= nil and tStep.endY ~= nil)
     if not tHasNpc and not tHasCoords then return true end
     if type(hStep) ~= "table" then return false end
-    if tHasNpc and (not hStep.endNpc or hStep.endNpc == "") then return false end
+    if tHasNpc and (hStep.endNpc or "") ~= tStep.endNpc then return false end
     if tHasCoords then
       if hStep.endX == nil or hStep.endY == nil then return false end
-      local tez = tStep.endZone or ""
-      if tez ~= "" and (hStep.endZone or "") ~= tez then return false end
+      local hEndZone = (hStep.endZone and hStep.endZone ~= "") and hStep.endZone or (hStep.zone or "")
+      local tEndZone = (tStep.endZone and tStep.endZone ~= "") and tStep.endZone or (tStep.zone or "")
+      if tEndZone ~= "" and hEndZone ~= tEndZone then return false end
       if hStep.endX ~= tStep.endX or hStep.endY ~= tStep.endY then return false end
     end
     return true
