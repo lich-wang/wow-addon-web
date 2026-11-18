@@ -2414,21 +2414,17 @@ function buildZoneQuestsIndex(questiePrereqs) {
         if (depth >= 12) return;
         const cur = questiePrereqs.get(curId);
         if (!cur) return;
-        const curLv = cur.level || cur.minLevel || 0;
+        const curMin = cur.minLevel || cur.level || 1;
+        const curLv = cur.level || cur.minLevel || 1;
+        if (curMin < rootMin) rootMin = curMin;
+        if (curLv < rootLv) rootLv = curLv;
         if (curLv > maxLv) maxLv = curLv;
         const preIds =
           Array.isArray(cur.preGroup) && cur.preGroup.length > 0
-            ? cur.preGroup
+            ? cur.preGroup.map(pid => Math.abs(Number(pid) || 0)).filter(Boolean)
             : Array.isArray(cur.preSingle) && cur.preSingle.length > 0
-              ? cur.preSingle
+              ? cur.preSingle.map(pid => Math.abs(Number(pid) || 0)).filter(Boolean)
               : [];
-        if (preIds.length === 0) {
-          const m = cur.minLevel || cur.level || 1;
-          const l = cur.level || cur.minLevel || 1;
-          if (m < rootMin) rootMin = m;
-          if (l < rootLv) rootLv = l;
-          return;
-        }
         for (const pid of preIds) {
           if (!pid || visited.has(pid)) continue;
           visited.add(pid);
@@ -4692,6 +4688,13 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
       local started = _G.QuestDB.startedBy and _G.QuestDB.startedBy(qid)
       local finished = _G.QuestDB.finishedBy and _G.QuestDB.finishedBy(qid)
       local startInfo = ResolveQuestieNpc(started and started[1]) or ResolveQuestieObject(started and started[2])
+      if not startInfo and type(started and started[3]) == "table" and tonumber(started[3][1]) then
+        local itemId = tonumber(started[3][1])
+        local itemName = (_G.ItemDB and _G.ItemDB.name and _G.ItemDB.name(itemId)) or (GetItemInfo and GetItemInfo(itemId))
+        if itemName and itemName ~= "" then
+          startInfo = { npc = "[物品] " .. itemName, zone = "", x = nil, y = nil }
+        end
+      end
       local endInfo = ResolveQuestieNpc(finished and finished[1]) or ResolveQuestieObject(finished and finished[2])
       local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(qid)
       local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(qid)
@@ -6022,6 +6025,26 @@ local function IsZoneStepUnlocked(st)
       end
     end
   end
+  if _G.QuestDB and _G.QuestDB.startedBy then
+    local started = _G.QuestDB.startedBy(sid)
+    if type(started) == "table"
+      and (type(started[1]) ~= "table" or #started[1] == 0)
+      and (type(started[2]) ~= "table" or #started[2] == 0)
+      and type(started[3]) == "table" and #started[3] > 0
+      and GetItemCount then
+      local hasStarterItem = false
+      for _, itemId in ipairs(started[3]) do
+        local ok, cnt = pcall(GetItemCount, tonumber(itemId))
+        if ok and type(cnt) == "number" and cnt > 0 then
+          hasStarterItem = true
+          break
+        end
+      end
+      if not hasStarterItem then
+        return false
+      end
+    end
+  end
   if _G.QuestDB then
     local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(sid)
     if type(preG) == "table" and #preG > 0 then
@@ -6173,9 +6196,16 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
         end
 
         if matchedStep then
-          cand._matchedStep = matchedStep
-          cand._acceptLv = acceptLv
-          table.insert(candidates, cand)
+          local mId = tonumber(matchedStep.id)
+          local mInfo = mId and GetQuestieQuestInfo(mId) or nil
+          local mZone = (matchedStep.zone and matchedStep.zone ~= "" and matchedStep.zone) or (mInfo and mInfo.zone) or ""
+          local cleanZone = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
+          local inThisZone = (mZone == "" or mZone == cleanZone or (mId and IsQuestActiveById(mId)))
+          if inThisZone then
+            cand._matchedStep = matchedStep
+            cand._acceptLv = acceptLv
+            table.insert(candidates, cand)
+          end
         end
       end
     end
@@ -6183,7 +6213,24 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
 
   if #candidates == 0 then return {} end
   local deduped = DedupeQuestieQuests(candidates)
-  return GroupQuestsBySharedPrefix(deduped)
+  local exactUnique = {}
+  local seenSeq = {}
+  for _, q in ipairs(deduped) do
+    local parts = { tostring(q.faction or "both") }
+    if type(q.steps) == "table" and #q.steps > 0 then
+      for _, st in ipairs(q.steps) do
+        table.insert(parts, tostring(st.id or ""))
+      end
+    else
+      table.insert(parts, tostring(q.id or q.questId or ""))
+    end
+    local seqKey = table.concat(parts, ":")
+    if not seenSeq[seqKey] then
+      seenSeq[seqKey] = true
+      table.insert(exactUnique, q)
+    end
+  end
+  return GroupQuestsBySharedPrefix(exactUnique)
 end
 
 local function CollectBandZoneInfos(band)
@@ -8135,6 +8182,7 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+eventFrame:RegisterEvent("UPDATE_FACTION")
 for _, questEv in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_LOG_UPDATE" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, questEv)
 end

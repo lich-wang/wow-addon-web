@@ -515,12 +515,16 @@ async function processLueur() {
 // ---------------------------------------------------------------------------
 // 7. Questie Forever
 // ---------------------------------------------------------------------------
-async function downloadQuestieDBForever(cacheFilename = 'questie-db-forever.zip') {
+function makeTempQuestieDBFilename() {
+  return `questie-db-forever.${process.pid}.${Date.now()}.tmp.zip`;
+}
+
+async function downloadQuestieDBForever(cacheFilename = makeTempQuestieDBFilename()) {
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
   const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
   if (latestDB?.url) dbUrl = latestDB.url;
   const dbBuf = await downloadBuffer(dbUrl, cacheFilename);
-  return { dbUrl, dbBuf };
+  return { dbUrl, dbBuf, cacheFilename };
 }
 
 function hasCachedZoneQuestsSnapshot() {
@@ -534,23 +538,15 @@ function hasCachedZoneQuestsSnapshot() {
   }
 }
 
-async function ensureValidQuestieDBCache() {
+async function promoteValidQuestieDBTemp(tmpFilename) {
   const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
-  if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR)) {
-    return;
-  }
-  const tmpFilename = 'questie-db-forever.tmp.zip';
   const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
   try {
-    if (fs.existsSync(tmpPath)) {
-      fs.unlinkSync(tmpPath);
+    if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR, tmpFilename)) {
+      fs.renameSync(tmpPath, dbCachePath);
+      return true;
     }
-    await downloadQuestieDBForever(tmpFilename);
-    if (!(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR, tmpFilename))) {
-      throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
-    }
-    fs.renameSync(tmpPath, dbCachePath);
-  } catch (err) {
+  } finally {
     if (fs.existsSync(tmpPath)) {
       try {
         fs.unlinkSync(tmpPath);
@@ -558,6 +554,21 @@ async function ensureValidQuestieDBCache() {
         // ignore cleanup error
       }
     }
+  }
+  return false;
+}
+
+async function ensureValidQuestieDBCache() {
+  if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR)) {
+    return;
+  }
+  const tmpFilename = makeTempQuestieDBFilename();
+  try {
+    await downloadQuestieDBForever(tmpFilename);
+    if (!(await promoteValidQuestieDBTemp(tmpFilename))) {
+      throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
+    }
+  } catch (err) {
     if (hasCachedZoneQuestsSnapshot()) {
       console.warn(`[WoWF] QuestieDB refresh failed (${err.message}); falling back to cached zoneQuests snapshot.`);
       return;
@@ -576,7 +587,9 @@ async function processQuestieForever() {
 
   console.log('Fetching Questie Core + QuestieDB Forever...');
   const coreBuf = await downloadBuffer(coreUrl, 'questie-core.zip');
-  const { dbUrl, dbBuf } = await downloadQuestieDBForever();
+  const tmpFilename = makeTempQuestieDBFilename();
+  const { dbUrl, dbBuf } = await downloadQuestieDBForever(tmpFilename);
+  await promoteValidQuestieDBTemp(tmpFilename);
 
   const zip = await JSZip.loadAsync(coreBuf);
   await patchQuestie(zip);
