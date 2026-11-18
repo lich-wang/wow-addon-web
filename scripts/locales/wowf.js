@@ -4975,9 +4975,9 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, 
     if foldCount > 0 then
       local foldText
       if isFolded then
-        foldText = string.format("|cff888888|Hwowfchain:%s|h[已完成前 %d 步 · 点击展开]|h|r", foldKey, foldCount)
+        foldText = string.format("|cff888888|Hwowfchain:%s|h[+]|h|r 已完成前 %d 步", foldKey, foldCount)
       else
-        foldText = string.format("|cff00ffcc|Hwowfchain:%s|h[已展开 %d 步已完成前置 · 点击收起]|h|r", foldKey, foldCount)
+        foldText = string.format("|cff00ffcc|Hwowfchain:%s|h[-]|h|r 已完成前 %d 步", foldKey, foldCount)
       end
       table.insert(treeLines, baseIndent .. foldText)
     end
@@ -5105,10 +5105,10 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
       stepFoldKey = GetQuestStepFoldKey(sid, q1.faction)
     end
     if stepFoldKey and not IsQuestChainFoldExpanded(stepFoldKey) then
-      table.insert(outLines, baseIndent .. string.format("|cff888888|Hwowfchain:%s|h[已完成前置 · 点击展开]|h|r", stepFoldKey))
+      table.insert(outLines, baseIndent .. string.format("|cff888888|Hwowfchain:%s|h[+]|h|r 已完成前置", stepFoldKey))
     else
       if stepFoldKey then
-        table.insert(outLines, baseIndent .. string.format("|cff00ffcc|Hwowfchain:%s|h[已展开前置 · 点击收起]|h|r", stepFoldKey))
+        table.insert(outLines, baseIndent .. string.format("|cff00ffcc|Hwowfchain:%s|h[-]|h|r 已完成前置", stepFoldKey))
       end
       table.insert(outLines, baseIndent .. link .. ((npcPart ~= "") and ("  " .. npcPart) or ""))
       prefixHasVisibleStep = true
@@ -5195,9 +5195,9 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
     if branchFoldCount > 0 and branchFoldKey then
       local marker
       if branchFolded then
-        marker = string.format("|cff888888|Hwowfchain:%s|h[已完成前 %d 步 · 点击展开]|h|r", branchFoldKey, branchFoldCount)
+        marker = string.format("|cff888888|Hwowfchain:%s|h[+]|h|r 已完成前 %d 步", branchFoldKey, branchFoldCount)
       else
-        marker = string.format("|cff00ffcc|Hwowfchain:%s|h[已展开 %d 步已完成前置 · 点击收起]|h|r", branchFoldKey, branchFoldCount)
+        marker = string.format("|cff00ffcc|Hwowfchain:%s|h[-]|h|r 已完成前 %d 步", branchFoldKey, branchFoldCount)
       end
       table.insert(outLines, FormatStepTreeIndent(baseIndent, branchBaseDepth) .. marker)
     end
@@ -5630,7 +5630,7 @@ local function OnCardHyperlinkEnter(self, link)
     GameTooltip:ClearLines()
     GameTooltip:AddLine("|cff00ffcc[任务链显示]|r")
     GameTooltip:AddLine("已完成的前置任务已自动折叠")
-    GameTooltip:AddLine("|cff00ff00点击:|r 展开 / 收起已完成前置步骤")
+    GameTooltip:AddLine("|cff00ff00点击 [+] 展开 · 点击 [-] 收起|r")
     GameTooltip:Show()
   else
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
