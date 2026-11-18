@@ -2613,8 +2613,10 @@ export function isValidZoneQuestsData(zoneQuests, zoneAreaIds) {
     z =>
       Array.isArray(zoneQuests[z]) &&
       zoneQuests[z].length > 0 &&
+      zoneQuests[z].every(e => e && typeof e === 'object' && Number.isInteger(e.id) && e.id > 0) &&
       Array.isArray(zoneAreaIds[z]) &&
-      zoneAreaIds[z].length > 0
+      zoneAreaIds[z].length > 0 &&
+      zoneAreaIds[z].every(a => Number.isInteger(a) && a > 0)
   );
 }
 
@@ -6309,6 +6311,11 @@ local function IsZoneStepUnlocked(st)
         end
       end
       if not anyDone then return false end
+    end
+    local startWith = _G.QuestDB.availableStartingWith and _G.QuestDB.availableStartingWith(sid)
+    if type(startWith) == "number" and startWith > 0
+      and not (IsQuestActiveById(startWith) or IsQuestCompletedById(startWith)) then
+      return false
     end
     return true
   end

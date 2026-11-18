@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import JSZip from 'jszip';
@@ -548,8 +549,31 @@ function hasCachedZoneQuestsSnapshot() {
   }
 }
 
+async function isValidQuestieDBArchiveBuffer(buf) {
+  try {
+    if (!buf || buf.length === 0) return false;
+    const zip = await JSZip.loadAsync(buf);
+    const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
+    if (!tocFile) return false;
+    const tocText = await tocFile.async('string');
+    const fileIndex = new Set(Object.keys(zip.files).map(p => p.toLowerCase()));
+    for (const rawLine of tocText.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const rel = line.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+      if (!rel) continue;
+      if (!fileIndex.has(`questiedb/${rel.toLowerCase()}`) && !fileIndex.has(rel.toLowerCase())) {
+        return false;
+      }
+    }
+    return await hasValidZoneQuestsBuffer(buf);
+  } catch {
+    return false;
+  }
+}
+
 async function promoteValidQuestieDBBuffer(dbBuf, dbUrl = '') {
-  if (!(await hasValidZoneQuestsBuffer(dbBuf))) {
+  if (!(await isValidQuestieDBArchiveBuffer(dbBuf))) {
     return { valid: false, promoted: false };
   }
   const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
@@ -563,7 +587,11 @@ async function promoteValidQuestieDBBuffer(dbBuf, dbUrl = '') {
     promoted = true;
     if (dbUrl) {
       try {
-        fs.writeFileSync(dbMetaPath, JSON.stringify({ url: dbUrl, updatedAt: new Date().toISOString() }, null, 2));
+        const sha256 = crypto.createHash('sha256').update(dbBuf).digest('hex');
+        fs.writeFileSync(
+          dbMetaPath,
+          JSON.stringify({ url: dbUrl, sha256, updatedAt: new Date().toISOString() }, null, 2)
+        );
       } catch {
         // ignore metadata write error
       }
@@ -587,7 +615,7 @@ async function ensureValidQuestieDBCache() {
   if (fs.existsSync(dbCachePath)) {
     try {
       const cachedBuf = fs.readFileSync(dbCachePath);
-      if (await hasValidZoneQuestsBuffer(cachedBuf)) {
+      if (await isValidQuestieDBArchiveBuffer(cachedBuf)) {
         return cachedBuf;
       }
     } catch {
@@ -644,18 +672,17 @@ async function processQuestieForever() {
     const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
     if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
       const cachedBuf = fs.readFileSync(dbCachePath);
-      const cachedZip = await JSZip.loadAsync(cachedBuf);
-      const cachedToc =
-        cachedZip.file('QuestieDB/QuestieDB_Forever.toc') || cachedZip.file('QuestieDB/QuestieDB_Camelot.toc');
-      if (!cachedToc || !(await hasValidZoneQuestsBuffer(cachedBuf))) {
+      if (!(await isValidQuestieDBArchiveBuffer(cachedBuf))) {
         throw err;
       }
-      await cachedToc.async('string');
+      const cachedSha256 = crypto.createHash('sha256').update(cachedBuf).digest('hex');
       let cachedUrl = 'unknown (cached questie-db-forever.zip)';
       if (fs.existsSync(dbMetaPath)) {
         try {
           const meta = JSON.parse(fs.readFileSync(dbMetaPath, 'utf8'));
-          if (meta?.url) cachedUrl = meta.url;
+          if (meta?.url && meta?.sha256 === cachedSha256) {
+            cachedUrl = meta.url;
+          }
         } catch {
           // ignore malformed meta
         }
