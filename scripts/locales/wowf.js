@@ -2087,6 +2087,8 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
     const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
     if (!tocFile) return dbMap;
     const toc = await tocFile.async('string');
+    const verMatch = toc.match(/^## Version:\s*(.+)$/m);
+    if (verMatch) dbMap._questieDbVersion = verMatch[1].trim();
     const getOrCreate = qid => {
       let entry = dbMap.get(qid);
       if (!entry) {
@@ -2137,12 +2139,19 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
       }
       return [];
     };
+    const seenTableRecords = new Set();
+    const expectedTableChecks = [];
     const processDecodedRecord = (kind, entityId, field, rawBase64) => {
       try {
         const val = decodeCborValue(Buffer.from(rawBase64, 'base64'));
         if (field === 'S' && (!val || typeof val !== 'object')) {
           parseErrors++;
           return;
+        }
+        if (field !== 'S') {
+          seenTableRecords.add(`${kind}:${entityId}:${field}`);
+        } else if (typeof val.p === 'number' && Number.isSafeInteger(val.p) && val.p >= 0) {
+          expectedTableChecks.push({ kind, entityId, mask: BigInt(val.p) });
         }
         if (kind === 'Npc') {
           if (field === '7' && val && typeof val === 'object') {
@@ -2250,6 +2259,18 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
         continue;
       }
       processDecodedRecord(s.kind, s.entityId, s.field, parts.join(''));
+    }
+    const tableFieldsByKind = { Npc: [7], Object: [4], Quest: [2, 12, 13, 18, 28, 35] };
+    for (const chk of expectedTableChecks) {
+      const fields = tableFieldsByKind[chk.kind];
+      if (!fields) continue;
+      for (const f of fields) {
+        if ((chk.mask >> BigInt(f - 1)) & 1n) {
+          if (!seenTableRecords.has(`${chk.kind}:${chk.entityId}:${f}`)) {
+            parseErrors++;
+          }
+        }
+      }
     }
     dbMap._parseErrors = parseErrors;
     for (const entry of dbMap.values()) {
@@ -2696,6 +2717,9 @@ function annotateDatasetPrereqs(dataset, questiePrereqs) {
     if (Object.keys(builtZoneQuests).length >= 30) {
       dataset.zoneQuests = builtZoneQuests;
       dataset.zoneAreaIds = ZONE_NAME_TO_AREA_IDS;
+      if (questiePrereqs._questieDbVersion && dataset.meta) {
+        dataset.meta.questieDbVersion = questiePrereqs._questieDbVersion;
+      }
     }
   }
   return dataset;
@@ -6483,9 +6507,14 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
   local maxOkLv = (lvl or 1) + 5
   local candidates = {}
 
+  local bundledQdbVer = Data.meta and Data.meta.questieDbVersion
+  local clientQdbVer = (GetAddOnMetadata and GetAddOnMetadata("QuestieDB", "Version"))
+    or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("QuestieDB", "Version"))
+  local sameQuestieDbVersion = (type(bundledQdbVer) == "string" and bundledQdbVer ~= "" and clientQdbVer == bundledQdbVer)
+
   for _, q in ipairs(pool) do
     local factionOk = (q.faction == "both" or q.faction == state.faction)
-    if factionOk and MatchesQuestRace(q) and q.min <= lvl and q.maxLv >= minOkLv and GetQuestieQuestInfo(q.id) ~= nil then
+    if factionOk and MatchesQuestRace(q) and (not sameQuestieDbVersion or (q.min <= lvl and q.maxLv >= minOkLv)) and GetQuestieQuestInfo(q.id) ~= nil then
       ResolveQuestChainFromQuestieDB(q)
       local cand = CloneZoneQuestCandidate(q)
 
