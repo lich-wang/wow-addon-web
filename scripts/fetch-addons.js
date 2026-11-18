@@ -590,24 +590,32 @@ async function processQuestieForever() {
   const tmpFilename = makeTempQuestieDBFilename();
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
   let dbBuf;
+  const zip = await JSZip.loadAsync(coreBuf);
+  await patchQuestie(zip);
   try {
     const res = await downloadQuestieDBForever(tmpFilename);
     dbUrl = res.dbUrl;
     dbBuf = res.dbBuf;
+    await zip.loadAsync(dbBuf);
     await promoteValidQuestieDBTemp(tmpFilename);
   } catch (err) {
+    const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
+    if (fs.existsSync(tmpPath)) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // ignore cleanup error
+      }
+    }
     const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
     if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
-      console.warn(`[Questie] QuestieDB download failed (${err.message}); falling back to cached questie-db-forever.zip.`);
+      console.warn(`[Questie] QuestieDB refresh/load failed (${err.message}); falling back to cached questie-db-forever.zip.`);
       dbBuf = fs.readFileSync(dbCachePath);
+      await zip.loadAsync(dbBuf);
     } else {
       throw err;
     }
   }
-
-  const zip = await JSZip.loadAsync(coreBuf);
-  await patchQuestie(zip);
-  await zip.loadAsync(dbBuf);
   await patchQuestieDB(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });

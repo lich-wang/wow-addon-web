@@ -2417,9 +2417,12 @@ function buildZoneQuestsIndex(questiePrereqs) {
       let rootMin = info.minLevel || info.level || 1;
       let rootLv = info.level || info.minLevel || 1;
       let maxLv = info.level || info.minLevel || 1;
-      const visited = new Set([qid]);
+      const bestDepth = new Map();
       const walkBack = (curId, depth) => {
         if (depth >= 12) return;
+        const prevDepth = bestDepth.get(curId);
+        if (prevDepth !== undefined && prevDepth <= depth) return;
+        bestDepth.set(curId, depth);
         const cur = questiePrereqs.get(curId);
         if (!cur) return;
         const curMin = cur.minLevel || cur.level || 1;
@@ -2434,8 +2437,7 @@ function buildZoneQuestsIndex(questiePrereqs) {
               ? cur.preSingle.map(pid => Math.abs(Number(pid) || 0)).filter(Boolean)
               : [];
         for (const pid of preIds) {
-          if (!pid || visited.has(pid)) continue;
-          visited.add(pid);
+          if (!pid) continue;
           walkBack(pid, depth + 1);
         }
       };
@@ -2502,7 +2504,10 @@ function annotateDatasetPrereqs(dataset, questiePrereqs) {
   for (const c of Object.values(dataset.classes || {})) {
     annotateQuestList(c.classRuns);
   }
-  dataset.zoneQuests = buildZoneQuestsIndex(questiePrereqs);
+  const builtZoneQuests = buildZoneQuestsIndex(questiePrereqs);
+  if (Object.keys(builtZoneQuests).length > 0) {
+    dataset.zoneQuests = builtZoneQuests;
+  }
   return dataset;
 }
 
@@ -6196,8 +6201,31 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
       local cand = CloneZoneQuestCandidate(q)
 
       if not cand._zoneIneligible then
+        local cleanZone = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
         local matchedStep = nil
+        local matchedStarter = nil
         local acceptLv = nil
+        local function checkStepInZone(stObj, curMin, curLv)
+          if curMin > lvl or curLv < minOkLv or curLv > maxOkLv then
+            return false
+          end
+          local mId = tonumber(stObj and stObj.id)
+          local started = mId and _G.QuestDB and _G.QuestDB.startedBy and _G.QuestDB.startedBy(mId)
+          local zoneStarter = started and (ResolveQuestieNpc(started[1], cleanZone) or ResolveQuestieObject(started[2], cleanZone)) or nil
+          local mInfo = mId and GetQuestieQuestInfo(mId) or nil
+          local mZone = (zoneStarter and zoneStarter.zone ~= "" and zoneStarter.zone)
+            or (stObj.zone and stObj.zone ~= "" and stObj.zone)
+            or (mInfo and mInfo.zone) or ""
+          local inThisZone = (mZone == "" or mZone == cleanZone or (mId and IsQuestActiveById(mId)))
+          if not inThisZone then
+            return false
+          end
+          matchedStep = stObj
+          matchedStarter = (zoneStarter and zoneStarter.zone == cleanZone) and zoneStarter or nil
+          acceptLv = curMin
+          return true
+        end
+
         if type(cand.steps) == "table" and #cand.steps > 0 then
           for _, st in ipairs(cand.steps) do
             local sid = tonumber(st and st.id)
@@ -6205,9 +6233,7 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
               local stInfo = GetQuestieQuestInfo(sid)
               local curMin = (stInfo and stInfo.minLevel) or st.level or cand.min
               local curLv = (stInfo and stInfo.level) or st.level or cand.lv
-              if curMin <= lvl and curLv >= minOkLv and curLv <= maxOkLv then
-                matchedStep = st
-                acceptLv = curMin
+              if checkStepInZone(st, curMin, curLv) then
                 break
               end
             end
@@ -6216,31 +6242,15 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
           if IsZoneStepUnlocked({ id = cand.id }) then
             local curMin = cand.minLevel or cand.min
             local curLv = cand.level or cand.lv
-            if curMin <= lvl and curLv >= minOkLv and curLv <= maxOkLv then
-              matchedStep = cand
-              acceptLv = curMin
-            end
+            checkStepInZone(cand, curMin, curLv)
           end
         end
 
         if matchedStep then
-          local mId = tonumber(matchedStep.id)
-          local cleanZone = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
-          local started = mId and _G.QuestDB and _G.QuestDB.startedBy and _G.QuestDB.startedBy(mId)
-          local zoneStarter = started and (ResolveQuestieNpc(started[1], cleanZone) or ResolveQuestieObject(started[2], cleanZone)) or nil
-          local mInfo = mId and GetQuestieQuestInfo(mId) or nil
-          local mZone = (zoneStarter and zoneStarter.zone ~= "" and zoneStarter.zone)
-            or (matchedStep.zone and matchedStep.zone ~= "" and matchedStep.zone)
-            or (mInfo and mInfo.zone) or ""
-          local inThisZone = (mZone == "" or mZone == cleanZone or (mId and IsQuestActiveById(mId)))
-          if inThisZone then
-            if zoneStarter and zoneStarter.zone == cleanZone then
-              cand._matchedStarter = zoneStarter
-            end
-            cand._matchedStep = matchedStep
-            cand._acceptLv = acceptLv
-            table.insert(candidates, cand)
-          end
+          cand._matchedStarter = matchedStarter
+          cand._matchedStep = matchedStep
+          cand._acceptLv = acceptLv
+          table.insert(candidates, cand)
         end
       end
     end
@@ -8218,6 +8228,7 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("UPDATE_FACTION")
+pcall(eventFrame.RegisterEvent, eventFrame, "BAG_UPDATE_DELAYED")
 for _, questEv in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_LOG_UPDATE" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, questEv)
 end
@@ -8265,7 +8276,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
-  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
+  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" or event == "UPDATE_FACTION" or event == "BAG_UPDATE_DELAYED" then
     SyncPlayerCharacter()
     RefreshUI(true)
   else
