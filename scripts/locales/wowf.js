@@ -2106,6 +2106,9 @@ async function loadQuestiePrereqs(cacheDir) {
         } else if (field === '28' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).breadcrumbs = val.map(Number).filter(Boolean);
         } else if (field === 'S' && val && typeof val === 'object') {
+          if (val[6] != null && (typeof val[6] !== 'number' || !Number.isSafeInteger(val[6]) || val[6] < 0)) {
+            continue;
+          }
           const entry = getOrCreate(qid);
           if (typeof val[1] === 'string') entry.name = val[1];
           if (typeof val[4] === 'number') entry.minLevel = val[4];
@@ -2430,10 +2433,14 @@ function buildZoneQuestsIndex(questiePrereqs) {
 }
 
 export async function hasValidZoneQuestsIndex(cacheDir) {
-  const prereqs = await loadQuestiePrereqs(cacheDir);
-  if (!prereqs || prereqs.size === 0) return false;
-  const index = buildZoneQuestsIndex(prereqs);
-  return Object.keys(index).length > 0;
+  try {
+    const prereqs = await loadQuestiePrereqs(cacheDir);
+    if (!prereqs || prereqs.size === 0) return false;
+    const index = buildZoneQuestsIndex(prereqs);
+    return Object.keys(index).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function annotateDatasetPrereqs(dataset, questiePrereqs) {
@@ -6008,7 +6015,7 @@ local function CloneZoneQuestCandidate(q)
         local sid = tonumber(st and st.id)
         if sid and not ineligibleIds[sid] then
           local blocked = false
-          if st.preId and blockingIneligibleIds[tonumber(st.preId)] then
+          if st.preId and blockingIneligibleIds[tonumber(st.preId)] and not IsGroupPrereqItemSatisfied(st.preId) then
             blocked = true
           elseif type(st.reqAll) == "table" then
             for _, pid in ipairs(st.reqAll) do

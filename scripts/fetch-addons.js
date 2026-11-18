@@ -539,7 +539,14 @@ async function ensureValidQuestieDBCache() {
   if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR)) {
     return;
   }
-  const prevBuf = fs.existsSync(dbCachePath) ? fs.readFileSync(dbCachePath) : null;
+  let prevBuf = null;
+  try {
+    if (fs.existsSync(dbCachePath)) {
+      prevBuf = fs.readFileSync(dbCachePath);
+    }
+  } catch {
+    prevBuf = null;
+  }
   try {
     if (fs.existsSync(dbCachePath)) {
       fs.unlinkSync(dbCachePath);
@@ -550,7 +557,11 @@ async function ensureValidQuestieDBCache() {
     }
   } catch (err) {
     if (prevBuf && !fs.existsSync(dbCachePath)) {
-      fs.writeFileSync(dbCachePath, prevBuf);
+      try {
+        fs.writeFileSync(dbCachePath, prevBuf);
+      } catch {
+        // ignore restore error
+      }
     }
     if (hasCachedZoneQuestsSnapshot()) {
       console.warn(`[WoWF] QuestieDB refresh failed (${err.message}); falling back to cached zoneQuests snapshot.`);
