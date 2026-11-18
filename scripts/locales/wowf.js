@@ -2083,21 +2083,59 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
           zoneOrSort: 0,
           requiredSkill: null,
           nextQuest: 0,
+          starterNpcIds: null,
+          starterObjIds: null,
+          starterAreas: null,
         };
         dbMap.set(qid, entry);
       }
       return entry;
     };
+    const npcAreas = new Map();
+    const objAreas = new Map();
+    const addAreas = (map, eid, aids) => {
+      let set = map.get(eid);
+      if (!set) {
+        set = new Set();
+        map.set(eid, set);
+      }
+      for (const aid of aids) {
+        const n = Number(aid);
+        if (n > 0) set.add(n);
+      }
+    };
     for (const line of toc.split(/\r?\n/)) {
-      const m = line.match(/^## X-Quest-(\d+)-(12|13|18|28|S):\s*(.+)$/);
+      const m = line.match(/^## X-(Quest|Npc|Object)-(\d+)-(2|7|12|13|18|28|S):\s*(.+)$/);
       if (!m) continue;
-      const qid = Number(m[1]);
-      const field = m[2];
-      const raw = m[3].trim();
+      const kind = m[1];
+      const entityId = Number(m[2]);
+      const field = m[3];
+      const raw = m[4].trim();
       if (!raw || raw.startsWith('~')) continue;
       try {
         const val = decodeCborValue(Buffer.from(raw, 'base64'));
-        if (field === '13' && Array.isArray(val) && val.length > 0) {
+        if (kind === 'Npc') {
+          if (field === '7' && val && typeof val === 'object') {
+            addAreas(npcAreas, entityId, Object.keys(val));
+          } else if (field === 'S' && val && typeof val === 'object' && typeof val[9] === 'number' && val[9] > 0) {
+            addAreas(npcAreas, entityId, [val[9]]);
+          }
+          continue;
+        }
+        if (kind === 'Object') {
+          if (field === '2' && val && typeof val === 'object') {
+            addAreas(objAreas, entityId, Object.keys(val));
+          } else if (field === 'S' && val && typeof val === 'object' && typeof val[4] === 'number' && val[4] > 0) {
+            addAreas(objAreas, entityId, [val[4]]);
+          }
+          continue;
+        }
+        const qid = entityId;
+        if (field === '2' && Array.isArray(val)) {
+          const entry = getOrCreate(qid);
+          if (Array.isArray(val[0]) && val[0].length > 0) entry.starterNpcIds = val[0].map(Number).filter(Boolean);
+          if (Array.isArray(val[1]) && val[1].length > 0) entry.starterObjIds = val[1].map(Number).filter(Boolean);
+        } else if (field === '13' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).preSingle = val.map(Number).filter(Boolean);
         } else if (field === '12' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).preGroup = val.map(Number).filter(Boolean);
@@ -2121,6 +2159,20 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
         }
       } catch {
         // 忽略单条损坏的 CBOR 记录
+      }
+    }
+    for (const entry of dbMap.values()) {
+      const areas = new Set();
+      for (const nid of entry.starterNpcIds || []) {
+        const s = npcAreas.get(nid);
+        if (s) for (const aid of s) areas.add(aid);
+      }
+      for (const oid of entry.starterObjIds || []) {
+        const s = objAreas.get(oid);
+        if (s) for (const aid of s) areas.add(aid);
+      }
+      if (areas.size > 0) {
+        entry.starterAreas = areas;
       }
     }
   } catch {
@@ -2327,7 +2379,17 @@ function buildZoneQuestsIndex(questiePrereqs) {
     const areaSet = new Set(areaIds);
     const list = [];
     for (const [qid, info] of questiePrereqs.entries()) {
-      if (areaSet.has(info.zoneOrSort) && !info.repeatable && !info.classes && !info.requiredSkill) {
+      const matchesZoneOrSort = areaSet.has(info.zoneOrSort);
+      let matchesStarterArea = false;
+      if (!matchesZoneOrSort && info.starterAreas) {
+        for (const aid of info.starterAreas) {
+          if (areaSet.has(aid)) {
+            matchesStarterArea = true;
+            break;
+          }
+        }
+      }
+      if ((matchesZoneOrSort || matchesStarterArea) && !info.repeatable && !info.classes && !info.requiredSkill) {
         list.push([qid, info]);
       }
     }
@@ -6044,6 +6106,12 @@ local function IsZoneStepUnlocked(st)
   if _G.QuestDB and _G.QuestDB.breadcrumbForQuestId then
     local targetQid = _G.QuestDB.breadcrumbForQuestId(sid)
     if type(targetQid) == "number" and targetQid > 0 and (IsQuestCompletedById(targetQid) or IsQuestActiveById(targetQid)) then
+      return false
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.availableUntilCompleted then
+    local closingQid = _G.QuestDB.availableUntilCompleted(sid)
+    if type(closingQid) == "number" and closingQid > 0 and IsQuestCompletedById(closingQid) then
       return false
     end
   end

@@ -520,15 +520,16 @@ function makeTempQuestieDBFilename() {
 }
 
 async function downloadQuestieDBForever(cacheFilename = makeTempQuestieDBFilename(), deadlineMs = 30000) {
-  const signal = AbortSignal.timeout(deadlineMs);
+  const releaseTimeoutMs = Math.min(8000, Math.floor(deadlineMs * 0.3));
+  const downloadTimeoutMs = Math.max(5000, deadlineMs - releaseTimeoutMs);
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
   const latestDB = await getLatestGitHubRelease(
     'Questie/QuestieDB',
     name => name.includes('Forever') && name.endsWith('.zip'),
-    signal
+    AbortSignal.timeout(releaseTimeoutMs)
   );
   if (latestDB?.url) dbUrl = latestDB.url;
-  const dbBuf = await downloadBuffer(dbUrl, cacheFilename, undefined, signal);
+  const dbBuf = await downloadBuffer(dbUrl, cacheFilename, undefined, AbortSignal.timeout(downloadTimeoutMs));
   return { dbUrl, dbBuf, cacheFilename };
 }
 
@@ -600,9 +601,17 @@ async function processQuestieForever() {
   try {
     const res = await downloadQuestieDBForever(tmpFilename);
     dbUrl = res.dbUrl;
+    const candidateZip = await JSZip.loadAsync(res.dbBuf);
+    const tocFile =
+      candidateZip.file('QuestieDB/QuestieDB_Forever.toc') || candidateZip.file('QuestieDB/QuestieDB_Camelot.toc');
+    if (!tocFile) {
+      throw new Error('Downloaded QuestieDB archive is missing QuestieDB TOC.');
+    }
+    await tocFile.async('string');
+    if (!(await promoteValidQuestieDBTemp(tmpFilename))) {
+      throw new Error('Downloaded QuestieDB archive produced an empty zoneQuests index.');
+    }
     dbBuf = res.dbBuf;
-    await zip.loadAsync(dbBuf);
-    await promoteValidQuestieDBTemp(tmpFilename);
   } catch (err) {
     const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
     if (fs.existsSync(tmpPath)) {
@@ -614,13 +623,13 @@ async function processQuestieForever() {
     }
     const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
     if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
-      console.warn(`[Questie] QuestieDB refresh/load failed (${err.message}); falling back to cached questie-db-forever.zip.`);
+      console.warn(`[Questie] QuestieDB refresh/validation failed (${err.message}); falling back to cached questie-db-forever.zip.`);
       dbBuf = fs.readFileSync(dbCachePath);
-      await zip.loadAsync(dbBuf);
     } else {
       throw err;
     }
   }
+  await zip.loadAsync(dbBuf);
   await patchQuestieDB(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
