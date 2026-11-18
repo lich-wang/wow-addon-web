@@ -4651,6 +4651,14 @@ local function DedupeQuestieQuests(quests)
     end
     return true
   end
+  local function hasNavInfo(entry)
+    if type(entry) ~= "table" then return false end
+    if entry.x ~= nil and entry.y ~= nil then return true end
+    if type(entry.steps) == "table" and entry.steps[1] and entry.steps[1].x ~= nil and entry.steps[1].y ~= nil then
+      return true
+    end
+    return false
+  end
   local out = {}
   for i, q in ipairs(list) do
     local ids = {}
@@ -4661,7 +4669,8 @@ local function DedupeQuestieQuests(quests)
     end
     local redundant = false
     for j, other in ipairs(list) do
-      if i ~= j and (other.faction == q.faction or other.faction == "both") and classesCover(other, q) then
+      local factionCovers = (other.faction == q.faction) or (other.faction == "both" and ((not hasNavInfo(q)) or hasNavInfo(other)))
+      if i ~= j and factionCovers and classesCover(other, q) then
         local oIds = {}
         if type(other.steps) == "table" and #other.steps > 0 then
           for _, st in ipairs(other.steps) do table.insert(oIds, tonumber(st.id)) end
