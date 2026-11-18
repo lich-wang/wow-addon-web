@@ -346,7 +346,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     voiceState.status === 'connected' &&
     !voiceState.listenOnly &&
     micProcessing.noiseSuppression &&
-    (micProcessing.echoCancellationActive === false || micProcessing.noiseSuppressionActive === false);
+    micProcessing.noiseSuppressionActive === false;
   const selfAudioLevel = voiceState.participants.find((participant) => participant.isSelf)?.audioLevel ?? 0;
   const roomOutputDeviceId = pendingOutputDeviceId ?? voiceState.selectedOutputDeviceId;
   const hasResolvedOutputIds = audioOutputs.some((device) => Boolean(device.deviceId));
@@ -806,30 +806,34 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
             <label
               className="inline-flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none"
-              title="没戴耳机时，队友说话期间自动闭麦，避免扬声器里的声音被麦克风收进去再传回队友；戴耳机可关闭"
+              title="用正在播放的队友语音做参考，把麦克风里的回声减掉；外放时也不会把自己的声音送回队友"
             >
               <input
                 type="checkbox"
-                checked={micProcessing.echoGuardActive}
-                onChange={(e) => void onSetMicProcessing({ echoGuard: e.target.checked ? 'on' : 'off' })}
-                className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-950 text-amber-500 accent-amber-500 focus:ring-amber-500"
+                checked={micProcessing.echoCanceller}
+                disabled={voiceState.listenOnly}
+                onChange={(e) => void onSetMicProcessing({ echoCanceller: e.target.checked })}
+                className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-950 text-amber-500 accent-amber-500 focus:ring-amber-500 disabled:opacity-40"
               />
-              <span>
-                外放免回声
-                {micProcessing.echoGuard === 'auto' && <span className="text-slate-500">（自动）</span>}
-              </span>
+              <span>回声消除</span>
             </label>
 
-            {micProcessing.echoGuardMuted && (
-              <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
-                <MicOff className="w-3 h-3" />
-                检测到扬声器声音，麦克风已暂时静音
-              </span>
-            )}
+            {voiceState.status === 'connected' &&
+              !voiceState.listenOnly &&
+              micProcessing.echoCanceller &&
+              !micProcessing.echoCancellerActive && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300"
+                  title={micProcessing.echoCancellerError ?? undefined}
+                >
+                  <AlertTriangle className="w-3 h-3" />
+                  {micProcessing.echoCancellerError ? '回声消除加载失败' : '回声消除未生效'}
+                </span>
+              )}
             {micProcessingUnsupported && (
               <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
                 <AlertTriangle className="w-3 h-3" />
-                当前设备未提供降噪/回声消除，建议佩戴耳机
+                当前设备未提供降噪，建议佩戴耳机
               </span>
             )}
           </div>
