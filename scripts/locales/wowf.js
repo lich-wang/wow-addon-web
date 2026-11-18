@@ -2429,6 +2429,13 @@ function buildZoneQuestsIndex(questiePrereqs) {
   return out;
 }
 
+export async function hasValidZoneQuestsIndex(cacheDir) {
+  const prereqs = await loadQuestiePrereqs(cacheDir);
+  if (!prereqs || prereqs.size === 0) return false;
+  const index = buildZoneQuestsIndex(prereqs);
+  return Object.keys(index).length > 0;
+}
+
 function annotateDatasetPrereqs(dataset, questiePrereqs) {
   if (!dataset || !questiePrereqs || questiePrereqs.size === 0) return dataset;
   const annotateQuestList = list => {
@@ -5938,6 +5945,12 @@ local function IsZoneStepUnlocked(st)
       return false
     end
   end
+  if _G.QuestDB and _G.QuestDB.nextQuestInChain then
+    local nextQ = _G.QuestDB.nextQuestInChain(sid)
+    if type(nextQ) == "number" and nextQ > 0 and (IsQuestCompletedById(nextQ) or IsQuestActiveById(nextQ)) then
+      return false
+    end
+  end
   if _G.QuestDB then
     local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(sid)
     if type(preG) == "table" and #preG > 0 then
@@ -5999,7 +6012,8 @@ local function CloneZoneQuestCandidate(q)
             blocked = true
           elseif type(st.reqAll) == "table" then
             for _, pid in ipairs(st.reqAll) do
-              if blockingIneligibleIds[math.abs(tonumber(pid) or 0)] then
+              local absPid = math.abs(tonumber(pid) or 0)
+              if blockingIneligibleIds[absPid] and not IsGroupPrereqItemSatisfied(pid) then
                 blocked = true
                 break
               end

@@ -7,7 +7,7 @@ import { patchBagnon } from './locales/bagnon.js';
 import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import { patchMapzeroth } from './locales/mapzeroth.js';
-import { buildWoWFAddon } from './locales/wowf.js';
+import { buildWoWFAddon, hasValidZoneQuestsIndex } from './locales/wowf.js';
 import { buildForeverTransitAddon } from './locales/foreverTransit.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
@@ -523,26 +523,40 @@ async function downloadQuestieDBForever() {
   return { dbUrl, dbBuf };
 }
 
+function hasCachedZoneQuestsSnapshot() {
+  const snapshotPath = path.join(UPSTREAM_CACHE_DIR, 'wowf-dataset.json');
+  if (!fs.existsSync(snapshotPath)) return false;
+  try {
+    const data = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+    return Boolean(data?.zoneQuests && Object.keys(data.zoneQuests).length > 0);
+  } catch {
+    return false;
+  }
+}
+
 async function ensureValidQuestieDBCache() {
   const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
-  let valid = false;
-  if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
-    try {
-      const zip = await JSZip.loadAsync(fs.readFileSync(dbCachePath));
-      const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
-      if (tocFile) {
-        const toc = await tocFile.async('string');
-        valid = /^## X-Quest-\d+-S:/m.test(toc);
-      }
-    } catch {
-      valid = false;
-    }
+  if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR)) {
+    return;
   }
-  if (!valid) {
+  const prevBuf = fs.existsSync(dbCachePath) ? fs.readFileSync(dbCachePath) : null;
+  try {
     if (fs.existsSync(dbCachePath)) {
       fs.unlinkSync(dbCachePath);
     }
     await downloadQuestieDBForever();
+    if (!(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR))) {
+      throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
+    }
+  } catch (err) {
+    if (prevBuf && !fs.existsSync(dbCachePath)) {
+      fs.writeFileSync(dbCachePath, prevBuf);
+    }
+    if (hasCachedZoneQuestsSnapshot()) {
+      console.warn(`[WoWF] QuestieDB refresh failed (${err.message}); falling back to cached zoneQuests snapshot.`);
+      return;
+    }
+    throw err;
   }
 }
 
