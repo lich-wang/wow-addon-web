@@ -663,7 +663,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           <button
             onClick={onToggleMute}
             disabled={voiceState.listenOnly}
-            title={voiceState.listenOnly ? '当前为仅收听模式' : voiceState.isMuted ? '取消静音' : '麦克风静音'}
+            title={voiceState.listenOnly ? '当前为仅收听模式' : voiceState.isMuted ? '取消闭麦（恢复麦克风）' : '闭麦（关闭麦克风）'}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
               voiceState.isMuted || voiceState.listenOnly
                 ? 'bg-rose-500/15 border border-rose-500/40 text-rose-300 hover:bg-rose-500/25'
@@ -671,12 +671,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             }`}
           >
             {voiceState.isMuted || voiceState.listenOnly ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-            <span>{voiceState.listenOnly ? '仅收听' : voiceState.isMuted ? '已静音' : '麦克风开启'}</span>
+            <span>{voiceState.listenOnly ? '仅收听' : voiceState.isMuted ? '已闭麦' : '麦克风开启'}</span>
           </button>
 
           <button
             onClick={onToggleDeafen}
-            title={voiceState.isDeafened ? '恢复收听' : '全部闭麦（静音他人）'}
+            title={voiceState.isDeafened ? '打开扬声器（恢复收听）' : '关闭扬声器（静音他人语音）'}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 cursor-pointer transition-colors ${
               voiceState.isDeafened
                 ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30'
@@ -684,7 +684,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             }`}
           >
             {voiceState.isDeafened ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-            <span>{voiceState.isDeafened ? '已闭麦' : '扬声器正常'}</span>
+            <span>{voiceState.isDeafened ? '扬声器已关' : '扬声器开启'}</span>
           </button>
 
           <button
@@ -890,12 +890,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                         ) : p.isMuted ? (
                           <span className="text-rose-400 flex items-center space-x-1">
                             <MicOff className="w-3 h-3" />
-                            <span>已静音</span>
+                            <span>已闭麦</span>
                           </span>
                         ) : p.isDeafened ? (
                           <span className="text-amber-400 flex items-center space-x-1">
                             <VolumeX className="w-3 h-3" />
-                            <span>已闭麦</span>
+                            <span>扬声器已关</span>
                           </span>
                         ) : !p.isSelf && !p.hasAudioStream ? (
                           <span className="text-slate-500">仅收听 / 建立音频中</span>

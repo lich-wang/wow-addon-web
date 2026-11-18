@@ -46,7 +46,7 @@ export const VoiceMiniBar: React.FC<VoiceMiniBarProps> = ({
       <button
         onClick={onToggleMute}
         disabled={voiceState.listenOnly}
-        title={voiceState.listenOnly ? '仅收听模式' : voiceState.isMuted ? '取消静音' : '静音'}
+        title={voiceState.listenOnly ? '仅收听模式' : voiceState.isMuted ? '取消闭麦' : '闭麦'}
         className={`p-2 rounded-xl transition-colors cursor-pointer disabled:opacity-40 ${
           voiceState.isMuted || voiceState.listenOnly
             ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25'
