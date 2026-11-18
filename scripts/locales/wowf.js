@@ -2171,6 +2171,8 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
           getOrCreate(qid).preGroup = val.map(Number).filter(Boolean);
         } else if (field === '18' && val != null) {
           getOrCreate(qid).requiredSkill = val;
+        } else if (field === '35' && Array.isArray(val) && val.length > 0) {
+          getOrCreate(qid).requiredSkill = val;
         } else if (field === '28' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).breadcrumbs = val.map(Number).filter(Boolean);
         } else if (field === 'S' && val && typeof val === 'object') {
@@ -2187,6 +2189,9 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
           if (typeof val[17] === 'number') entry.zoneOrSort = val[17];
           if (typeof val[22] === 'number') entry.nextQuest = val[22];
           if (Number(val[24]) & 1) entry.repeatable = true;
+          if ((typeof val[31] === 'number' && val[31] > 0) || (Array.isArray(val[35]) && val[35].length > 0)) {
+            entry.requiredSkill = val[31] || val[35];
+          }
         }
       } catch {
         parseErrors++;
@@ -2195,7 +2200,7 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
 
     const sharded = new Map();
     for (const line of toc.split(/\r?\n/)) {
-      const m = line.match(/^## X-(Quest|Npc|Object)-(\d+)-(2|4|7|12|13|18|28|S)(?:-(\d+))?:\s*(.+)$/);
+      const m = line.match(/^## X-(Quest|Npc|Object)-(\d+)-(2|4|7|12|13|18|28|35|S)(?:-(\d+))?:\s*(.+)$/);
       if (!m) continue;
       const kind = m[1];
       const entityId = Number(m[2]);
@@ -4865,12 +4870,15 @@ local function ResolveSingleQuestieEntity(entityId, db, cache)
       end
     end
   end
+  if not areaId and type(prefZoneId) == "number" and prefZoneId > 0 then
+    areaId = prefZoneId
+  end
   local zoneName = ""
   if areaId and C_Map and C_Map.GetAreaInfo then
     local ok, z = pcall(C_Map.GetAreaInfo, areaId)
     if ok and type(z) == "string" then zoneName = z end
   end
-  if name == "" and not x then
+  if name == "" and not x and not areaId then
     cache[entityId] = false
     return nil
   end
@@ -6216,6 +6224,10 @@ local function IsQuestEligibleForZoneChain(qid)
   if type(reqCls) == "number" and reqCls > 0 then return false end
   local reqSkill = _G.QuestDB.requiredSkill and _G.QuestDB.requiredSkill(id)
   if type(reqSkill) == "table" and tonumber(reqSkill[1]) and tonumber(reqSkill[1]) > 0 then return false end
+  local reqSpec = _G.QuestDB.requiredSpecialization and _G.QuestDB.requiredSpecialization(id)
+  if type(reqSpec) == "number" and reqSpec > 0 then return false end
+  local reqRanks = _G.QuestDB.requiredRanks and _G.QuestDB.requiredRanks(id)
+  if type(reqRanks) == "table" and #reqRanks > 0 then return false end
   local sFlags = _G.QuestDB.specialFlags and _G.QuestDB.specialFlags(id)
   if type(sFlags) == "number" and bit and bit.band and bit.band(sFlags, 1) ~= 0 then return false end
   local reqRaces = _G.QuestDB.requiredRaces and _G.QuestDB.requiredRaces(id)
@@ -7401,6 +7413,8 @@ local function RenderTabRoutes()
     end
   end
 
+  local shownZoneCards = 0
+  local shownZoneNames = {}
   for _, entry in ipairs(orderedBands) do
     local b = entry.band
     local stepIdx = entry.idx
@@ -7573,11 +7587,10 @@ local function RenderTabRoutes()
     end
 
     -- 为当前等级所在阶段的多个适龄区域分别展示任务链形式的适合可接任务（已全部完成过滤，部分完成自动折叠前置）
-    if isCurrent then
-      local shownZoneCards = 0
+    if isCurrent and shownZoneCards < 6 then
       for _, zInfo in ipairs(CollectBandZoneInfos(b, lvl)) do
         if shownZoneCards >= 6 then break end
-        if zInfo.from <= lvl and lvl <= zInfo.to then
+        if zInfo.from <= lvl and lvl <= zInfo.to and not shownZoneNames[zInfo.zone] then
           local groups = GetZoneSuitableQuestChains(zInfo.zone, lvl)
           if #groups > 0 then
             local zoneSearchBlob = (zInfo.zone or "") .. " " .. (zInfo.hub or "") .. " " .. (zInfo.note or "")
@@ -7592,6 +7605,7 @@ local function RenderTabRoutes()
               end
             end
             if MatchesSearch(zoneSearchBlob) then
+              shownZoneNames[zInfo.zone] = true
               shownZoneCards = shownZoneCards + 1
               local zLines = {}
               if zInfo.note and zInfo.note ~= "" then
