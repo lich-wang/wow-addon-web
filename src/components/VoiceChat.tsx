@@ -738,8 +738,8 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             )}
 
             {showOutputSwitcher && (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-1.5">
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <select
                     aria-label="切换输出设备"
                     value={roomOutputDeviceId}
@@ -747,7 +747,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                     onChange={(e) => {
                       void handleSwitchOutputChange(e.target.value);
                     }}
-                    className="w-60 max-w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
+                    className="w-60 min-w-0 max-w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50 disabled:opacity-50"
                   >
                     <option value="">输出：默认</option>
                     {isRoomOutputMissing && (
