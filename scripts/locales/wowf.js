@@ -2947,19 +2947,18 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     if (!dungeon) continue;
 
     const builtQuests = [];
-    const seenFlowKey = new Set();
+    const seenQuestKey = new Set();
 
     const buildEntry = (q, sideData, factionOverride) => {
       const flow = buildEffectiveFlow(q, sideData, questiePrereqs, questCache);
       const selfIdx = flow.findIndex(st => st.self || st.id === q.id);
       const hasPrereq = selfIdx > 0;
 
-      // 若同一副本中已有同一条任务链的条目，避免重复展示
-      if (flow.length > 1) {
-        const flowKey = `${factionOverride}:${flow.map(st => st.id).join('-')}`;
-        if (seenFlowKey.has(flowKey)) return null;
-        seenFlowKey.add(flowKey);
-      }
+      // 同一副本内仅对同一任务（同 ID + 同阵营）去重；
+      // 同属一条 wowf.io 任务链（flow）的并行分支任务需保留，交由 QuestieDB 解析与前缀分组展示。
+      const questKey = `${factionOverride}:${q.id}`;
+      if (seenQuestKey.has(questKey)) return null;
+      seenQuestKey.add(questKey);
 
       const steps =
         flow.length > 1
@@ -5216,37 +5215,235 @@ local function DedupeQuestieQuests(quests)
     ResolveQuestChainFromQuestieDB(q)
     table.insert(list, q)
   end
+  local function classesCover(holder, target)
+    local hCls = type(holder) == "table" and holder.classes or nil
+    if type(hCls) ~= "table" or #hCls == 0 then
+      return true
+    end
+    local tCls = type(target) == "table" and target.classes or nil
+    if type(tCls) ~= "table" or #tCls == 0 then
+      return false
+    end
+    local hSet = {}
+    for _, c in ipairs(hCls) do hSet[c] = true end
+    for _, c in ipairs(tCls) do
+      if not hSet[c] then return false end
+    end
+    return true
+  end
+  local function sameStepDeps(s1, s2)
+    if not s1 or not s2 then return s1 == s2 end
+    if s1.preId ~= s2.preId then return false end
+    local r1, r2 = s1.reqAll, s2.reqAll
+    if type(r1) ~= "table" and type(r2) ~= "table" then return true end
+    if type(r1) ~= "table" or type(r2) ~= "table" or #r1 ~= #r2 then return false end
+    for idx = 1, #r1 do
+      if r1[idx] ~= r2[idx] then return false end
+    end
+    return true
+  end
+  local function stepPickupCovers(hStep, tStep, hFallbackZone, tFallbackZone)
+    if type(tStep) ~= "table" then return true end
+    local tHasNpc = (tStep.npc and tStep.npc ~= "")
+    local tHasPlace = (tStep.place and tStep.place ~= "")
+    local tHasCoords = (tStep.x ~= nil and tStep.y ~= nil)
+    local tz = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
+    if not tHasNpc and not tHasPlace and not tHasCoords and tz == "" then return true end
+    if type(hStep) ~= "table" then return false end
+    if tHasNpc and (hStep.npc or "") ~= tStep.npc then
+      return false
+    end
+    if tHasPlace and (hStep.place or "") ~= tStep.place then
+      return false
+    end
+    local hz = (hStep.zone and hStep.zone ~= "") and hStep.zone or (hFallbackZone or "")
+    if tz ~= "" and hz ~= tz then
+      return false
+    end
+    if tHasCoords then
+      if hStep.x == nil or hStep.y == nil then
+        return false
+      end
+      if hStep.x ~= tStep.x or hStep.y ~= tStep.y then
+        return false
+      end
+    end
+    return true
+  end
+  local function stepTurninCovers(hStep, tStep, hFallbackZone, tFallbackZone)
+    if type(tStep) ~= "table" then return true end
+    local tPickupZone = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
+    local tEndZone = (tStep.endZone and tStep.endZone ~= "") and tStep.endZone or tPickupZone
+    local tHasEnd = (tStep.endNpc and tStep.endNpc ~= "") and (tStep.endNpc ~= tStep.npc or tEndZone ~= tPickupZone or tStep.endX ~= tStep.x or tStep.endY ~= tStep.y)
+    if not tHasEnd then return true end
+    if type(hStep) ~= "table" then return false end
+    local hPickupZone = (hStep.zone and hStep.zone ~= "") and hStep.zone or (hFallbackZone or "")
+    local hEndZone = (hStep.endZone and hStep.endZone ~= "") and hStep.endZone or hPickupZone
+    local hHasEnd = (hStep.endNpc and hStep.endNpc ~= "") and (hStep.endNpc ~= hStep.npc or hEndZone ~= hPickupZone or hStep.endX ~= hStep.x or hStep.endY ~= hStep.y)
+    if not hHasEnd then return false end
+    if hStep.endNpc ~= tStep.endNpc then return false end
+    if tEndZone ~= "" and hEndZone ~= tEndZone then return false end
+    if tStep.endX ~= nil and tStep.endY ~= nil then
+      if hStep.endX ~= tStep.endX or hStep.endY ~= tStep.endY then return false end
+    end
+    return true
+  end
+  local function navCovers(holder, target, targetOffset)
+    local hFallbackZone = holder.zone or ""
+    local tFallbackZone = target.zone or ""
+    if type(holder.steps) == "table" and type(target.steps) == "table" then
+      local off = targetOffset or 0
+      for k = 1, #holder.steps do
+        local hs = holder.steps[k]
+        local ts = target.steps[off + k]
+        if (not stepPickupCovers(hs, ts, hFallbackZone, tFallbackZone)) or (not stepTurninCovers(hs, ts, hFallbackZone, tFallbackZone)) then
+          return false
+        end
+      end
+      return true
+    end
+    local hs = (type(holder.steps) == "table" and holder.steps[#holder.steps]) or holder
+    local ts = (type(target.steps) == "table" and target.steps[#target.steps]) or target
+    return stepPickupCovers(hs, ts, hFallbackZone, tFallbackZone) and stepTurninCovers(hs, ts, hFallbackZone, tFallbackZone)
+  end
+  local function areOmittedStepsBreadcrumbs(ids, offset, qSteps)
+    if not (_G.QuestDB and _G.QuestDB.breadcrumbs) then return false end
+    local omittedSet = {}
+    for k = 1, offset do
+      if IsQuestActiveById(ids[k]) then return false end
+      omittedSet[ids[k]] = true
+      local prevId = ids[k]
+      local nextId = ids[k + 1]
+      local bcs = nextId and _G.QuestDB.breadcrumbs(nextId) or nil
+      local found = false
+      if type(bcs) == "table" then
+        for _, bcId in ipairs(bcs) do
+          if tonumber(bcId) == prevId then
+            found = true
+            break
+          end
+        end
+      end
+      if not found then return false end
+    end
+    if type(qSteps) == "table" then
+      for k = offset + 1, #qSteps do
+        local st = qSteps[k]
+        if st then
+          if type(st.reqAll) == "table" then
+            for _, rid in ipairs(st.reqAll) do
+              if omittedSet[tonumber(rid)] then return false end
+            end
+          end
+          local sid = tonumber(st.id)
+          local qInfo = sid and GetQuestieQuestInfo(sid) or nil
+          if qInfo then
+            if type(qInfo.preSingle) == "table" then
+              for _, pid in ipairs(qInfo.preSingle) do
+                if omittedSet[tonumber(pid)] then return false end
+              end
+            end
+            if type(qInfo.preGroup) == "table" then
+              for _, pid in ipairs(qInfo.preGroup) do
+                if omittedSet[tonumber(pid)] then return false end
+              end
+            end
+          end
+        end
+      end
+    end
+    return true
+  end
+  local function extractIds(entry)
+    local ids = {}
+    if type(entry.steps) == "table" and #entry.steps > 0 then
+      for _, st in ipairs(entry.steps) do
+        local sid = tonumber(st and st.id)
+        if not sid or sid <= 0 then
+          return ids, true
+        end
+        table.insert(ids, sid)
+      end
+      return ids, false
+    end
+    local qid = tonumber(entry.id or entry.questId)
+    if not qid or qid <= 0 then
+      return ids, true
+    end
+    table.insert(ids, qid)
+    return ids, false
+  end
   local out = {}
   for i, q in ipairs(list) do
-    local ids = {}
-    if type(q.steps) == "table" and #q.steps > 0 then
-      for _, st in ipairs(q.steps) do table.insert(ids, tonumber(st.id)) end
-    else
-      table.insert(ids, tonumber(q.id or q.questId))
-    end
+    local ids, qInvalid = extractIds(q)
     local redundant = false
-    for j, other in ipairs(list) do
-      if i ~= j and (other.faction == q.faction or other.faction == "both") then
-        local oIds = {}
-        if type(other.steps) == "table" and #other.steps > 0 then
-          for _, st in ipairs(other.steps) do table.insert(oIds, tonumber(st.id)) end
-        else
-          table.insert(oIds, tonumber(other.id or other.questId))
-        end
-        if #oIds < #ids then
-          local oFirstRep
-          if type(other.steps) == "table" and other.steps[1] then
-            oFirstRep = other.steps[1].repeatable
-          else
-            oFirstRep = other.repeatable
-          end
-          if not oFirstRep then
-            local offset = #ids - #oIds
-            local match = true
-            for k = 1, #oIds do
-              if oIds[k] ~= ids[offset + k] then match = false break end
+    if not qInvalid then
+      for j, other in ipairs(list) do
+        local factionCovers = (other.faction == q.faction or other.faction == "both")
+        if i ~= j and factionCovers and classesCover(other, q) then
+          local oIds, oInvalid = extractIds(other)
+          if not oInvalid then
+            if #oIds < #ids then
+              local oFirstRep
+              if type(other.steps) == "table" and other.steps[1] then
+                oFirstRep = other.steps[1].repeatable
+              else
+                oFirstRep = other.repeatable
+              end
+              if not oFirstRep then
+                local offset = #ids - #oIds
+                local match = true
+                local sameSteps = (type(other.steps) == "table" and type(q.steps) == "table")
+                for k = 1, #oIds do
+                  if oIds[k] ~= ids[offset + k] then
+                    match = false
+                    break
+                  end
+                  if sameSteps then
+                    local os, qs = other.steps[k], q.steps[offset + k]
+                    if k == 1 then
+                      local oPre = os and tonumber(os.preId)
+                      local qPre = qs and tonumber(qs.preId)
+                      local preOk = (oPre == qPre) or (oPre == nil and qPre == ids[offset])
+                      local r1, r2 = os and os.reqAll, qs and qs.reqAll
+                      local reqOk = (type(r1) ~= "table" and type(r2) ~= "table")
+                      if not reqOk and type(r1) == "table" and type(r2) == "table" and #r1 == #r2 then
+                        reqOk = true
+                        for idx = 1, #r1 do
+                          if r1[idx] ~= r2[idx] then reqOk = false break end
+                        end
+                      end
+                      if not preOk or not reqOk then match = false break end
+                    elseif not sameStepDeps(os, qs) then
+                      match = false
+                      break
+                    end
+                  end
+                end
+                if match and areOmittedStepsBreadcrumbs(ids, offset, q.steps) and navCovers(other, q, offset) then redundant = true break end
+              end
+            elseif #oIds == #ids and #ids > 0 then
+              local match = true
+              local sameSteps = (type(other.steps) == "table" and type(q.steps) == "table")
+              for k = 1, #oIds do
+                if oIds[k] ~= ids[k] or (sameSteps and not sameStepDeps(other.steps[k], q.steps[k])) then
+                  match = false
+                  break
+                end
+              end
+              local qMin = tonumber(q.minLevel) or 0
+              local oMin = tonumber(other.minLevel) or 0
+              local minLevelCovers = (oMin == qMin) or (oMin > 0 and (qMin <= 0 or oMin < qMin))
+              if match and minLevelCovers and navCovers(other, q, 0) then
+                local sameClassScope = classesCover(q, other)
+                local strictlyBetterNav = not navCovers(q, other, 0)
+                local strictlyBetterMinLevel = (oMin > 0 and (qMin <= 0 or oMin < qMin))
+                if strictlyBetterNav or strictlyBetterMinLevel or (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
+                  redundant = true
+                  break
+                end
+              end
             end
-            if match then redundant = true break end
           end
         end
       end
