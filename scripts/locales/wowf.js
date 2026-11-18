@@ -2444,19 +2444,18 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     if (!dungeon) continue;
 
     const builtQuests = [];
-    const seenFlowKey = new Set();
+    const seenQuestKey = new Set();
 
     const buildEntry = (q, sideData, factionOverride) => {
       const flow = buildEffectiveFlow(q, sideData, questiePrereqs, questCache);
       const selfIdx = flow.findIndex(st => st.self || st.id === q.id);
       const hasPrereq = selfIdx > 0;
 
-      // 若同一副本中已有同一条任务链的条目，避免重复展示
-      if (flow.length > 1) {
-        const flowKey = `${factionOverride}:${flow.map(st => st.id).join('-')}`;
-        if (seenFlowKey.has(flowKey)) return null;
-        seenFlowKey.add(flowKey);
-      }
+      // 同一副本内仅对同一任务（同 ID + 同阵营）去重；
+      // 同属一条 wowf.io 任务链（flow）的并行分支任务需保留，交由 QuestieDB 解析与前缀分组展示。
+      const questKey = `${factionOverride}:${q.id}`;
+      if (seenQuestKey.has(questKey)) return null;
+      seenQuestKey.add(questKey);
 
       const steps =
         flow.length > 1
@@ -4656,6 +4655,15 @@ local function DedupeQuestieQuests(quests)
               if oIds[k] ~= ids[offset + k] then match = false break end
             end
             if match then redundant = true break end
+          end
+        elseif #oIds == #ids then
+          local match = true
+          for k = 1, #oIds do
+            if oIds[k] ~= ids[k] then match = false break end
+          end
+          if match and ((other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i)) then
+            redundant = true
+            break
           end
         end
       end
