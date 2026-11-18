@@ -4654,10 +4654,14 @@ local function DedupeQuestieQuests(quests)
   local function stepPickupCovers(hStep, tStep)
     if type(tStep) ~= "table" then return true end
     local tHasNpc = (tStep.npc and tStep.npc ~= "")
+    local tHasPlace = (tStep.place and tStep.place ~= "")
     local tHasCoords = (tStep.x ~= nil and tStep.y ~= nil)
-    if not tHasNpc and not tHasCoords then return true end
+    if not tHasNpc and not tHasPlace and not tHasCoords then return true end
     if type(hStep) ~= "table" then return false end
     if tHasNpc and (hStep.npc or "") ~= tStep.npc then
+      return false
+    end
+    if tHasPlace and (hStep.place or "") ~= tStep.place then
       return false
     end
     if tHasCoords then
@@ -4739,11 +4743,11 @@ local function DedupeQuestieQuests(quests)
             end
             if match then redundant = true break end
           end
-        elseif #oIds == #ids then
+        elseif #oIds == #ids and #ids > 0 then
           local match = true
           local sameSteps = (type(other.steps) == "table" and type(q.steps) == "table")
           for k = 1, #oIds do
-            if oIds[k] ~= ids[k] or (sameSteps and not sameStepDeps(other.steps[k], q.steps[k])) then
+            if (not oIds[k]) or oIds[k] <= 0 or oIds[k] ~= ids[k] or (sameSteps and not sameStepDeps(other.steps[k], q.steps[k])) then
               match = false
               break
             end
