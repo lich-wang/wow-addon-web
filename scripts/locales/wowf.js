@@ -2142,6 +2142,22 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
     const seenTableRecords = new Set();
     const expectedTableChecks = [];
     const maskByEntity = new Map();
+    const isValidTableField = (kind, field, val) => {
+      if (!val || typeof val !== 'object') return false;
+      if (kind === 'Npc' && field === '7') return true;
+      if (kind === 'Object' && field === '4') return true;
+      if (kind === 'Quest') {
+        if (field === '2') {
+          const slots = Array.isArray(val) ? [val[0], val[1], val[2]] : [val[1], val[2], val[3]];
+          return slots.every(s => s == null || typeof s === 'object');
+        }
+        if (field === '12' || field === '13' || field === '28' || field === '35') {
+          return Array.isArray(val);
+        }
+        if (field === '18') return typeof val === 'object';
+      }
+      return true;
+    };
     const processDecodedRecord = (kind, entityId, field, rawBase64) => {
       try {
         const val = decodeCborValue(Buffer.from(rawBase64, 'base64'));
@@ -2150,6 +2166,10 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
           return;
         }
         if (field !== 'S') {
+          if (!isValidTableField(kind, field, val)) {
+            parseErrors++;
+            return;
+          }
           seenTableRecords.add(`${kind}:${entityId}:${field}`);
         } else if (typeof val.p === 'number' && Number.isSafeInteger(val.p) && val.p >= 0) {
           const mask = BigInt(val.p);
@@ -2598,8 +2618,12 @@ function buildZoneQuestsIndex(questiePrereqs) {
     }
 
     const entries = [];
+    const coveredIds = [];
     for (const [qid, info] of list) {
-      if (covered.has(qid)) continue;
+      if (covered.has(qid)) {
+        coveredIds.push(qid);
+        continue;
+      }
       const f = getFactionCode(info.races);
 
       // 沿前置链回溯起点等级与整条链最高等级，避免长链后半段等级过高导致前半段在低级时被过滤
@@ -2651,6 +2675,12 @@ function buildZoneQuestsIndex(questiePrereqs) {
     entries.sort((a, b) => a.min - b.min || a.lv - b.lv || a.id - b.id);
     if (entries.length > 0) {
       out[zoneName] = entries;
+      if (coveredIds.length > 0) {
+        if (!out._coveredByZone) {
+          Object.defineProperty(out, '_coveredByZone', { value: {}, enumerable: false });
+        }
+        out._coveredByZone[zoneName] = coveredIds;
+      }
     }
   }
   return out;
@@ -2727,6 +2757,9 @@ function annotateDatasetPrereqs(dataset, questiePrereqs) {
     if (Object.keys(builtZoneQuests).length >= 30) {
       dataset.zoneQuests = builtZoneQuests;
       dataset.zoneAreaIds = ZONE_NAME_TO_AREA_IDS;
+      if (builtZoneQuests._coveredByZone) {
+        dataset.zoneCoveredIds = builtZoneQuests._coveredByZone;
+      }
       if (questiePrereqs._questieDbVersion && dataset.meta) {
         dataset.meta.questieDbVersion = questiePrereqs._questieDbVersion;
       }
@@ -6521,8 +6554,18 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
   local clientQdbVer = (GetAddOnMetadata and GetAddOnMetadata("QuestieDB", "Version"))
     or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("QuestieDB", "Version"))
   local sameQuestieDbVersion = (type(bundledQdbVer) == "string" and bundledQdbVer ~= "" and clientQdbVer == bundledQdbVer)
+  local iterPool = pool
+  if not sameQuestieDbVersion then
+    local cleanZoneKey = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
+    local coveredPool = Data.zoneCoveredIds and Data.zoneCoveredIds[cleanZoneKey]
+    if type(coveredPool) == "table" and #coveredPool > 0 then
+      iterPool = {}
+      for _, q in ipairs(pool) do table.insert(iterPool, q) end
+      for _, cid in ipairs(coveredPool) do table.insert(iterPool, { id = cid }) end
+    end
+  end
 
-  for _, q in ipairs(pool) do
+  for _, q in ipairs(iterPool) do
     local preFilterOk = false
     if GetQuestieQuestInfo(q.id) ~= nil then
       if sameQuestieDbVersion then
