@@ -658,6 +658,7 @@ export function App() {
             onSetPeerVolume={(peerId, vol) => voiceRoomManager.setPeerVolume(peerId, vol)}
             onSwitchMicrophone={(deviceId) => voiceRoomManager.switchMicrophone(deviceId)}
             onSwitchOutputDevice={(deviceId) => voiceRoomManager.setOutputDevice(deviceId)}
+            onSetMicProcessing={(patch) => voiceRoomManager.setMicProcessing(patch)}
             onSendMessage={(text) => voiceRoomManager.sendChatMessage(text)}
             onResumePlayback={() => voiceRoomManager.resumePlayback()}
           />

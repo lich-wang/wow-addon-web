@@ -20,7 +20,7 @@ import {
   Share2,
   Wifi,
 } from 'lucide-react';
-import type { VoiceStateSnapshot } from '../services/voiceService';
+import type { MicProcessingSettings, VoiceStateSnapshot } from '../services/voiceService';
 import { VoiceDeviceCheck } from './VoiceDeviceCheck';
 import type {
   NetworkQualityLevel,
@@ -107,6 +107,7 @@ interface VoiceChatProps {
   onSetPeerVolume: (peerId: string, volume: number) => void;
   onSwitchMicrophone: (deviceId: string) => Promise<void>;
   onSwitchOutputDevice: (deviceId: string) => Promise<boolean>;
+  onSetMicProcessing: (patch: Partial<MicProcessingSettings>) => Promise<void> | void;
   onSendMessage: (text: string) => Promise<void>;
   onResumePlayback: () => void;
 }
@@ -129,6 +130,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   onSetPeerVolume,
   onSwitchMicrophone,
   onSwitchOutputDevice,
+  onSetMicProcessing,
   onSendMessage,
   onResumePlayback,
 }) => {
@@ -339,6 +341,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const isInRoom = voiceState.status === 'connected' || voiceState.status === 'connecting';
   const displayError = localError || voiceState.error;
+  const micProcessing = voiceState.micProcessing;
+  const micProcessingUnsupported =
+    voiceState.status === 'connected' &&
+    !voiceState.listenOnly &&
+    micProcessing.noiseSuppression &&
+    (micProcessing.echoCancellationActive === false || micProcessing.noiseSuppressionActive === false);
   const selfAudioLevel = voiceState.participants.find((participant) => participant.isSelf)?.audioLevel ?? 0;
   const roomOutputDeviceId = pendingOutputDeviceId ?? voiceState.selectedOutputDeviceId;
   const hasResolvedOutputIds = audioOutputs.some((device) => Boolean(device.deviceId));
@@ -352,6 +360,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     !audioOutputs.some((device) => device.deviceId === roomOutputDeviceId);
   const showMicSwitcher = !voiceState.listenOnly && audioInputs.length > 1;
   const showOutputSwitcher = audioOutputs.length > 0 || isRoomOutputMissing;
+  const showDeviceSwitchers = showMicSwitcher || showOutputSwitcher;
 
   if (!isInRoom) {
     return (
@@ -712,9 +721,9 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         </div>
       </details>
 
-      {/* Device Switchers: right below 设备自检, above the member (online) list */}
-      {(showMicSwitcher || showOutputSwitcher) && (
-        <div className="rounded-2xl bg-slate-900/60 border border-slate-800 px-4 py-3">
+      {/* Device Switchers + mic processing: right below 设备自检, above the member (online) list */}
+      <div className="rounded-2xl bg-slate-900/60 border border-slate-800 px-4 py-3">
+        {showDeviceSwitchers && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-slate-300 shrink-0">音频设备</span>
 
@@ -774,8 +783,57 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               </div>
             )}
           </div>
+        )}
+
+        <div
+          className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${
+            showDeviceSwitchers ? 'mt-2 border-t border-slate-800/70 pt-2' : ''
+          }`}
+        >
+            <label
+              className="inline-flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none"
+              title="回声消除 + 噪声抑制 + 自动增益 + 人声隔离，减少键盘、风扇和外放回采"
+            >
+              <input
+                type="checkbox"
+                checked={micProcessing.noiseSuppression}
+                disabled={voiceState.listenOnly}
+                onChange={(e) => void onSetMicProcessing({ noiseSuppression: e.target.checked })}
+                className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-950 text-amber-500 accent-amber-500 focus:ring-amber-500 disabled:opacity-40"
+              />
+              <span>麦克风降噪</span>
+            </label>
+
+            <label
+              className="inline-flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none"
+              title="没戴耳机时，队友说话期间自动闭麦，避免扬声器里的声音被麦克风收进去再传回队友；戴耳机可关闭"
+            >
+              <input
+                type="checkbox"
+                checked={micProcessing.echoGuardActive}
+                onChange={(e) => void onSetMicProcessing({ echoGuard: e.target.checked ? 'on' : 'off' })}
+                className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-950 text-amber-500 accent-amber-500 focus:ring-amber-500"
+              />
+              <span>
+                外放免回声
+                {micProcessing.echoGuard === 'auto' && <span className="text-slate-500">（自动）</span>}
+              </span>
+            </label>
+
+            {micProcessing.echoGuardMuted && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
+                <MicOff className="w-3 h-3" />
+                检测到扬声器声音，麦克风已暂时静音
+              </span>
+            )}
+            {micProcessingUnsupported && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
+                <AlertTriangle className="w-3 h-3" />
+                当前设备未提供降噪/回声消除，建议佩戴耳机
+              </span>
+            )}
+          </div>
         </div>
-      )}
 
       {/* Autoplay Blocked Banner */}
       {voiceState.autoplayBlocked && (
