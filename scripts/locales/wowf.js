@@ -4651,7 +4651,7 @@ local function DedupeQuestieQuests(quests)
     end
     return true
   end
-  local function stepPickupCovers(hStep, tStep)
+  local function stepPickupCovers(hStep, tStep, hFallbackZone, tFallbackZone)
     if type(tStep) ~= "table" then return true end
     local tHasNpc = (tStep.npc and tStep.npc ~= "")
     local tHasPlace = (tStep.place and tStep.place ~= "")
@@ -4664,12 +4664,13 @@ local function DedupeQuestieQuests(quests)
     if tHasPlace and (hStep.place or "") ~= tStep.place then
       return false
     end
+    local hz = (hStep.zone and hStep.zone ~= "") and hStep.zone or (hFallbackZone or "")
+    local tz = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
+    if tz ~= "" and hz ~= tz then
+      return false
+    end
     if tHasCoords then
       if hStep.x == nil or hStep.y == nil then
-        return false
-      end
-      local tz = tStep.zone or ""
-      if tz ~= "" and (hStep.zone or "") ~= tz then
         return false
       end
       if hStep.x ~= tStep.x or hStep.y ~= tStep.y then
@@ -4678,7 +4679,7 @@ local function DedupeQuestieQuests(quests)
     end
     return true
   end
-  local function stepTurninCovers(hStep, tStep)
+  local function stepTurninCovers(hStep, tStep, hFallbackZone, tFallbackZone)
     if type(tStep) ~= "table" then return true end
     local tHasNpc = (tStep.endNpc and tStep.endNpc ~= "")
     local tHasCoords = (tStep.endX ~= nil and tStep.endY ~= nil)
@@ -4687,20 +4688,24 @@ local function DedupeQuestieQuests(quests)
     if tHasNpc and (hStep.endNpc or "") ~= tStep.endNpc then return false end
     if tHasCoords then
       if hStep.endX == nil or hStep.endY == nil then return false end
-      local hEndZone = (hStep.endZone and hStep.endZone ~= "") and hStep.endZone or (hStep.zone or "")
-      local tEndZone = (tStep.endZone and tStep.endZone ~= "") and tStep.endZone or (tStep.zone or "")
+      local hPickupZone = (hStep.zone and hStep.zone ~= "") and hStep.zone or (hFallbackZone or "")
+      local tPickupZone = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
+      local hEndZone = (hStep.endZone and hStep.endZone ~= "") and hStep.endZone or hPickupZone
+      local tEndZone = (tStep.endZone and tStep.endZone ~= "") and tStep.endZone or tPickupZone
       if tEndZone ~= "" and hEndZone ~= tEndZone then return false end
       if hStep.endX ~= tStep.endX or hStep.endY ~= tStep.endY then return false end
     end
     return true
   end
   local function navCovers(holder, target, offset)
+    local hFallbackZone = holder.zone or ""
+    local tFallbackZone = target.zone or ""
     if type(holder.steps) == "table" and type(target.steps) == "table" then
       local off = offset or 0
       for k = 1, #target.steps do
         local hs = holder.steps[off + k]
         local ts = target.steps[k]
-        if (not stepPickupCovers(hs, ts)) or (not stepTurninCovers(hs, ts)) then
+        if (not stepPickupCovers(hs, ts, hFallbackZone, tFallbackZone)) or (not stepTurninCovers(hs, ts, hFallbackZone, tFallbackZone)) then
           return false
         end
       end
@@ -4708,7 +4713,7 @@ local function DedupeQuestieQuests(quests)
     end
     local hs = (type(holder.steps) == "table" and holder.steps[#holder.steps]) or holder
     local ts = (type(target.steps) == "table" and target.steps[#target.steps]) or target
-    return stepPickupCovers(hs, ts) and stepTurninCovers(hs, ts)
+    return stepPickupCovers(hs, ts, hFallbackZone, tFallbackZone) and stepTurninCovers(hs, ts, hFallbackZone, tFallbackZone)
   end
   local out = {}
   for i, q in ipairs(list) do
