@@ -4873,7 +4873,9 @@ local function ResolveQuestieEntity(entityIds, db, cache, preferredAreaIds)
   for _, eid in ipairs(entityIds) do
     local res = ResolveSingleQuestieEntity(eid, db, cache)
     if res then
-      if not fallback then fallback = res end
+      if not fallback or (not fallback.areaId and res.areaId) then
+        fallback = res
+      end
       if type(preferredAreaIds) == "table" then
         if res.areaId and preferredAreaIds[res.areaId] then
           return res
@@ -6461,6 +6463,12 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
             return false
           end
           local mId = tonumber(stObj and stObj.id)
+          if mId and not IsQuestActiveById(mId) and _G.QuestDB and _G.QuestDB.requiredMaxLevel then
+            local maxReqLv = _G.QuestDB.requiredMaxLevel(mId)
+            if type(maxReqLv) == "number" and maxReqLv > 0 and lvl > maxReqLv then
+              return false
+            end
+          end
           local started = mId and _G.QuestDB and _G.QuestDB.startedBy and _G.QuestDB.startedBy(mId)
           local npcStarter = started and ResolveQuestieNpc(started[1], areaSet) or nil
           local objStarter = started and ResolveQuestieObject(started[2], areaSet) or nil
@@ -6469,7 +6477,7 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
           local zoneStarter = (npcInZone and npcStarter) or (objInZone and objStarter) or npcStarter or objStarter
           local starterInZone = npcInZone or objInZone
           local hasAnyStarterArea = (npcStarter and npcStarter.areaId ~= nil) or (objStarter and objStarter.areaId ~= nil)
-          local inThisZone = (mId and IsQuestActiveById(mId)) or starterInZone or (not hasAnyStarterArea)
+          local inThisZone = starterInZone or (not hasAnyStarterArea)
           if not inThisZone then
             return false
           end
