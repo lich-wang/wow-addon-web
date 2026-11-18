@@ -2076,13 +2076,13 @@ function decodeCborValue(buf, state = { offset: 0 }) {
 async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zip', zipBuffer = null) {
   const dbMap = new Map();
   let parseErrors = 0;
-  let buf = zipBuffer;
-  if (!buf) {
-    const zipPath = path.join(cacheDir, zipFilename);
-    if (!fs.existsSync(zipPath)) return dbMap;
-    buf = fs.readFileSync(zipPath);
-  }
   try {
+    let buf = zipBuffer;
+    if (!buf) {
+      const zipPath = path.join(cacheDir, zipFilename);
+      if (!fs.existsSync(zipPath)) return dbMap;
+      buf = fs.readFileSync(zipPath);
+    }
     const zip = await JSZip.loadAsync(buf);
     const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
     if (!tocFile) return dbMap;
@@ -6434,8 +6434,8 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
           local npcInZone = npcStarter and npcStarter.areaId and areaSet[npcStarter.areaId]
           local objInZone = objStarter and objStarter.areaId and areaSet[objStarter.areaId]
           local zoneStarter = (npcInZone and npcStarter) or (objInZone and objStarter) or npcStarter or objStarter
-          local starterInZone = zoneStarter and zoneStarter.areaId and areaSet[zoneStarter.areaId]
-          local hasAnyStarterArea = zoneStarter and zoneStarter.areaId ~= nil
+          local starterInZone = npcInZone or objInZone
+          local hasAnyStarterArea = (npcStarter and npcStarter.areaId ~= nil) or (objStarter and objStarter.areaId ~= nil)
           local inThisZone = (mId and IsQuestActiveById(mId)) or starterInZone or (not hasAnyStarterArea)
           if not inThisZone then
             return false
@@ -6505,16 +6505,17 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
               cand.y = matchedStarter.y
             end
           end
+          local chainNavCtx = cleanZone .. "#" .. tostring(cand.id or cand.questId or (#candidates + 1))
           cand._matchedStarter = matchedStarter
           cand._matchedStep = matchedStep
           cand._acceptLv = acceptLv
-          cand._navCtx = cleanZone
+          cand._navCtx = chainNavCtx
           if type(cand.steps) == "table" and #cand.steps > 0 then
             local ctxSteps = {}
             for _, st in ipairs(cand.steps) do
               local stCopy = {}
               for k, v in pairs(st) do stCopy[k] = v end
-              stCopy._navCtx = cleanZone
+              stCopy._navCtx = chainNavCtx
               stCopy.faction = stCopy.faction or cand.faction
               table.insert(ctxSteps, stCopy)
             end

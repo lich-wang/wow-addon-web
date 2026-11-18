@@ -524,7 +524,7 @@ function makeTempQuestieDBFilename() {
   return `questie-db-forever.${process.pid}.${Date.now()}.tmp.zip`;
 }
 
-async function downloadQuestieDBForever(cacheFilename = makeTempQuestieDBFilename(), deadlineMs = 30000) {
+async function downloadQuestieDBForever(deadlineMs = 30000) {
   const releaseTimeoutMs = Math.min(8000, Math.floor(deadlineMs * 0.3));
   const downloadTimeoutMs = Math.max(5000, deadlineMs - releaseTimeoutMs);
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
@@ -534,8 +534,8 @@ async function downloadQuestieDBForever(cacheFilename = makeTempQuestieDBFilenam
     AbortSignal.timeout(releaseTimeoutMs)
   );
   if (latestDB?.url) dbUrl = latestDB.url;
-  const dbBuf = await downloadBuffer(dbUrl, cacheFilename, undefined, AbortSignal.timeout(downloadTimeoutMs));
-  return { dbUrl, dbBuf, cacheFilename };
+  const dbBuf = await downloadBuffer(dbUrl, undefined, undefined, AbortSignal.timeout(downloadTimeoutMs));
+  return { dbUrl, dbBuf };
 }
 
 function hasCachedZoneQuestsSnapshot() {
@@ -549,29 +549,28 @@ function hasCachedZoneQuestsSnapshot() {
   }
 }
 
-async function promoteValidQuestieDBTemp(tmpFilename, dbUrl = '') {
+async function promoteValidQuestieDBBuffer(dbBuf, dbUrl = '') {
+  if (!(await hasValidZoneQuestsBuffer(dbBuf))) {
+    return { valid: false, promoted: false };
+  }
   const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
   const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
-  const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
+  const tmpPath = path.join(UPSTREAM_CACHE_DIR, makeTempQuestieDBFilename());
+  let promoted = false;
   try {
-    if (!(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR, tmpFilename))) {
-      return { valid: false, promoted: false };
-    }
-    let promoted = false;
-    try {
-      fs.renameSync(tmpPath, dbCachePath);
-      promoted = true;
-      if (dbUrl) {
-        try {
-          fs.writeFileSync(dbMetaPath, JSON.stringify({ url: dbUrl, updatedAt: new Date().toISOString() }, null, 2));
-        } catch {
-          // ignore metadata write error
-        }
+    fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
+    fs.writeFileSync(tmpPath, dbBuf);
+    fs.renameSync(tmpPath, dbCachePath);
+    promoted = true;
+    if (dbUrl) {
+      try {
+        fs.writeFileSync(dbMetaPath, JSON.stringify({ url: dbUrl, updatedAt: new Date().toISOString() }, null, 2));
+      } catch {
+        // ignore metadata write error
       }
-    } catch (renameErr) {
-      console.warn(`[Questie] Failed to promote QuestieDB cache (${renameErr.message}).`);
     }
-    return { valid: true, promoted };
+  } catch (err) {
+    console.warn(`[Questie] Failed to persist QuestieDB cache (${err.message}); continuing with in-memory archive.`);
   } finally {
     if (fs.existsSync(tmpPath)) {
       try {
@@ -581,26 +580,24 @@ async function promoteValidQuestieDBTemp(tmpFilename, dbUrl = '') {
       }
     }
   }
+  return { valid: true, promoted };
 }
 
 async function ensureValidQuestieDBCache() {
   if (await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR)) {
-    return;
+    return null;
   }
-  const tmpFilename = makeTempQuestieDBFilename();
   try {
-    const { dbUrl } = await downloadQuestieDBForever(tmpFilename);
-    const { valid, promoted } = await promoteValidQuestieDBTemp(tmpFilename, dbUrl);
+    const { dbUrl, dbBuf } = await downloadQuestieDBForever();
+    const { valid } = await promoteValidQuestieDBBuffer(dbBuf, dbUrl);
     if (!valid) {
       throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
     }
-    if (!promoted && !(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR))) {
-      throw new Error('Failed to promote validated questie-db-forever.zip to formal cache.');
-    }
+    return dbBuf;
   } catch (err) {
     if (hasCachedZoneQuestsSnapshot()) {
       console.warn(`[WoWF] QuestieDB refresh failed (${err.message}); falling back to cached zoneQuests snapshot.`);
-      return;
+      return null;
     }
     throw err;
   }
@@ -616,13 +613,12 @@ async function processQuestieForever() {
 
   console.log('Fetching Questie Core + QuestieDB Forever...');
   const coreBuf = await downloadBuffer(coreUrl, 'questie-core.zip');
-  const tmpFilename = makeTempQuestieDBFilename();
   let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
   let dbBuf;
   const zip = await JSZip.loadAsync(coreBuf);
   await patchQuestie(zip);
   try {
-    const res = await downloadQuestieDBForever(tmpFilename);
+    const res = await downloadQuestieDBForever();
     dbUrl = res.dbUrl;
     const candidateZip = await JSZip.loadAsync(res.dbBuf);
     const tocFile =
@@ -631,20 +627,12 @@ async function processQuestieForever() {
       throw new Error('Downloaded QuestieDB archive is missing QuestieDB TOC.');
     }
     await tocFile.async('string');
-    const { valid } = await promoteValidQuestieDBTemp(tmpFilename, dbUrl);
+    const { valid } = await promoteValidQuestieDBBuffer(res.dbBuf, dbUrl);
     if (!valid) {
       throw new Error('Downloaded QuestieDB archive produced an empty zoneQuests index.');
     }
     dbBuf = res.dbBuf;
   } catch (err) {
-    const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
-    if (fs.existsSync(tmpPath)) {
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {
-        // ignore cleanup error
-      }
-    }
     const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
     const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
     if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
@@ -825,8 +813,8 @@ async function ensureClientBinaries() {
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
-    await ensureValidQuestieDBCache();
-    await processWoWF();
+    const questieDbBuf = await ensureValidQuestieDBCache();
+    await processWoWF(questieDbBuf);
     writeBundledVersions();
     return;
   }
