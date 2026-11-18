@@ -562,7 +562,7 @@ async function isValidQuestieDBArchiveBuffer(buf) {
       if (!line || line.startsWith('#')) continue;
       const rel = line.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
       if (!rel) continue;
-      if (!fileIndex.has(`questiedb/${rel.toLowerCase()}`) && !fileIndex.has(rel.toLowerCase())) {
+      if (!fileIndex.has(`questiedb/${rel.toLowerCase()}`)) {
         return false;
       }
     }

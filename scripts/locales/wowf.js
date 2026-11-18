@@ -2124,12 +2124,25 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
         if (n > 0) set.add(n);
       }
     };
+    const extractSpawnAreas = val => {
+      if (Array.isArray(val)) {
+        const aids = [];
+        for (let idx = 0; idx < val.length; idx++) {
+          if (val[idx] != null) aids.push(idx + 1);
+        }
+        return aids;
+      }
+      if (val && typeof val === 'object') {
+        return Object.keys(val);
+      }
+      return [];
+    };
     const processDecodedRecord = (kind, entityId, field, rawBase64) => {
       try {
         const val = decodeCborValue(Buffer.from(rawBase64, 'base64'));
         if (kind === 'Npc') {
           if (field === '7' && val && typeof val === 'object') {
-            addAreas(npcAreas, entityId, Object.keys(val));
+            addAreas(npcAreas, entityId, extractSpawnAreas(val));
           } else if (field === 'S' && val && typeof val === 'object' && typeof val[9] === 'number' && val[9] > 0) {
             addAreas(npcAreas, entityId, [val[9]]);
           }
@@ -2137,7 +2150,7 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
         }
         if (kind === 'Object') {
           if (field === '4' && val && typeof val === 'object') {
-            addAreas(objAreas, entityId, Object.keys(val));
+            addAreas(objAreas, entityId, extractSpawnAreas(val));
           } else if (field === 'S' && val && typeof val === 'object' && typeof val[5] === 'number' && val[5] > 0) {
             addAreas(objAreas, entityId, [val[5]]);
           }
@@ -6276,14 +6289,15 @@ local function IsZoneStepUnlocked(st)
   end
   if _G.QuestDB and _G.QuestDB.startedBy then
     local started = _G.QuestDB.startedBy(sid)
+    local getItemCount = GetItemCount or (C_Item and C_Item.GetItemCount)
     if type(started) == "table"
       and (type(started[1]) ~= "table" or #started[1] == 0)
       and (type(started[2]) ~= "table" or #started[2] == 0)
       and type(started[3]) == "table" and #started[3] > 0
-      and GetItemCount then
+      and getItemCount then
       local hasStarterItem = false
       for _, itemId in ipairs(started[3]) do
-        local ok, cnt = pcall(GetItemCount, tonumber(itemId))
+        local ok, cnt = pcall(getItemCount, tonumber(itemId))
         if ok and type(cnt) == "number" and cnt > 0 then
           hasStarterItem = true
           break
