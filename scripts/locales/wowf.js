@@ -5908,17 +5908,23 @@ end
 
 local function IsZoneStepUnlocked(st)
   if not st or not st.id then return false end
-  if IsQuestActiveById(st.id) then return true end
-  if type(st.reqAll) == "table" and #st.reqAll > 0 then
-    for _, pid in ipairs(st.reqAll) do
-      if not IsQuestCompletedById(pid) then return false end
+  local sid = tonumber(st.id)
+  if IsQuestActiveById(sid) then return true end
+  if _G.QuestDB and _G.QuestDB.disabledByQuest then
+    local disQid = _G.QuestDB.disabledByQuest(sid)
+    if type(disQid) == "number" and disQid > 0 and IsQuestActiveById(disQid) then
+      return false
     end
-  elseif st.preId then
-    if not IsQuestCompletedById(st.preId) then return false end
   end
-  if _G.QuestDB and _G.QuestDB.preQuestSingle then
-    local preS = _G.QuestDB.preQuestSingle(tonumber(st.id))
-    if type(preS) == "table" and #preS > 1 then
+  if _G.QuestDB then
+    local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(sid)
+    if type(preG) == "table" and #preG > 0 then
+      for _, pid in ipairs(preG) do
+        if not IsQuestCompletedById(pid) then return false end
+      end
+    end
+    local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(sid)
+    if type(preS) == "table" and #preS > 0 then
       local anyDone = false
       for _, pid in ipairs(preS) do
         if IsQuestCompletedById(pid) then
@@ -5928,8 +5934,78 @@ local function IsZoneStepUnlocked(st)
       end
       if not anyDone then return false end
     end
+    return true
+  end
+  if type(st.reqAll) == "table" and #st.reqAll > 0 then
+    for _, pid in ipairs(st.reqAll) do
+      if not IsQuestCompletedById(pid) then return false end
+    end
+  elseif st.preId then
+    if not IsQuestCompletedById(st.preId) then return false end
   end
   return true
+end
+
+local function CloneZoneQuestCandidate(q)
+  local copy = {}
+  for k, v in pairs(q) do
+    if k ~= "steps" then copy[k] = v end
+  end
+  if type(q.steps) == "table" and #q.steps > 0 then
+    local ineligibleIds = {}
+    for _, st in ipairs(q.steps) do
+      local sid = tonumber(st and st.id)
+      if not sid or not IsQuestEligibleForZoneChain(sid) then
+        if sid then ineligibleIds[sid] = true end
+      end
+    end
+    -- 仅沿真实前置依赖传播不可接标记，避免并行分支中前一项不合格导致独立分支被截断
+    local changed = true
+    while changed do
+      changed = false
+      for _, st in ipairs(q.steps) do
+        local sid = tonumber(st and st.id)
+        if sid and not ineligibleIds[sid] then
+          local blocked = false
+          if st.preId and ineligibleIds[tonumber(st.preId)] then
+            blocked = true
+          elseif type(st.reqAll) == "table" then
+            for _, pid in ipairs(st.reqAll) do
+              if ineligibleIds[tonumber(pid)] then
+                blocked = true
+                break
+              end
+            end
+          end
+          if blocked then
+            ineligibleIds[sid] = true
+            changed = true
+          end
+        end
+      end
+    end
+    local kept = {}
+    for _, st in ipairs(q.steps) do
+      local sid = tonumber(st and st.id)
+      if sid and not ineligibleIds[sid] then
+        table.insert(kept, st)
+      end
+    end
+    copy.steps = kept
+    copy.stepCount = #kept
+    if #kept == 0 then
+      copy._zoneIneligible = true
+    elseif #kept < #q.steps then
+      local lastKept = kept[#kept]
+      if lastKept then
+        copy.id = lastKept.id
+        copy.name = lastKept.name or copy.name
+      end
+    end
+  elseif not IsQuestEligibleForZoneChain(q.id) then
+    copy._zoneIneligible = true
+  end
+  return copy
 end
 
 local function GetZoneSuitableQuestChains(zoneName, lvl)
@@ -5943,58 +6019,40 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
     local factionOk = (q.faction == "both" or q.faction == state.faction)
     if factionOk and MatchesQuestRace(q) and q.min <= lvl and q.maxLv >= minOkLv then
       ResolveQuestChainFromQuestieDB(q)
-      if type(q.steps) == "table" and #q.steps > 0 and not q._zoneStepsFiltered then
-        q._zoneStepsFiltered = true
-        local kept = {}
-        local keptIds = {}
-        for _, st in ipairs(q.steps) do
-          if IsQuestEligibleForZoneChain(st.id) then
-            table.insert(kept, st)
-            keptIds[tonumber(st.id)] = true
-          else
-            break
-          end
-        end
-        if #kept > 0 and #kept < #q.steps then
-          q.steps = kept
-          q.stepCount = #kept
-          local lastKept = kept[#kept]
-          if lastKept then
-            q.id = lastKept.id
-            q.name = lastKept.name or q.name
-          end
-        elseif #kept == 0 then
-          q._zoneIneligible = true
-        end
-      end
+      local cand = CloneZoneQuestCandidate(q)
 
-      if not q._zoneIneligible and not IsQuestCompleted(q) then
-        local hasSuitableStep = false
-        if type(q.steps) == "table" and #q.steps > 0 then
-          for _, st in ipairs(q.steps) do
+      if not cand._zoneIneligible and not IsQuestCompleted(cand) then
+        local matchedStep = nil
+        local acceptLv = nil
+        if type(cand.steps) == "table" and #cand.steps > 0 then
+          for _, st in ipairs(cand.steps) do
             local sid = tonumber(st and st.id)
             if sid and sid > 0 and not IsQuestCompletedById(sid) and IsZoneStepUnlocked(st) then
               local stInfo = GetQuestieQuestInfo(sid)
-              local curMin = (stInfo and stInfo.minLevel) or st.level or q.min
-              local curLv = (stInfo and stInfo.level) or st.level or q.lv
+              local curMin = (stInfo and stInfo.minLevel) or st.level or cand.min
+              local curLv = (stInfo and stInfo.level) or st.level or cand.lv
               if curMin <= lvl and curLv >= minOkLv and curLv <= maxOkLv then
-                hasSuitableStep = true
+                matchedStep = st
+                acceptLv = curMin
                 break
               end
             end
           end
         else
-          if IsQuestEligibleForZoneChain(q.id) and IsZoneStepUnlocked({ id = q.id }) then
-            local curMin = q.minLevel or q.min
-            local curLv = q.level or q.lv
+          if IsZoneStepUnlocked({ id = cand.id }) then
+            local curMin = cand.minLevel or cand.min
+            local curLv = cand.level or cand.lv
             if curMin <= lvl and curLv >= minOkLv and curLv <= maxOkLv then
-              hasSuitableStep = true
+              matchedStep = cand
+              acceptLv = curMin
             end
           end
         end
 
-        if hasSuitableStep then
-          table.insert(candidates, q)
+        if matchedStep then
+          cand._matchedStep = matchedStep
+          cand._acceptLv = acceptLv
+          table.insert(candidates, cand)
         end
       end
     end
@@ -6952,9 +7010,11 @@ local function RenderTabRoutes()
               end
               for _, grp in ipairs(groups) do
                 local q = grp.quests[1]
-                local qZone = (q.zone and q.zone ~= "") and q.zone or zInfo.zone
-                local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or q.min or zInfo.from) or ""
-                local npcInfo = FormatStepNpcInfo(q, qZone)
+                local matched = q._matchedStep or q
+                local qZone = (matched.zone and matched.zone ~= "") and matched.zone or ((q.zone and q.zone ~= "") and q.zone or zInfo.zone)
+                local acceptLv = q._acceptLv or q.minLevel or q.min or zInfo.from
+                local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", acceptLv) or ""
+                local npcInfo = FormatStepNpcInfo(matched, qZone)
                 local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
                 if #grp.quests > 1 and grp.prefixLen >= 1 then
                   local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, zInfo.from, qZone, "      ", true)

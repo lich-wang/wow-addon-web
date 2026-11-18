@@ -685,6 +685,9 @@ async function ensureClientBinaries() {
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
+    if (!fs.existsSync(path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip'))) {
+      await processQuestieForever();
+    }
     await processWoWF();
     writeBundledVersions();
     return;
