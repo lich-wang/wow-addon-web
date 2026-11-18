@@ -544,7 +544,12 @@ function getValidatedZoneQuestsSnapshot() {
   try {
     const data = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
     if (!isValidZoneQuestsData(data?.zoneQuests, data?.zoneAreaIds)) return null;
-    return { zoneQuests: data.zoneQuests, zoneAreaIds: data.zoneAreaIds };
+    return {
+      zoneQuests: data.zoneQuests,
+      zoneAreaIds: data.zoneAreaIds,
+      zoneCoveredIds: data.zoneCoveredIds || null,
+      questieDbVersion: data.meta?.questieDbVersion || '',
+    };
   } catch {
     return null;
   }

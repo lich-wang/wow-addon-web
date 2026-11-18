@@ -2161,7 +2161,7 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
     const processDecodedRecord = (kind, entityId, field, rawBase64) => {
       try {
         const val = decodeCborValue(Buffer.from(rawBase64, 'base64'));
-        if (field === 'S' && (!val || typeof val !== 'object')) {
+        if (field === 'S' && (!val || typeof val !== 'object' || Buffer.isBuffer(val))) {
           parseErrors++;
           return;
         }
@@ -3789,6 +3789,12 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
   if (useSnapshotOnly && prevalidatedSnapshot) {
     dataset.zoneQuests = prevalidatedSnapshot.zoneQuests;
     dataset.zoneAreaIds = prevalidatedSnapshot.zoneAreaIds;
+    if (prevalidatedSnapshot.zoneCoveredIds) {
+      dataset.zoneCoveredIds = prevalidatedSnapshot.zoneCoveredIds;
+    }
+    if (prevalidatedSnapshot.questieDbVersion) {
+      dataset.meta.questieDbVersion = prevalidatedSnapshot.questieDbVersion;
+    }
   } else if (!useSnapshotOnly) {
     const livePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
     annotateDatasetPrereqs(dataset, livePrereqs);
@@ -3796,6 +3802,12 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
   if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds) && cachedDataset?.zoneQuests && cachedDataset?.zoneAreaIds) {
     dataset.zoneQuests = cachedDataset.zoneQuests;
     dataset.zoneAreaIds = cachedDataset.zoneAreaIds;
+    if (cachedDataset.zoneCoveredIds) {
+      dataset.zoneCoveredIds = cachedDataset.zoneCoveredIds;
+    }
+    if (cachedDataset.meta?.questieDbVersion) {
+      dataset.meta.questieDbVersion = cachedDataset.meta.questieDbVersion;
+    }
   }
 
   // 仅当本次抓取完整（或尚无本地缓存快照）时才写入缓存文件，防止局部网络波动覆盖完整缓存
@@ -6615,12 +6627,13 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
           end
           matchedStep = stObj
           if starterInZone and zoneStarter then
+            local validCoords = type(zoneStarter.x) == "number" and type(zoneStarter.y) == "number" and zoneStarter.x >= 0 and zoneStarter.y >= 0
             matchedStarter = {
               npc = zoneStarter.npc,
               zone = cleanZone,
               areaId = zoneStarter.areaId,
-              x = zoneStarter.x,
-              y = zoneStarter.y,
+              x = validCoords and zoneStarter.x or nil,
+              y = validCoords and zoneStarter.y or nil,
             }
           elseif not hasAnyStarterArea and started and type(started[3]) == "table" and #started[3] > 0 then
             local getItemCount = GetItemCount or (C_Item and C_Item.GetItemCount)
