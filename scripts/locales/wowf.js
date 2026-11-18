@@ -6255,6 +6255,16 @@ local function IsZoneStepUnlocked(st)
       return false
     end
   end
+  if _G.QuestDB and _G.QuestDB.breadcrumbs then
+    local bcs = _G.QuestDB.breadcrumbs(sid)
+    if type(bcs) == "table" then
+      for _, bcId in ipairs(bcs) do
+        if IsQuestActiveById(bcId) then
+          return false
+        end
+      end
+    end
+  end
   if _G.QuestDB and _G.QuestDB.availableUntilCompleted then
     local closingQid = _G.QuestDB.availableUntilCompleted(sid)
     if type(closingQid) == "number" and closingQid > 0 and IsQuestCompletedById(closingQid) then
