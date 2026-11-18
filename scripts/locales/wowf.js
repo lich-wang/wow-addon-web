@@ -2141,6 +2141,7 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
     };
     const seenTableRecords = new Set();
     const expectedTableChecks = [];
+    const maskByEntity = new Map();
     const processDecodedRecord = (kind, entityId, field, rawBase64) => {
       try {
         const val = decodeCborValue(Buffer.from(rawBase64, 'base64'));
@@ -2151,7 +2152,9 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
         if (field !== 'S') {
           seenTableRecords.add(`${kind}:${entityId}:${field}`);
         } else if (typeof val.p === 'number' && Number.isSafeInteger(val.p) && val.p >= 0) {
-          expectedTableChecks.push({ kind, entityId, mask: BigInt(val.p) });
+          const mask = BigInt(val.p);
+          expectedTableChecks.push({ kind, entityId, mask });
+          maskByEntity.set(`${kind}:${entityId}`, mask);
         }
         if (kind === 'Npc') {
           if (field === '7' && val && typeof val === 'object') {
@@ -2270,6 +2273,13 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
             parseErrors++;
           }
         }
+      }
+    }
+    for (const recKey of seenTableRecords) {
+      const [kind, eid, fieldStr] = recKey.split(':');
+      const mask = maskByEntity.get(`${kind}:${eid}`);
+      if (mask === undefined || !((mask >> BigInt(Number(fieldStr) - 1)) & 1n)) {
+        parseErrors++;
       }
     }
     dbMap._parseErrors = parseErrors;
@@ -6513,8 +6523,17 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
   local sameQuestieDbVersion = (type(bundledQdbVer) == "string" and bundledQdbVer ~= "" and clientQdbVer == bundledQdbVer)
 
   for _, q in ipairs(pool) do
-    local factionOk = (q.faction == "both" or q.faction == state.faction)
-    if factionOk and MatchesQuestRace(q) and (not sameQuestieDbVersion or (q.min <= lvl and q.maxLv >= minOkLv)) and GetQuestieQuestInfo(q.id) ~= nil then
+    local preFilterOk = false
+    if GetQuestieQuestInfo(q.id) ~= nil then
+      if sameQuestieDbVersion then
+        local factionOk = (q.faction == "both" or q.faction == state.faction)
+        preFilterOk = factionOk and MatchesQuestRace(q) and q.min <= lvl and q.maxLv >= minOkLv
+      else
+        local liveRaces = _G.QuestDB and _G.QuestDB.requiredRaces and _G.QuestDB.requiredRaces(q.id)
+        preFilterOk = (type(liveRaces) ~= "number" or liveRaces <= 0 or MatchesQuestRace({ r = liveRaces }))
+      end
+    end
+    if preFilterOk then
       ResolveQuestChainFromQuestieDB(q)
       local cand = CloneZoneQuestCandidate(q)
 
