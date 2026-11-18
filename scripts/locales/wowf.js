@@ -2259,9 +2259,9 @@ function annotateQuestStepsPrereqs(steps, questiePrereqs) {
 }
 
 const ZONE_NAME_TO_AREA_IDS = {
-  艾尔文森林: [12, 6170, 16510],
-  丹莫罗: [1, 131, 133, 135, 801, 6176, 6457],
-  泰达希尔: [141],
+  艾尔文森林: [12, 9, 6170, 16510],
+  丹莫罗: [1, 132, 131, 133, 135, 801, 6176, 6457],
+  泰达希尔: [141, 188],
   西部荒野: [40],
   洛克莫丹: [38, 146],
   黑海岸: [148, 442],
@@ -2294,9 +2294,9 @@ const ZONE_NAME_TO_AREA_IDS = {
   冬泉谷: [618],
   希利苏斯: [1377],
   海加尔山: [616],
-  杜隆塔尔: [14],
-  提瑞斯法林地: [85, 6454],
-  莫高雷: [215],
+  杜隆塔尔: [14, 363],
+  提瑞斯法林地: [85, 154, 6454],
+  莫高雷: [215, 220],
   贫瘠之地: [17, 392],
   银松森林: [130],
   泽风岛: [16593],
@@ -2371,12 +2371,16 @@ function buildZoneQuestsIndex(questiePrereqs) {
       }
     }
 
-    // 确保每个区域起点的可接任务在运行时回溯深度 (depth < 12) 内都可达；超出深度的前置保留独立入口
-    const reachable = new Set();
-    const markReachable = (curId, depth) => {
-      if (depth >= 12 || reachable.has(curId)) return;
-      reachable.add(curId);
+    // 按适用种族校验每个区域起点的可接任务在运行时回溯深度 (depth < 12) 内是否可达；对存在未覆盖种族的步骤保留独立入口
+    const reachableByRace = new Map();
+    const markReachable = (curId, depth, pathRaces) => {
+      if (depth >= 12 || pathRaces === 0n) return;
       const cur = questiePrereqs.get(curId);
+      const eff = cur ? pathRaces & effectiveRaces(cur.races) : pathRaces;
+      if (eff === 0n) return;
+      const prev = reachableByRace.get(curId) || 0n;
+      if ((prev & eff) === eff) return;
+      reachableByRace.set(curId, prev | eff);
       if (!cur) return;
       const preIds =
         Array.isArray(cur.preGroup) && cur.preGroup.length > 0
@@ -2385,18 +2389,22 @@ function buildZoneQuestsIndex(questiePrereqs) {
             ? [cur.preSingle[0]]
             : [];
       for (const pid of preIds) {
-        if (pid) markReachable(pid, depth + 1);
+        if (pid) markReachable(pid, depth + 1, eff);
       }
     };
-    for (const [qid] of list) {
+    for (const [qid, info] of list) {
       if (!covered.has(qid)) {
-        markReachable(qid, 0);
+        markReachable(qid, 0, effectiveRaces(info.races));
       }
     }
-    for (const [qid] of list) {
-      if (covered.has(qid) && !reachable.has(qid)) {
-        covered.delete(qid);
-        markReachable(qid, 0);
+    for (const [qid, info] of list) {
+      if (covered.has(qid)) {
+        const needed = effectiveRaces(info.races);
+        const reached = reachableByRace.get(qid) || 0n;
+        if ((needed & ~reached) !== 0n) {
+          covered.delete(qid);
+          markReachable(qid, 0, needed);
+        }
       }
     }
 
@@ -4623,10 +4631,9 @@ end
 
 local questieNpcCache = {}
 local questieObjectCache = {}
-local function ResolveQuestieEntity(entityIds, db, cache)
-  if type(entityIds) ~= "table" or not db then return nil end
-  local entityId = tonumber(entityIds[1])
-  if not entityId or entityId <= 0 then return nil end
+local function ResolveSingleQuestieEntity(entityId, db, cache)
+  entityId = tonumber(entityId)
+  if not entityId or entityId <= 0 or not db then return nil end
   if cache[entityId] ~= nil then
     return cache[entityId] or nil
   end
@@ -4664,12 +4671,27 @@ local function ResolveQuestieEntity(entityIds, db, cache)
   return res
 end
 
-local function ResolveQuestieNpc(npcIds)
-  return ResolveQuestieEntity(npcIds, _G.NpcDB, questieNpcCache)
+local function ResolveQuestieEntity(entityIds, db, cache, preferredZone)
+  if type(entityIds) ~= "table" or not db then return nil end
+  local fallback = nil
+  for _, eid in ipairs(entityIds) do
+    local res = ResolveSingleQuestieEntity(eid, db, cache)
+    if res then
+      if not fallback then fallback = res end
+      if preferredZone and preferredZone ~= "" and res.zone == preferredZone then
+        return res
+      end
+    end
+  end
+  return fallback
 end
 
-local function ResolveQuestieObject(objectIds)
-  return ResolveQuestieEntity(objectIds, _G.ObjectDB, questieObjectCache)
+local function ResolveQuestieNpc(npcIds, preferredZone)
+  return ResolveQuestieEntity(npcIds, _G.NpcDB, questieNpcCache, preferredZone)
+end
+
+local function ResolveQuestieObject(objectIds, preferredZone)
+  return ResolveQuestieEntity(objectIds, _G.ObjectDB, questieObjectCache, preferredZone)
 end
 
 local questieQuestInfoCache = {}
@@ -5999,6 +6021,12 @@ local function IsZoneStepUnlocked(st)
       return false
     end
   end
+  if _G.QuestDB and _G.QuestDB.breadcrumbForQuestId then
+    local targetQid = _G.QuestDB.breadcrumbForQuestId(sid)
+    if type(targetQid) == "number" and targetQid > 0 and (IsQuestCompletedById(targetQid) or IsQuestActiveById(targetQid)) then
+      return false
+    end
+  end
   if _G.QuestDB and _G.QuestDB.exclusiveTo then
     local ex = _G.QuestDB.exclusiveTo(sid)
     if type(ex) == "table" then
@@ -6197,11 +6225,18 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
 
         if matchedStep then
           local mId = tonumber(matchedStep.id)
-          local mInfo = mId and GetQuestieQuestInfo(mId) or nil
-          local mZone = (matchedStep.zone and matchedStep.zone ~= "" and matchedStep.zone) or (mInfo and mInfo.zone) or ""
           local cleanZone = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
+          local started = mId and _G.QuestDB and _G.QuestDB.startedBy and _G.QuestDB.startedBy(mId)
+          local zoneStarter = started and (ResolveQuestieNpc(started[1], cleanZone) or ResolveQuestieObject(started[2], cleanZone)) or nil
+          local mInfo = mId and GetQuestieQuestInfo(mId) or nil
+          local mZone = (zoneStarter and zoneStarter.zone ~= "" and zoneStarter.zone)
+            or (matchedStep.zone and matchedStep.zone ~= "" and matchedStep.zone)
+            or (mInfo and mInfo.zone) or ""
           local inThisZone = (mZone == "" or mZone == cleanZone or (mId and IsQuestActiveById(mId)))
           if inThisZone then
+            if zoneStarter and zoneStarter.zone == cleanZone then
+              cand._matchedStarter = zoneStarter
+            end
             cand._matchedStep = matchedStep
             cand._acceptLv = acceptLv
             table.insert(candidates, cand)
@@ -7180,7 +7215,7 @@ local function RenderTabRoutes()
               end
               for _, grp in ipairs(groups) do
                 local q = grp.quests[1]
-                local matched = q._matchedStep or q
+                local matched = q._matchedStarter or q._matchedStep or q
                 local qZone = (matched.zone and matched.zone ~= "") and matched.zone or ((q.zone and q.zone ~= "") and q.zone or zInfo.zone)
                 local acceptLv = q._acceptLv or q.minLevel or q.min or zInfo.from
                 local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", acceptLv) or ""

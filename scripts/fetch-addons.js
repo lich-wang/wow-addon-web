@@ -588,8 +588,22 @@ async function processQuestieForever() {
   console.log('Fetching Questie Core + QuestieDB Forever...');
   const coreBuf = await downloadBuffer(coreUrl, 'questie-core.zip');
   const tmpFilename = makeTempQuestieDBFilename();
-  const { dbUrl, dbBuf } = await downloadQuestieDBForever(tmpFilename);
-  await promoteValidQuestieDBTemp(tmpFilename);
+  let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
+  let dbBuf;
+  try {
+    const res = await downloadQuestieDBForever(tmpFilename);
+    dbUrl = res.dbUrl;
+    dbBuf = res.dbBuf;
+    await promoteValidQuestieDBTemp(tmpFilename);
+  } catch (err) {
+    const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+    if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
+      console.warn(`[Questie] QuestieDB download failed (${err.message}); falling back to cached questie-db-forever.zip.`);
+      dbBuf = fs.readFileSync(dbCachePath);
+    } else {
+      throw err;
+    }
+  }
 
   const zip = await JSZip.loadAsync(coreBuf);
   await patchQuestie(zip);

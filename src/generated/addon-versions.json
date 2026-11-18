@@ -44,7 +44,7 @@
     "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v3.0.0/SpellActivationOverlay-3.0.0-universal.zip"
   },
   "wowf": {
-    "version": "v1.2.33 + DB v2026.11.17",
+    "version": "v1.2.34 + DB v2026.11.17",
     "source": "https://wowf.io/zh (deploy-f029627a-1794959298841)"
   }
 }
