@@ -4656,7 +4656,8 @@ local function DedupeQuestieQuests(quests)
     local tHasNpc = (tStep.npc and tStep.npc ~= "")
     local tHasPlace = (tStep.place and tStep.place ~= "")
     local tHasCoords = (tStep.x ~= nil and tStep.y ~= nil)
-    if not tHasNpc and not tHasPlace and not tHasCoords then return true end
+    local tz = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
+    if not tHasNpc and not tHasPlace and not tHasCoords and tz == "" then return true end
     if type(hStep) ~= "table" then return false end
     if tHasNpc and (hStep.npc or "") ~= tStep.npc then
       return false
@@ -4665,7 +4666,6 @@ local function DedupeQuestieQuests(quests)
       return false
     end
     local hz = (hStep.zone and hStep.zone ~= "") and hStep.zone or (hFallbackZone or "")
-    local tz = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
     if tz ~= "" and hz ~= tz then
       return false
     end
@@ -4681,18 +4681,18 @@ local function DedupeQuestieQuests(quests)
   end
   local function stepTurninCovers(hStep, tStep, hFallbackZone, tFallbackZone)
     if type(tStep) ~= "table" then return true end
-    local tHasNpc = (tStep.endNpc and tStep.endNpc ~= "")
-    local tHasCoords = (tStep.endX ~= nil and tStep.endY ~= nil)
-    if not tHasNpc and not tHasCoords then return true end
+    local tPickupZone = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
+    local tEndZone = (tStep.endZone and tStep.endZone ~= "") and tStep.endZone or tPickupZone
+    local tHasEnd = (tStep.endNpc and tStep.endNpc ~= "") and (tStep.endNpc ~= tStep.npc or tEndZone ~= tPickupZone or tStep.endX ~= tStep.x or tStep.endY ~= tStep.y)
+    if not tHasEnd then return true end
     if type(hStep) ~= "table" then return false end
-    if tHasNpc and (hStep.endNpc or "") ~= tStep.endNpc then return false end
-    if tHasCoords then
-      if hStep.endX == nil or hStep.endY == nil then return false end
-      local hPickupZone = (hStep.zone and hStep.zone ~= "") and hStep.zone or (hFallbackZone or "")
-      local tPickupZone = (tStep.zone and tStep.zone ~= "") and tStep.zone or (tFallbackZone or "")
-      local hEndZone = (hStep.endZone and hStep.endZone ~= "") and hStep.endZone or hPickupZone
-      local tEndZone = (tStep.endZone and tStep.endZone ~= "") and tStep.endZone or tPickupZone
-      if tEndZone ~= "" and hEndZone ~= tEndZone then return false end
+    local hPickupZone = (hStep.zone and hStep.zone ~= "") and hStep.zone or (hFallbackZone or "")
+    local hEndZone = (hStep.endZone and hStep.endZone ~= "") and hStep.endZone or hPickupZone
+    local hHasEnd = (hStep.endNpc and hStep.endNpc ~= "") and (hStep.endNpc ~= hStep.npc or hEndZone ~= hPickupZone or hStep.endX ~= hStep.x or hStep.endY ~= hStep.y)
+    if not hHasEnd then return false end
+    if hStep.endNpc ~= tStep.endNpc then return false end
+    if tEndZone ~= "" and hEndZone ~= tEndZone then return false end
+    if tStep.endX ~= nil and tStep.endY ~= nil then
       if hStep.endX ~= tStep.endX or hStep.endY ~= tStep.endY then return false end
     end
     return true
@@ -4715,9 +4715,11 @@ local function DedupeQuestieQuests(quests)
     local ts = (type(target.steps) == "table" and target.steps[#target.steps]) or target
     return stepPickupCovers(hs, ts, hFallbackZone, tFallbackZone) and stepTurninCovers(hs, ts, hFallbackZone, tFallbackZone)
   end
-  local function areOmittedStepsBreadcrumbs(ids, offset)
+  local function areOmittedStepsBreadcrumbs(ids, offset, qSteps)
     if not (_G.QuestDB and _G.QuestDB.breadcrumbs) then return false end
+    local omittedSet = {}
     for k = 1, offset do
+      omittedSet[ids[k]] = true
       local prevId = ids[k]
       local nextId = ids[k + 1]
       local bcs = nextId and _G.QuestDB.breadcrumbs(nextId) or nil
@@ -4731,6 +4733,19 @@ local function DedupeQuestieQuests(quests)
         end
       end
       if not found then return false end
+    end
+    if type(qSteps) == "table" then
+      for k = offset + 1, #qSteps do
+        local st = qSteps[k]
+        if st then
+          if st.preId and omittedSet[tonumber(st.preId)] then return false end
+          if type(st.reqAll) == "table" then
+            for _, rid in ipairs(st.reqAll) do
+              if omittedSet[tonumber(rid)] then return false end
+            end
+          end
+        end
+      end
     end
     return true
   end
@@ -4765,7 +4780,7 @@ local function DedupeQuestieQuests(quests)
             for k = 1, #oIds do
               if oIds[k] ~= ids[offset + k] then match = false break end
             end
-            if match and areOmittedStepsBreadcrumbs(ids, offset) then redundant = true break end
+            if match and areOmittedStepsBreadcrumbs(ids, offset, q.steps) then redundant = true break end
           end
         elseif #oIds == #ids and #ids > 0 then
           local match = true
