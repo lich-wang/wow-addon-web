@@ -27,6 +27,7 @@ class Aec3Processor extends AudioWorkletProcessor {
   private instance: WebRtcAudioProcessing | null = null;
   private aec: EchoCanceller | null = null;
   private enabled = true;
+  private disposed = false;
   private error: string | null = null;
   private readonly rate: 16000 | 48000;
 
@@ -46,7 +47,11 @@ class Aec3Processor extends AudioWorkletProcessor {
 
     this.port.onmessage = (event: MessageEvent) => {
       const data = (event.data ?? {}) as { type?: string; value?: boolean };
-      if (data.type === 'enabled') {
+      if (data.type === 'dispose') {
+        this.disposed = true;
+        this.destroyCanceller();
+        this.instance = null;
+      } else if (data.type === 'enabled') {
         const next = Boolean(data.value);
         if (next === this.enabled) return;
         this.enabled = next;
@@ -91,6 +96,7 @@ class Aec3Processor extends AudioWorkletProcessor {
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    if (this.disposed) return false;
     const output = outputs[0]?.[0];
     if (!output) return true;
     const mic = inputs[0]?.[0];

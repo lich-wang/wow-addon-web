@@ -5,7 +5,7 @@
 
 | 组件 | 版本 | 许可 | 用途 | 许可文本 |
 | --- | --- | --- | --- | --- |
-| [`@ai-ecoverse/wasm-webrtc-audio-processing`](https://www.npmjs.com/package/@ai-ecoverse/wasm-webrtc-audio-processing) | 2.1.0-2 | BSD-3-Clause AND Apache-2.0 | WebRTC AEC3 回声消除（WASM），用于本机麦克风降噪/回声消除 | [LICENSE](wasm-webrtc-audio-processing.LICENSE.txt)、[THIRD-PARTY-NOTICES](wasm-webrtc-audio-processing.THIRD-PARTY-NOTICES.md) |
+| [`@ai-ecoverse/wasm-webrtc-audio-processing`](https://www.npmjs.com/package/@ai-ecoverse/wasm-webrtc-audio-processing) | 2.1.0-2 | BSD-3-Clause AND Apache-2.0 | WebRTC AEC3 回声消除（WASM），用于本机麦克风降噪/回声消除 | [LICENSE](licenses/wasm-webrtc-audio-processing.LICENSE.txt)、[THIRD-PARTY-NOTICES](licenses/wasm-webrtc-audio-processing.THIRD-PARTY-NOTICES.md) |
 
 其中 wasm 由 freedesktop 的 `webrtc-audio-processing` 2.1（WebRTC AudioProcessing，BSD-3-Clause）
 与 abseil-cpp（Apache-2.0）编译而来，`THIRD-PARTY-NOTICES` 列出了它链接的全部上游许可，

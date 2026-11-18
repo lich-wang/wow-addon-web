@@ -39,6 +39,9 @@ const ECHO_CANCELLER_STORAGE_KEY = 'wow_voice_echo_canceller';
 
 /** AEC3 只支持 16k / 48k，AudioContext 因此固定为 48k。 */
 const AEC_SAMPLE_RATE = 48000;
+/** 组件加载与处理器就绪的超时，避免 AEC 卡住整个加入流程。 */
+const AEC_LOAD_TIMEOUT_MS = 8000;
+const AEC_READY_TIMEOUT_MS = 3000;
 
 export interface MicProcessingSettings {
   /** 降噪：请求噪声抑制 + 自动增益 + 人声隔离（浏览器自带处理）。 */
@@ -194,6 +197,41 @@ async function compileAudioProcessingWasm(url: string): Promise<WebAssembly.Modu
   return WebAssembly.compile(await response.arrayBuffer());
 }
 
+/** 给异步加载加超时，超时后走原始麦克风回退。 */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+/** 等待 worklet 报告自身初始化结果（构造时就会 postMessage ready）。 */
+function waitForAecReady(node: AudioWorkletNode, timeoutMs: number): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const finish = (result: { ok: boolean; error?: string }) => {
+      window.clearTimeout(timer);
+      node.port.removeEventListener('message', onMessage);
+      resolve(result);
+    };
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; error?: string | null } | null;
+      if (data?.type !== 'ready') return;
+      finish(data.error ? { ok: false, error: data.error } : { ok: true });
+    };
+    const timer = window.setTimeout(() => finish({ ok: false, error: '回声消除处理器初始化超时' }), timeoutMs);
+    node.port.addEventListener('message', onMessage);
+    node.port.start();
+  });
+}
 async function computeAuthHash(roomId: string, password: string): Promise<string> {
   if (typeof crypto === 'undefined' || !crypto.subtle) {
     throw new Error('当前浏览器环境不支持安全加密校验（需要 HTTPS），无法加入加密语音房间。');
@@ -213,6 +251,13 @@ interface AudioMonitor {
   gain?: GainNode;
 }
 
+/** 本机回声消除的处理图：麦克风源 → worklet → 发送流，参考输入来自各远端播放。 */
+interface AecGraph {
+  node: AudioWorkletNode;
+  reference: GainNode;
+  destination: MediaStreamAudioDestinationNode;
+  micSource: MediaStreamAudioSourceNode;
+}
 export interface VoiceStateSnapshot {
   status: VoiceConnectionStatus;
   roomId: string;
@@ -293,10 +338,8 @@ export class VoiceRoomManager {
   } | null = null;
   /** 原始麦克风流（getUserMedia 的结果），用于重采/设置查询与停止。 */
   private captureStream: MediaStream | null = null;
-  private aecNode: AudioWorkletNode | null = null;
-  private aecReferenceGain: GainNode | null = null;
-  private aecDestination: MediaStreamAudioDestinationNode | null = null;
-  private aecMicSource: MediaStreamAudioSourceNode | null = null;
+  /** 当前生效的 AEC 图；为空表示回声消除没有接进链路。 */
+  private aecGraph: AecGraph | null = null;
   private aecWasmModule: WebAssembly.Module | null = null;
   private aecLoadPromise: Promise<boolean> | null = null;
   /** aecLoadPromise 绑定的 AudioContext；退房会关掉旧 context，必须重载模块。 */
@@ -368,11 +411,16 @@ export class VoiceRoomManager {
   }
 
   private computeMicProcessing(): MicProcessingState {
+    const attached = Boolean(this.aecGraph && this.captureStream && this.localStream !== this.captureStream);
+    // 远端若退回 <audio> 元素播放，那一路声音进不了 Web Audio 参考，AEC 就接不全。
+    const playbackComplete = !Array.from(this.peerPlaybackModes.values()).some((mode) => mode === 'audio-element');
     return {
       noiseSuppression: this.micNoiseSuppression,
       echoCanceller: this.aecEnabled,
-      echoCancellerActive: Boolean(this.aecNode && this.captureStream && this.localStream !== this.captureStream),
-      echoCancellerError: this.aecError,
+      echoCancellerActive: attached && playbackComplete,
+      echoCancellerError: playbackComplete
+        ? this.aecError
+        : '远端语音走 <audio> 播放，无法接入回声参考；请改用默认输出设备',
       echoCancellationActive: this.micAppliedSettings?.echoCancellation ?? null,
       noiseSuppressionActive: this.micAppliedSettings?.noiseSuppression ?? null,
     };
@@ -543,8 +591,8 @@ export class VoiceRoomManager {
         gain.gain.value = this.isDeafened ? 0 : (this.peerVolumes.get(key) ?? 1);
         source.connect(gain);
         gain.connect(ctx.destination);
-        // 同一路信号再送进 AEC 的参考输入（没有 AEC 时为 null，跳过）。
-        if (this.aecReferenceGain) gain.connect(this.aecReferenceGain);
+        // 同一路信号再送进 AEC 的参考输入（没有 AEC 时跳过）。
+        if (this.aecGraph) gain.connect(this.aecGraph.reference);
       }
       const dataArray = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
       this.monitors.set(key, { source, analyser, dataArray, gain: gain ?? undefined });
@@ -1316,8 +1364,8 @@ export class VoiceRoomManager {
   }
 
   /**
-   * 准备 AEC3：编译 wasm + 加载 AudioWorklet 模块（只做一次）。
-   * 浏览器不支持 AudioWorklet 或加载失败时返回 false，调用方回退到原始麦克风。
+   * 准备 AEC3：编译 wasm + 加载 AudioWorklet 模块（每个 AudioContext 只做一次）。
+   * 浏览器不支持 AudioWorklet、超时或加载失败时返回 false，调用方回退到原始麦克风。
    */
   private async ensureAec3(ctx: AudioContext): Promise<boolean> {
     if (!ctx.audioWorklet) {
@@ -1329,9 +1377,15 @@ export class VoiceRoomManager {
     this.aecLoadContext = ctx;
     this.aecLoadPromise = (async () => {
       try {
-        const wasm = this.aecWasmModule ?? (await compileAudioProcessingWasm(aecWasmUrl));
-        const [, wasmModule] = await Promise.all([ctx.audioWorklet.addModule(aecWorkletUrl), wasm]);
-        this.aecWasmModule = wasmModule;
+        await withTimeout(
+          (async () => {
+            const wasm = this.aecWasmModule ?? (await compileAudioProcessingWasm(aecWasmUrl));
+            await ctx.audioWorklet.addModule(aecWorkletUrl);
+            this.aecWasmModule = wasm;
+          })(),
+          AEC_LOAD_TIMEOUT_MS,
+          '回声消除组件加载超时'
+        );
         this.aecError = null;
         return true;
       } catch (err) {
@@ -1345,100 +1399,165 @@ export class VoiceRoomManager {
     return this.aecLoadPromise;
   }
 
-  /**
-   * 建立「麦克风 → AEC3 → 发送」的处理链路，并把所有远端播放接成参考信号。
-   * 失败或关闭时直接返回原始麦克风流。
-   */
-  private async buildOutboundStream(raw: MediaStream): Promise<MediaStream> {
-    const ctx = this.ensureAudioContext();
-    if (!ctx || !this.aecEnabled || this.listenOnly || !raw.getAudioTracks().length) {
-      this.teardownAecGraph();
-      return raw;
-    }
-    if (ctx.sampleRate !== 48000 && ctx.sampleRate !== 16000) {
-      this.aecError = `当前音频采样率 ${Math.round(ctx.sampleRate)}Hz 不受 AEC3 支持`;
-      return raw;
-    }
-    if (!(await this.ensureAec3(ctx))) return raw;
-    // 编译期间用户可能已经关掉了开关。
-    if (!this.aecEnabled || !this.aecWasmModule) return raw;
+  /** 建一张新的 AEC 图（不触碰当前生效的那张）。 */
+  private async createAecGraph(ctx: AudioContext, raw: MediaStream): Promise<AecGraph> {
+    if (!this.aecWasmModule) throw new Error('回声消除组件尚未加载');
+    const node = new AudioWorkletNode(ctx, 'wow-aec3', {
+      numberOfInputs: 2,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      channelCount: 1,
+      channelCountMode: 'explicit',
+      processorOptions: {
+        module: this.aecWasmModule,
+        sampleRate: ctx.sampleRate,
+        enabled: true,
+      },
+    });
+    const destination = ctx.createMediaStreamDestination();
+    const reference = ctx.createGain();
+    const micSource = ctx.createMediaStreamSource(raw);
 
+    micSource.connect(node, 0, 0);
+    reference.connect(node, 0, 1);
+    node.connect(destination);
+    // 已经连上的远端播放也要接进参考，否则它们不会被抵消。
+    for (const monitor of this.monitors.values()) {
+      if (monitor.gain) monitor.gain.connect(reference);
+    }
+
+    const graph: AecGraph = { node, reference, destination, micSource };
     try {
-      this.teardownAecGraph();
-      const node = new AudioWorkletNode(ctx, 'wow-aec3', {
-        numberOfInputs: 2,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        channelCount: 1,
-        channelCountMode: 'explicit',
-        processorOptions: {
-          module: this.aecWasmModule,
-          sampleRate: ctx.sampleRate,
-          enabled: true,
-        },
-      });
-      const destination = ctx.createMediaStreamDestination();
-      const reference = ctx.createGain();
-      const micSource = ctx.createMediaStreamSource(raw);
-
-      micSource.connect(node, 0, 0);
-      reference.connect(node, 0, 1);
-      node.connect(destination);
-      // 已经连上的远端播放也要接进参考，否则它们不会被抵消。
-      for (const monitor of this.monitors.values()) {
-        if (monitor.gain) monitor.gain.connect(reference);
-      }
-
-      this.aecNode = node;
-      this.aecReferenceGain = reference;
-      this.aecDestination = destination;
-      this.aecMicSource = micSource;
-      return destination.stream;
+      const ready = await waitForAecReady(node, AEC_READY_TIMEOUT_MS);
+      if (!ready.ok) throw new Error(ready.error ?? '回声消除处理器初始化失败');
+      return graph;
     } catch (err) {
-      this.aecError = err instanceof Error ? err.message : String(err);
-      this.teardownAecGraph();
-      return raw;
+      this.disposeAecGraph(graph);
+      throw err;
     }
   }
 
-  private teardownAecGraph(): void {
+  /**
+   * 生成发送流：AEC 可用时返回处理后的流，否则原样返回麦克风流。
+   * 新图只在这里创建，提交/释放由调用方通过 commitAecGraph / disposeAecGraph 决定。
+   */
+  private async buildOutboundStream(raw: MediaStream): Promise<{ stream: MediaStream; graph: AecGraph | null }> {
+    const ctx = this.ensureAudioContext();
+    if (!ctx || !this.aecEnabled || this.listenOnly || !raw.getAudioTracks().length) {
+      return { stream: raw, graph: null };
+    }
+    if (ctx.sampleRate !== 48000 && ctx.sampleRate !== 16000) {
+      this.aecError = `当前音频采样率 ${Math.round(ctx.sampleRate)}Hz 不受 AEC3 支持`;
+      return { stream: raw, graph: null };
+    }
+    if (!(await this.ensureAec3(ctx))) return { stream: raw, graph: null };
+    // 加载期间用户可能已经关掉了开关。
+    if (!this.aecEnabled || !this.aecWasmModule) return { stream: raw, graph: null };
+
     try {
-      this.aecMicSource?.disconnect();
-      this.aecReferenceGain?.disconnect();
-      this.aecNode?.disconnect();
+      const graph = await this.createAecGraph(ctx, raw);
+      this.aecError = null;
+      return { stream: graph.destination.stream, graph };
+    } catch (err) {
+      this.aecError = err instanceof Error ? err.message : String(err);
+      return { stream: raw, graph: null };
+    }
+  }
+
+  /** 提交新图并释放旧图；旧图的发送音轨在这里才停。 */
+  private commitAecGraph(graph: AecGraph | null): void {
+    const previous = this.aecGraph;
+    this.aecGraph = graph;
+    if (graph) {
+      for (const monitor of this.monitors.values()) {
+        if (monitor.gain) monitor.gain.connect(graph.reference);
+      }
+    }
+    this.disposeAecGraph(previous);
+  }
+
+  private disposeAecGraph(graph: AecGraph | null): void {
+    if (!graph) return;
+    try {
+      graph.node.port.postMessage({ type: 'dispose' });
+    } catch {
+      // 端口已关闭时忽略
+    }
+    try {
+      graph.micSource.disconnect();
+      graph.reference.disconnect();
+      graph.node.disconnect();
     } catch {
       // 节点已断开时忽略
     }
-    if (this.aecDestination) {
-      for (const track of this.aecDestination.stream.getTracks()) {
-        track.stop();
-      }
+    for (const track of graph.destination.stream.getTracks()) {
+      track.stop();
     }
-    this.aecNode = null;
-    this.aecReferenceGain = null;
-    this.aecDestination = null;
-    this.aecMicSource = null;
   }
 
   /** 运行时开关回声消除：重建发送链路并替换所有成员侧的音轨。 */
   private async applyEchoCanceller(): Promise<void> {
     const raw = this.captureStream;
     if (!raw) return;
+    const attemptId = this.joinAttemptId;
     const previous = this.localStream;
-    const next = await this.buildOutboundStream(raw);
-    const nextTrack = next.getAudioTracks()[0];
-    if (!nextTrack) return;
     const previousTrack = previous?.getAudioTracks()[0];
-    if (previousTrack && previousTrack !== nextTrack) {
-      try {
-        await this.replaceAudioTrackAcrossPeers(previousTrack, nextTrack, next, this.joinAttemptId);
-        previousTrack.stop();
-      } catch {
-        // 替换失败时保留旧链路，下次切换再试
-        return;
+
+    const built = await this.buildOutboundStream(raw);
+    if (this.joinAttemptId !== attemptId) {
+      this.disposeAecGraph(built.graph);
+      if (built.stream !== raw) {
+        for (const track of built.stream.getTracks()) track.stop();
       }
+      return;
     }
-    this.localStream = next;
+
+    const nextTrack = built.stream.getAudioTracks()[0];
+    if (!nextTrack) {
+      this.disposeAecGraph(built.graph);
+      return;
+    }
+    if (!previousTrack || previousTrack === nextTrack) {
+      this.localStream = built.stream;
+      this.commitAecGraph(built.graph);
+      this.applyMicTrackEnabled();
+      this.emit();
+      return;
+    }
+
+    // 替换期间新建的 peer 连接也要拿到待提交的音轨。
+    this.pendingMicTrack = nextTrack;
+    this.pendingMicStream = built.stream;
+    nextTrack.enabled = this.isMicSending();
+    try {
+      await this.replaceAudioTrackAcrossPeers(previousTrack, nextTrack, built.stream, attemptId);
+    } catch {
+      this.pendingMicTrack = null;
+      this.pendingMicStream = null;
+      if (previous) {
+        await this.replaceAudioTrackAcrossPeers(nextTrack, previousTrack, previous, attemptId).catch(() => {});
+      }
+      this.disposeAecGraph(built.graph);
+      this.emit();
+      return;
+    }
+    this.pendingMicTrack = null;
+    this.pendingMicStream = null;
+
+    if (this.joinAttemptId !== attemptId) {
+      this.disposeAecGraph(built.graph);
+      if (built.stream !== raw) {
+        for (const track of built.stream.getTracks()) track.stop();
+      }
+      return;
+    }
+
+    this.localStream = built.stream;
+    this.commitAecGraph(built.graph);
+    // 只停不再使用的处理输出音轨；原始麦克风要继续给 AEC 当输入。
+    if (previousTrack !== raw.getAudioTracks()[0]) {
+      previousTrack.stop();
+    }
     this.applyMicTrackEnabled();
     this.emit();
   }
@@ -1544,19 +1663,25 @@ export class VoiceRoomManager {
             }
             return;
           }
-          this.captureStream = acquiredStream;
           const outbound = await this.buildOutboundStream(acquiredStream);
           if (this.joinAttemptId !== attemptId) {
-            this.teardownAecGraph();
+            // 只清理本次操作自己创建的资源，不能动新会话的图/流。
+            this.disposeAecGraph(outbound.graph);
             for (const track of acquiredStream.getTracks()) {
               track.stop();
             }
-            this.captureStream = null;
+            if (outbound.stream !== acquiredStream) {
+              for (const track of outbound.stream.getTracks()) {
+                track.stop();
+              }
+            }
             return;
           }
-          this.localStream = outbound;
+          this.captureStream = acquiredStream;
+          this.localStream = outbound.stream;
+          this.commitAecGraph(outbound.graph);
           this.applyMicTrackEnabled();
-          this.attachMonitor('self', outbound);
+          this.attachMonitor('self', outbound.stream);
           void this.applyOutputDevice(this.selectedOutputDeviceId).catch(() => {});
         } catch (err) {
           if (this.joinAttemptId !== attemptId) return;
@@ -1914,11 +2039,11 @@ export class VoiceRoomManager {
       const oldCapture = this.captureStream;
       const oldTrack = this.localStream.getAudioTracks()[0];
 
-      if (this.aecNode && this.aecMicSource && this.audioContext) {
+      if (this.aecGraph && this.audioContext) {
         // AEC 已经在链路里：只替换麦克风输入，发送音轨不变，避免切换设备时断音。
-        this.aecMicSource.disconnect();
-        this.aecMicSource = this.audioContext.createMediaStreamSource(newStream);
-        this.aecMicSource.connect(this.aecNode, 0, 0);
+        this.aecGraph.micSource.disconnect();
+        this.aecGraph.micSource = this.audioContext.createMediaStreamSource(newStream);
+        this.aecGraph.micSource.connect(this.aecGraph.node, 0, 0);
         this.captureStream = newStream;
         this.selectedDeviceId = deviceId;
         this.applyMicTrackEnabled();
@@ -1930,9 +2055,11 @@ export class VoiceRoomManager {
       }
 
       // 没有 AEC（关闭或不可用）：沿用替换发送音轨的方式，并顺带重建处理链路。
-      const nextLocal = await this.buildOutboundStream(newStream);
+      const built = await this.buildOutboundStream(newStream);
+      const nextLocal = built.stream;
       const outboundTrack = nextLocal.getAudioTracks()[0];
       if (!outboundTrack) {
+        this.disposeAecGraph(built.graph);
         for (const track of newStream.getTracks()) {
           track.stop();
         }
@@ -1950,10 +2077,8 @@ export class VoiceRoomManager {
           this.pendingMicStream = this.localStream;
           await this.replaceAudioTrackAcrossPeers(outboundTrack, oldTrack, this.localStream, expectedAttemptId).catch(() => {});
         }
+        this.disposeAecGraph(built.graph);
         for (const track of newStream.getTracks()) {
-          track.stop();
-        }
-        for (const track of nextLocal.getTracks()) {
           track.stop();
         }
         throw err;
@@ -1965,6 +2090,7 @@ export class VoiceRoomManager {
       }
 
       if (this.joinAttemptId !== expectedAttemptId || !this.ws) {
+        this.disposeAecGraph(built.graph);
         for (const track of newStream.getTracks()) {
           track.stop();
         }
@@ -1973,6 +2099,7 @@ export class VoiceRoomManager {
 
       this.captureStream = newStream;
       this.localStream = nextLocal;
+      this.commitAecGraph(built.graph);
       this.applyMicTrackEnabled();
       this.selectedDeviceId = deviceId;
       this.attachMonitor('self', nextLocal);
@@ -1980,6 +2107,7 @@ export class VoiceRoomManager {
         if (track !== newTrack) track.stop();
       }
       this.emit();
+
     };
 
     const next = this.micSwitchChain.then(runSwitch, runSwitch);
@@ -2058,7 +2186,8 @@ export class VoiceRoomManager {
     }
 
     // 先拆 AEC（它持有麦克风源节点），再停流。
-    this.teardownAecGraph();
+    this.disposeAecGraph(this.aecGraph);
+    this.aecGraph = null;
     if (this.localStream) {
       for (const track of this.localStream.getTracks()) {
         track.stop();
