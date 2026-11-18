@@ -1495,6 +1495,15 @@ export class VoiceRoomManager {
     }
   }
 
+  /** 切麦和 AEC 开关会改同一份发送链路，必须串行执行，避免互相踩流。 */
+  private queueMicOperation<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.micSwitchChain.then(task, task);
+    this.micSwitchChain = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  }
   /** 运行时开关回声消除：重建发送链路并替换所有成员侧的音轨。 */
   private async applyEchoCanceller(): Promise<void> {
     const raw = this.captureStream;
@@ -1554,6 +1563,7 @@ export class VoiceRoomManager {
 
     this.localStream = built.stream;
     this.commitAecGraph(built.graph);
+    this.attachMonitor('self', built.stream);
     // 只停不再使用的处理输出音轨；原始麦克风要继续给 AEC 当输入。
     if (previousTrack !== raw.getAudioTracks()[0]) {
       previousTrack.stop();
@@ -1583,7 +1593,7 @@ export class VoiceRoomManager {
       await this.applyMicNoiseSuppression();
     }
     if (patch.echoCanceller !== undefined && !this.listenOnly) {
-      await this.applyEchoCanceller();
+      await this.queueMicOperation(() => this.applyEchoCanceller());
     }
     this.emit();
   }
@@ -2110,9 +2120,7 @@ export class VoiceRoomManager {
 
     };
 
-    const next = this.micSwitchChain.then(runSwitch, runSwitch);
-    this.micSwitchChain = next.catch(() => {});
-    return next;
+    return this.queueMicOperation(runSwitch);
   }
 
   async sendChatMessage(text: string): Promise<void> {
