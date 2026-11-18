@@ -4651,13 +4651,49 @@ local function DedupeQuestieQuests(quests)
     end
     return true
   end
-  local function hasNavInfo(entry)
-    if type(entry) ~= "table" then return false end
-    if entry.x ~= nil and entry.y ~= nil then return true end
-    if type(entry.steps) == "table" and entry.steps[1] and entry.steps[1].x ~= nil and entry.steps[1].y ~= nil then
+  local function stepPickupCovers(hStep, tStep)
+    if type(tStep) ~= "table" or tStep.x == nil or tStep.y == nil then
       return true
     end
-    return false
+    if type(hStep) ~= "table" or hStep.x == nil or hStep.y == nil then
+      return false
+    end
+    local tz = tStep.zone or ""
+    if tz ~= "" and (hStep.zone or "") ~= tz then
+      return false
+    end
+    return hStep.x == tStep.x and hStep.y == tStep.y
+  end
+  local function stepTurninCovers(hStep, tStep)
+    if type(tStep) ~= "table" then return true end
+    local tHasNpc = (tStep.endNpc and tStep.endNpc ~= "")
+    local tHasCoords = (tStep.endX ~= nil and tStep.endY ~= nil)
+    if not tHasNpc and not tHasCoords then return true end
+    if type(hStep) ~= "table" then return false end
+    if tHasNpc and (not hStep.endNpc or hStep.endNpc == "") then return false end
+    if tHasCoords then
+      if hStep.endX == nil or hStep.endY == nil then return false end
+      local tez = tStep.endZone or ""
+      if tez ~= "" and (hStep.endZone or "") ~= tez then return false end
+      if hStep.endX ~= tStep.endX or hStep.endY ~= tStep.endY then return false end
+    end
+    return true
+  end
+  local function navCovers(holder, target, offset)
+    if type(holder.steps) == "table" and type(target.steps) == "table" then
+      local off = offset or 0
+      for k = 1, #target.steps do
+        local hs = holder.steps[off + k]
+        local ts = target.steps[k]
+        if (not stepPickupCovers(hs, ts)) or (not stepTurninCovers(hs, ts)) then
+          return false
+        end
+      end
+      return true
+    end
+    local hs = (type(holder.steps) == "table" and holder.steps[#holder.steps]) or holder
+    local ts = (type(target.steps) == "table" and target.steps[#target.steps]) or target
+    return stepPickupCovers(hs, ts) and stepTurninCovers(hs, ts)
   end
   local out = {}
   for i, q in ipairs(list) do
@@ -4669,8 +4705,7 @@ local function DedupeQuestieQuests(quests)
     end
     local redundant = false
     for j, other in ipairs(list) do
-      local navCovers = (not hasNavInfo(q)) or hasNavInfo(other)
-      local factionCovers = (other.faction == q.faction or other.faction == "both") and navCovers
+      local factionCovers = (other.faction == q.faction or other.faction == "both")
       if i ~= j and factionCovers and classesCover(other, q) then
         local oIds = {}
         if type(other.steps) == "table" and #other.steps > 0 then
@@ -4702,9 +4737,9 @@ local function DedupeQuestieQuests(quests)
               break
             end
           end
-          if match then
+          if match and navCovers(other, q, 0) then
             local sameClassScope = classesCover(q, other)
-            local strictlyBetterNav = hasNavInfo(other) and (not hasNavInfo(q))
+            local strictlyBetterNav = not navCovers(q, other, 0)
             if strictlyBetterNav or (not sameClassScope) or (other.faction == "both" and q.faction ~= "both") or (other.faction == q.faction and j < i) then
               redundant = true
               break
