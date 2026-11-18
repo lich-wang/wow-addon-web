@@ -538,25 +538,40 @@ function hasCachedZoneQuestsSnapshot() {
   if (!fs.existsSync(snapshotPath)) return false;
   try {
     const data = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
-    return Boolean(data?.zoneQuests && Object.keys(data.zoneQuests).length > 0);
+    return Boolean(
+      data?.zoneQuests &&
+        Object.keys(data.zoneQuests).length > 0 &&
+        data?.zoneAreaIds &&
+        Object.keys(data.zoneAreaIds).length > 0
+    );
   } catch {
     return false;
   }
 }
 
-async function promoteValidQuestieDBTemp(tmpFilename) {
+async function promoteValidQuestieDBTemp(tmpFilename, dbUrl = '') {
   const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+  const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
   const tmpPath = path.join(UPSTREAM_CACHE_DIR, tmpFilename);
   try {
     if (!(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR, tmpFilename))) {
-      return false;
+      return { valid: false, promoted: false };
     }
+    let promoted = false;
     try {
       fs.renameSync(tmpPath, dbCachePath);
+      promoted = true;
+      if (dbUrl) {
+        try {
+          fs.writeFileSync(dbMetaPath, JSON.stringify({ url: dbUrl, updatedAt: new Date().toISOString() }, null, 2));
+        } catch {
+          // ignore metadata write error
+        }
+      }
     } catch (renameErr) {
-      console.warn(`[Questie] Failed to promote QuestieDB cache (${renameErr.message}); continuing with validated archive.`);
+      console.warn(`[Questie] Failed to promote QuestieDB cache (${renameErr.message}).`);
     }
-    return true;
+    return { valid: true, promoted };
   } finally {
     if (fs.existsSync(tmpPath)) {
       try {
@@ -574,9 +589,13 @@ async function ensureValidQuestieDBCache() {
   }
   const tmpFilename = makeTempQuestieDBFilename();
   try {
-    await downloadQuestieDBForever(tmpFilename);
-    if (!(await promoteValidQuestieDBTemp(tmpFilename))) {
+    const { dbUrl } = await downloadQuestieDBForever(tmpFilename);
+    const { valid, promoted } = await promoteValidQuestieDBTemp(tmpFilename, dbUrl);
+    if (!valid) {
       throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
+    }
+    if (!promoted && !(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR))) {
+      throw new Error('Failed to promote validated questie-db-forever.zip to formal cache.');
     }
   } catch (err) {
     if (hasCachedZoneQuestsSnapshot()) {
@@ -612,7 +631,8 @@ async function processQuestieForever() {
       throw new Error('Downloaded QuestieDB archive is missing QuestieDB TOC.');
     }
     await tocFile.async('string');
-    if (!(await promoteValidQuestieDBTemp(tmpFilename))) {
+    const { valid } = await promoteValidQuestieDBTemp(tmpFilename, dbUrl);
+    if (!valid) {
       throw new Error('Downloaded QuestieDB archive produced an empty zoneQuests index.');
     }
     dbBuf = res.dbBuf;
@@ -626,9 +646,28 @@ async function processQuestieForever() {
       }
     }
     const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+    const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
     if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
-      console.warn(`[Questie] QuestieDB refresh/validation failed (${err.message}); falling back to cached questie-db-forever.zip.`);
-      dbBuf = fs.readFileSync(dbCachePath);
+      const cachedBuf = fs.readFileSync(dbCachePath);
+      const cachedZip = await JSZip.loadAsync(cachedBuf);
+      const cachedToc =
+        cachedZip.file('QuestieDB/QuestieDB_Forever.toc') || cachedZip.file('QuestieDB/QuestieDB_Camelot.toc');
+      if (!cachedToc || !(await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR))) {
+        throw err;
+      }
+      await cachedToc.async('string');
+      let cachedUrl = 'unknown (cached questie-db-forever.zip)';
+      if (fs.existsSync(dbMetaPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(dbMetaPath, 'utf8'));
+          if (meta?.url) cachedUrl = meta.url;
+        } catch {
+          // ignore malformed meta
+        }
+      }
+      dbUrl = cachedUrl;
+      console.warn(`[Questie] QuestieDB refresh/validation failed (${err.message}); falling back to validated cached questie-db-forever.zip.`);
+      dbBuf = cachedBuf;
     } else {
       throw err;
     }
