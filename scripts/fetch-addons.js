@@ -515,21 +515,48 @@ async function processLueur() {
 // ---------------------------------------------------------------------------
 // 7. Questie Forever
 // ---------------------------------------------------------------------------
+async function downloadQuestieDBForever() {
+  let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
+  const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
+  if (latestDB?.url) dbUrl = latestDB.url;
+  const dbBuf = await downloadBuffer(dbUrl, 'questie-db-forever.zip');
+  return { dbUrl, dbBuf };
+}
+
+async function ensureValidQuestieDBCache() {
+  const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+  let valid = false;
+  if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
+    try {
+      const zip = await JSZip.loadAsync(fs.readFileSync(dbCachePath));
+      const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
+      if (tocFile) {
+        const toc = await tocFile.async('string');
+        valid = /^## X-Quest-\d+-S:/m.test(toc);
+      }
+    } catch {
+      valid = false;
+    }
+  }
+  if (!valid) {
+    if (fs.existsSync(dbCachePath)) {
+      fs.unlinkSync(dbCachePath);
+    }
+    await downloadQuestieDBForever();
+  }
+}
+
 async function processQuestieForever() {
   // Questie 同样会在队伍/公会内广播版本并提示 "You have an outdated version of Questie!"，需跟随上游
   let coreUrl = 'https://edge.forgecdn.net/files/9502/146/Questie-v12.6.4.zip';
   const latestCore = await getLatestCurseForgeFile(334372, name => /^Questie-v[\d.]+\.zip$/i.test(name));
   if (latestCore?.url) coreUrl = latestCore.url;
 
-  let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
-  const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
-  if (latestDB?.url) dbUrl = latestDB.url;
-
   const outPath = path.join(OUTPUT_DIR, 'questie-forever.zip');
 
   console.log('Fetching Questie Core + QuestieDB Forever...');
   const coreBuf = await downloadBuffer(coreUrl, 'questie-core.zip');
-  const dbBuf = await downloadBuffer(dbUrl, 'questie-db-forever.zip');
+  const { dbUrl, dbBuf } = await downloadQuestieDBForever();
 
   const zip = await JSZip.loadAsync(coreBuf);
   await patchQuestie(zip);
@@ -685,9 +712,7 @@ async function ensureClientBinaries() {
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
-    if (!fs.existsSync(path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip'))) {
-      await processQuestieForever();
-    }
+    await ensureValidQuestieDBCache();
     await processWoWF();
     writeBundledVersions();
     return;

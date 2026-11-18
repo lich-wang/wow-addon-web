@@ -5906,6 +5906,22 @@ local function IsQuestEligibleForZoneChain(qid)
   return true
 end
 
+local function IsGroupPrereqItemSatisfied(pid)
+  local numPid = tonumber(pid)
+  if not numPid or numPid == 0 then return true end
+  local absId = math.abs(numPid)
+  if IsQuestCompletedById(absId) then return true end
+  if numPid > 0 and _G.QuestDB and _G.QuestDB.exclusiveTo then
+    local ex = _G.QuestDB.exclusiveTo(absId)
+    if type(ex) == "table" then
+      for _, eid in ipairs(ex) do
+        if IsQuestCompletedById(eid) then return true end
+      end
+    end
+  end
+  return false
+end
+
 local function IsZoneStepUnlocked(st)
   if not st or not st.id then return false end
   local sid = tonumber(st.id)
@@ -5916,11 +5932,17 @@ local function IsZoneStepUnlocked(st)
       return false
     end
   end
+  if _G.QuestDB and _G.QuestDB.parentQuest then
+    local parentId = _G.QuestDB.parentQuest(sid)
+    if type(parentId) == "number" and parentId > 0 and not IsQuestActiveById(parentId) then
+      return false
+    end
+  end
   if _G.QuestDB then
     local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(sid)
     if type(preG) == "table" and #preG > 0 then
       for _, pid in ipairs(preG) do
-        if not IsQuestCompletedById(pid) then return false end
+        if not IsGroupPrereqItemSatisfied(pid) then return false end
       end
     end
     local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(sid)
@@ -5938,7 +5960,7 @@ local function IsZoneStepUnlocked(st)
   end
   if type(st.reqAll) == "table" and #st.reqAll > 0 then
     for _, pid in ipairs(st.reqAll) do
-      if not IsQuestCompletedById(pid) then return false end
+      if not IsGroupPrereqItemSatisfied(pid) then return false end
     end
   elseif st.preId then
     if not IsQuestCompletedById(st.preId) then return false end
@@ -5953,13 +5975,19 @@ local function CloneZoneQuestCandidate(q)
   end
   if type(q.steps) == "table" and #q.steps > 0 then
     local ineligibleIds = {}
+    local blockingIneligibleIds = {}
     for _, st in ipairs(q.steps) do
       local sid = tonumber(st and st.id)
       if not sid or not IsQuestEligibleForZoneChain(sid) then
-        if sid then ineligibleIds[sid] = true end
+        if sid then
+          ineligibleIds[sid] = true
+          if not IsQuestCompletedById(sid) then
+            blockingIneligibleIds[sid] = true
+          end
+        end
       end
     end
-    -- 仅沿真实前置依赖传播不可接标记，避免并行分支中前一项不合格导致独立分支被截断
+    -- 仅沿未完成的不可接前置传播阻塞标记；已完成的不展示前置不再阻断后续步骤
     local changed = true
     while changed do
       changed = false
@@ -5967,11 +5995,11 @@ local function CloneZoneQuestCandidate(q)
         local sid = tonumber(st and st.id)
         if sid and not ineligibleIds[sid] then
           local blocked = false
-          if st.preId and ineligibleIds[tonumber(st.preId)] then
+          if st.preId and blockingIneligibleIds[tonumber(st.preId)] then
             blocked = true
           elseif type(st.reqAll) == "table" then
             for _, pid in ipairs(st.reqAll) do
-              if ineligibleIds[tonumber(pid)] then
+              if blockingIneligibleIds[math.abs(tonumber(pid) or 0)] then
                 blocked = true
                 break
               end
@@ -5979,6 +6007,9 @@ local function CloneZoneQuestCandidate(q)
           end
           if blocked then
             ineligibleIds[sid] = true
+            if not IsQuestCompletedById(sid) then
+              blockingIneligibleIds[sid] = true
+            end
             changed = true
           end
         end
@@ -6000,6 +6031,13 @@ local function CloneZoneQuestCandidate(q)
       if lastKept then
         copy.id = lastKept.id
         copy.name = lastKept.name or copy.name
+        copy.level = lastKept.level or copy.level
+        copy.minLevel = lastKept.minLevel or copy.minLevel
+        copy.npc = lastKept.npc
+        copy.zone = lastKept.zone
+        copy.place = lastKept.place
+        copy.x = lastKept.x
+        copy.y = lastKept.y
       end
     end
   elseif not IsQuestEligibleForZoneChain(q.id) then
@@ -6021,7 +6059,7 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
       ResolveQuestChainFromQuestieDB(q)
       local cand = CloneZoneQuestCandidate(q)
 
-      if not cand._zoneIneligible and not IsQuestCompleted(cand) then
+      if not cand._zoneIneligible then
         local matchedStep = nil
         local acceptLv = nil
         if type(cand.steps) == "table" and #cand.steps > 0 then
@@ -6038,7 +6076,7 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
               end
             end
           end
-        else
+        elseif not IsQuestCompleted(cand) then
           if IsZoneStepUnlocked({ id = cand.id }) then
             local curMin = cand.minLevel or cand.min
             local curLv = cand.level or cand.lv
