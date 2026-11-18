@@ -631,7 +631,7 @@ async function ensureValidQuestieDBCache() {
     try {
       const cachedBuf = fs.readFileSync(dbCachePath);
       if (await isValidQuestieDBArchiveBuffer(cachedBuf)) {
-        return cachedBuf;
+        return { questieDbBuf: cachedBuf, useSnapshotOnly: false };
       }
     } catch {
       // fall through to download
@@ -643,11 +643,11 @@ async function ensureValidQuestieDBCache() {
     if (!valid) {
       throw new Error('Downloaded questie-db-forever.zip produced an empty zoneQuests index.');
     }
-    return dbBuf;
+    return { questieDbBuf: dbBuf, useSnapshotOnly: false };
   } catch (err) {
     if (hasCachedZoneQuestsSnapshot()) {
       console.warn(`[WoWF] QuestieDB refresh failed (${err.message}); falling back to cached zoneQuests snapshot.`);
-      return null;
+      return { questieDbBuf: null, useSnapshotOnly: true };
     }
     throw err;
   }
@@ -862,8 +862,8 @@ async function ensureClientBinaries() {
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
-    const questieDbBuf = await ensureValidQuestieDBCache();
-    await processWoWF(questieDbBuf);
+    const questieSource = await ensureValidQuestieDBCache();
+    await processWoWF(questieSource);
     writeBundledVersions();
     return;
   }

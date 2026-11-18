@@ -2140,10 +2140,14 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
     const processDecodedRecord = (kind, entityId, field, rawBase64) => {
       try {
         const val = decodeCborValue(Buffer.from(rawBase64, 'base64'));
+        if (field === 'S' && (!val || typeof val !== 'object')) {
+          parseErrors++;
+          return;
+        }
         if (kind === 'Npc') {
           if (field === '7' && val && typeof val === 'object') {
             addAreas(npcAreas, entityId, extractSpawnAreas(val));
-          } else if (field === 'S' && val && typeof val === 'object' && typeof val[9] === 'number' && val[9] > 0) {
+          } else if (field === 'S' && typeof val[9] === 'number' && val[9] > 0) {
             addAreas(npcAreas, entityId, [val[9]]);
           }
           return;
@@ -2151,7 +2155,7 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
         if (kind === 'Object') {
           if (field === '4' && val && typeof val === 'object') {
             addAreas(objAreas, entityId, extractSpawnAreas(val));
-          } else if (field === 'S' && val && typeof val === 'object' && typeof val[5] === 'number' && val[5] > 0) {
+          } else if (field === 'S' && typeof val[5] === 'number' && val[5] > 0) {
             addAreas(objAreas, entityId, [val[5]]);
           }
           return;
@@ -3156,7 +3160,7 @@ function toLuaValue(val, indent = 0) {
 /**
  * 构建完整数据集：优先从 wowf.io 实时抓取并缓存，断网或局部请求失败时按粒度回退到已有缓存
  */
-async function buildWoWFDataset(cacheDir, getHeaders, questieDbBuf = null) {
+async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
   const cacheFile = path.join(cacheDir, 'wowf-dataset.json');
   let cachedDataset = null;
   if (fs.existsSync(cacheFile)) {
@@ -3702,9 +3706,17 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieDbBuf = null) {
     foreverSystems: FOREVER_SYSTEMS_DATA,
     news,
   };
-  const livePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
-  annotateDatasetPrereqs(dataset, livePrereqs);
-  if ((!dataset.zoneQuests || Object.keys(dataset.zoneQuests).length === 0) && cachedDataset?.zoneQuests && cachedDataset?.zoneAreaIds) {
+  const useSnapshotOnly = Boolean(questieSource && typeof questieSource === 'object' && !Buffer.isBuffer(questieSource) && questieSource.useSnapshotOnly);
+  const questieDbBuf = Buffer.isBuffer(questieSource)
+    ? questieSource
+    : questieSource && typeof questieSource === 'object'
+      ? questieSource.questieDbBuf || null
+      : null;
+  if (!useSnapshotOnly) {
+    const livePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
+    annotateDatasetPrereqs(dataset, livePrereqs);
+  }
+  if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds) && cachedDataset?.zoneQuests && cachedDataset?.zoneAreaIds) {
     dataset.zoneQuests = cachedDataset.zoneQuests;
     dataset.zoneAreaIds = cachedDataset.zoneAreaIds;
   }
@@ -3712,7 +3724,7 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieDbBuf = null) {
   // 仅当本次抓取完整（或尚无本地缓存快照）时才写入缓存文件，防止局部网络波动覆盖完整缓存
   const hasCompleteRoutes = Object.keys(routesData).length >= RACE_ROUTES.length;
   const hasCompleteClasses = CLASS_CONFIGS.every(c => Array.isArray(classesData[c.key]?.specs) && classesData[c.key].specs.length > 0);
-  const hasZoneQuests = Boolean(dataset.zoneQuests && Object.keys(dataset.zoneQuests).length > 0);
+  const hasZoneQuests = isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds);
   if ((!hasPartialFailure && hasCompleteRoutes && hasCompleteClasses && hasZoneQuests) || !cachedDataset) {
     try {
       fs.mkdirSync(cacheDir, { recursive: true });
@@ -6490,6 +6502,30 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
               x = zoneStarter.x,
               y = zoneStarter.y,
             }
+          elseif not hasAnyStarterArea and started and type(started[3]) == "table" and #started[3] > 0 then
+            local getItemCount = GetItemCount or (C_Item and C_Item.GetItemCount)
+            local pickedItemId = nil
+            if getItemCount then
+              for _, itemId in ipairs(started[3]) do
+                local ok, cnt = pcall(getItemCount, tonumber(itemId))
+                if ok and type(cnt) == "number" and cnt > 0 then
+                  pickedItemId = tonumber(itemId)
+                  break
+                end
+              end
+            end
+            if pickedItemId then
+              local itemName = (_G.ItemDB and _G.ItemDB.name and _G.ItemDB.name(pickedItemId)) or (GetItemInfo and GetItemInfo(pickedItemId)) or ("物品 #" .. pickedItemId)
+              matchedStarter = {
+                npc = "[物品] " .. itemName,
+                zone = cleanZone,
+                areaId = nil,
+                x = nil,
+                y = nil,
+              }
+            else
+              matchedStarter = nil
+            end
           else
             matchedStarter = nil
           end
