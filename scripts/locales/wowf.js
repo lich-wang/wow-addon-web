@@ -2214,16 +2214,17 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
         continue;
       }
       if (raw.startsWith('~')) {
-        const sm = raw.match(/^~(\d+)~(.*)$/);
-        if (sm) {
-          let s = sharded.get(recKey);
-          if (!s) {
-            s = { kind, entityId, field, expected: Number(sm[1]), base: sm[2] || '', chunks: [] };
-            sharded.set(recKey, s);
-          } else {
-            s.expected = Number(sm[1]);
-            s.base = sm[2] || '';
-          }
+        const sm = raw.match(/^~(\d+)~$/);
+        if (!sm || Number(sm[1]) <= 0) {
+          parseErrors++;
+          continue;
+        }
+        let s = sharded.get(recKey);
+        if (!s) {
+          s = { kind, entityId, field, expected: Number(sm[1]), chunks: [] };
+          sharded.set(recKey, s);
+        } else {
+          s.expected = Number(sm[1]);
         }
         continue;
       }
@@ -2231,8 +2232,7 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
     }
     for (const s of sharded.values()) {
       const parts = [];
-      if (s.base) parts.push(s.base);
-      let missing = false;
+      let missing = s.expected <= 0;
       for (let i = 1; i <= s.expected; i++) {
         if (!s.chunks[i]) {
           missing = true;
