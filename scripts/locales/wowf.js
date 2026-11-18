@@ -4715,6 +4715,25 @@ local function DedupeQuestieQuests(quests)
     local ts = (type(target.steps) == "table" and target.steps[#target.steps]) or target
     return stepPickupCovers(hs, ts, hFallbackZone, tFallbackZone) and stepTurninCovers(hs, ts, hFallbackZone, tFallbackZone)
   end
+  local function areOmittedStepsBreadcrumbs(ids, offset)
+    if not (_G.QuestDB and _G.QuestDB.breadcrumbs) then return false end
+    for k = 1, offset do
+      local prevId = ids[k]
+      local nextId = ids[k + 1]
+      local bcs = nextId and _G.QuestDB.breadcrumbs(nextId) or nil
+      local found = false
+      if type(bcs) == "table" then
+        for _, bcId in ipairs(bcs) do
+          if tonumber(bcId) == prevId then
+            found = true
+            break
+          end
+        end
+      end
+      if not found then return false end
+    end
+    return true
+  end
   local out = {}
   for i, q in ipairs(list) do
     local ids = {}
@@ -4746,7 +4765,7 @@ local function DedupeQuestieQuests(quests)
             for k = 1, #oIds do
               if oIds[k] ~= ids[offset + k] then match = false break end
             end
-            if match then redundant = true break end
+            if match and areOmittedStepsBreadcrumbs(ids, offset) then redundant = true break end
           end
         elseif #oIds == #ids and #ids > 0 then
           local match = true
