@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import JSZip from 'jszip';
@@ -7,7 +8,11 @@ import { patchBagnon } from './locales/bagnon.js';
 import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import { patchMapzeroth } from './locales/mapzeroth.js';
-import { buildWoWFAddon } from './locales/wowf.js';
+import {
+  buildWoWFAddon,
+  hasValidZoneQuestsBuffer,
+  isValidZoneQuestsData,
+} from './locales/wowf.js';
 import { buildForeverTransitAddon } from './locales/foreverTransit.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
@@ -57,13 +62,13 @@ const UPSTREAM_CACHE_DIR = path.resolve('.cache/upstream-addons');
  * @param {string} [releaseTag] - 与本次下载对应的 Release 标签，成功时随缓存一并保存，回退时挂在返回 Buffer 的 releaseTag 属性上
  * @returns {Promise<Buffer & { releaseTag?: string }>} 下载完成或读取回退的二进制数据
  */
-async function downloadBuffer(url, cacheName, releaseTag) {
+async function downloadBuffer(url, cacheName, releaseTag, signal) {
   const SafeName = cacheName ? path.basename(cacheName) : null;
   const cachePath = SafeName ? path.join(UPSTREAM_CACHE_DIR, SafeName) : null;
   const tagPath = cachePath ? `${cachePath}.tag` : null;
   try {
     console.log(`Downloading: ${url}...`);
-    const res = await fetch(url, { headers: getHeadersForUrl(url) });
+    const res = await fetch(url, { headers: getHeadersForUrl(url), ...(signal ? { signal } : {}) });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -196,10 +201,10 @@ function writeBundledVersions() {
  * @param {(name: string) => boolean} assetMatch - 资产文件名匹配断言函数
  * @returns {Promise<{ tag: string, url: string } | null>} 匹配到的标签与下载链接，失败时返回 null
  */
-async function getLatestGitHubRelease(repo, assetMatch) {
+async function getLatestGitHubRelease(repo, assetMatch, signal) {
   try {
     const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
-    const res = await fetch(apiUrl, { headers: GITHUB_HEADERS });
+    const res = await fetch(apiUrl, { headers: GITHUB_HEADERS, ...(signal ? { signal } : {}) });
     if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
     const data = await res.json();
     const tag = data.tag_name;
@@ -515,25 +520,224 @@ async function processLueur() {
 // ---------------------------------------------------------------------------
 // 7. Questie Forever
 // ---------------------------------------------------------------------------
+function makeTempQuestieDBFilename() {
+  return `questie-db-forever.${process.pid}.${Date.now()}.tmp.zip`;
+}
+
+async function downloadQuestieDBForever(deadlineMs = 30000) {
+  const releaseTimeoutMs = Math.min(8000, Math.floor(deadlineMs * 0.3));
+  const downloadTimeoutMs = Math.max(5000, deadlineMs - releaseTimeoutMs);
+  let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
+  const latestDB = await getLatestGitHubRelease(
+    'Questie/QuestieDB',
+    name => name.includes('Forever') && name.endsWith('.zip'),
+    AbortSignal.timeout(releaseTimeoutMs)
+  );
+  if (latestDB?.url) dbUrl = latestDB.url;
+  const dbBuf = await downloadBuffer(dbUrl, undefined, undefined, AbortSignal.timeout(downloadTimeoutMs));
+  return { dbUrl, dbBuf };
+}
+
+function getValidatedZoneQuestsSnapshot() {
+  const snapshotPath = path.join(UPSTREAM_CACHE_DIR, 'wowf-dataset.json');
+  if (!fs.existsSync(snapshotPath)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+    if (!isValidZoneQuestsData(data?.zoneQuests, data?.zoneAreaIds)) return null;
+    return {
+      zoneQuests: data.zoneQuests,
+      zoneAreaIds: data.zoneAreaIds,
+      zoneCoveredIds: data.zoneCoveredIds || null,
+      questieDbVersion: data.meta?.questieDbVersion || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function validateQuestieDBArchiveBuffer(buf) {
+  if (!buf || buf.length === 0) {
+    return { valid: false, reason: 'QuestieDB archive buffer is empty.' };
+  }
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(buf, { checkCRC32: true });
+  } catch (err) {
+    return { valid: false, reason: `QuestieDB ZIP integrity/CRC32 check failed: ${err.message}` };
+  }
+  const foreverToc = zip.file('QuestieDB/QuestieDB_Forever.toc');
+  const camelotToc = zip.file('QuestieDB/QuestieDB_Camelot.toc');
+  const tocFile = foreverToc || camelotToc;
+  if (!tocFile) {
+    return { valid: false, reason: 'QuestieDB archive is missing QuestieDB_Forever.toc / QuestieDB_Camelot.toc.' };
+  }
+  if (foreverToc && camelotToc) {
+    const [foreverBuf, camelotBuf] = await Promise.all([
+      foreverToc.async('nodebuffer'),
+      camelotToc.async('nodebuffer'),
+    ]);
+    if (!foreverBuf.equals(camelotBuf)) {
+      return { valid: false, reason: 'QuestieDB_Forever.toc and QuestieDB_Camelot.toc contents differ.' };
+    }
+  }
+  const tocText = await tocFile.async('string');
+  const fileIndex = new Set(Object.keys(zip.files).map(p => p.toLowerCase()));
+  let tocFileCount = 0;
+  let bakedIdx = -1;
+  let apiIdx = -1;
+  for (const rawLine of tocText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const rel = line.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+    if (!rel) continue;
+    const lowerRel = rel.toLowerCase();
+    if (!fileIndex.has(`questiedb/${lowerRel}`)) {
+      return { valid: false, reason: `QuestieDB TOC references missing file: QuestieDB/${rel}` };
+    }
+    if (lowerRel === 'src/read/baked.lua' && bakedIdx < 0) bakedIdx = tocFileCount;
+    if (lowerRel === 'src/api.lua' && apiIdx < 0) apiIdx = tocFileCount;
+    tocFileCount++;
+  }
+  if (tocFileCount === 0 || bakedIdx < 0 || apiIdx <= bakedIdx) {
+    return { valid: false, reason: 'QuestieDB TOC must declare src/read/baked.lua before src/api.lua.' };
+  }
+  if (!(await hasValidZoneQuestsBuffer(buf))) {
+    return { valid: false, reason: 'QuestieDB archive produced an empty or incomplete zoneQuests index.' };
+  }
+  return { valid: true, reason: '' };
+}
+
+async function promoteValidQuestieDBBuffer(dbBuf, dbUrl = '') {
+  const check = await validateQuestieDBArchiveBuffer(dbBuf);
+  if (!check.valid) {
+    return { valid: false, promoted: false, reason: check.reason };
+  }
+  const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+  const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
+  const tmpPath = path.join(UPSTREAM_CACHE_DIR, makeTempQuestieDBFilename());
+  let promoted = false;
+  try {
+    fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
+    fs.writeFileSync(tmpPath, dbBuf);
+    fs.renameSync(tmpPath, dbCachePath);
+    promoted = true;
+    if (dbUrl) {
+      try {
+        const sha256 = crypto.createHash('sha256').update(dbBuf).digest('hex');
+        fs.writeFileSync(
+          dbMetaPath,
+          JSON.stringify({ url: dbUrl, sha256, updatedAt: new Date().toISOString() }, null, 2)
+        );
+      } catch {
+        // ignore metadata write error
+      }
+    }
+  } catch (err) {
+    console.warn(`[Questie] Failed to persist QuestieDB cache (${err.message}); continuing with in-memory archive.`);
+  } finally {
+    if (fs.existsSync(tmpPath)) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // ignore cleanup error
+      }
+    }
+  }
+  return { valid: true, promoted };
+}
+
+async function ensureValidQuestieDBCache() {
+  const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+  if (fs.existsSync(dbCachePath)) {
+    try {
+      const cachedBuf = fs.readFileSync(dbCachePath);
+      const check = await validateQuestieDBArchiveBuffer(cachedBuf);
+      if (check.valid) {
+        return { questieDbBuf: cachedBuf, useSnapshotOnly: false };
+      }
+    } catch {
+      // fall through to download
+    }
+  }
+  try {
+    const { dbUrl, dbBuf } = await downloadQuestieDBForever();
+    const { valid, reason } = await promoteValidQuestieDBBuffer(dbBuf, dbUrl);
+    if (!valid) {
+      throw new Error(reason || 'Downloaded questie-db-forever.zip failed archive validation.');
+    }
+    return { questieDbBuf: dbBuf, useSnapshotOnly: false };
+  } catch (err) {
+    const snapshot = getValidatedZoneQuestsSnapshot();
+    if (snapshot) {
+      console.warn(`[WoWF] QuestieDB refresh failed (${err.message}); falling back to cached zoneQuests snapshot.`);
+      return { questieDbBuf: null, useSnapshotOnly: true, snapshot };
+    }
+    throw err;
+  }
+}
+
 async function processQuestieForever() {
   // Questie 同样会在队伍/公会内广播版本并提示 "You have an outdated version of Questie!"，需跟随上游
   let coreUrl = 'https://edge.forgecdn.net/files/9502/146/Questie-v12.6.4.zip';
   const latestCore = await getLatestCurseForgeFile(334372, name => /^Questie-v[\d.]+\.zip$/i.test(name));
   if (latestCore?.url) coreUrl = latestCore.url;
 
-  let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
-  const latestDB = await getLatestGitHubRelease('Questie/QuestieDB', name => name.includes('Forever') && name.endsWith('.zip'));
-  if (latestDB?.url) dbUrl = latestDB.url;
-
   const outPath = path.join(OUTPUT_DIR, 'questie-forever.zip');
 
   console.log('Fetching Questie Core + QuestieDB Forever...');
   const coreBuf = await downloadBuffer(coreUrl, 'questie-core.zip');
-  const dbBuf = await downloadBuffer(dbUrl, 'questie-db-forever.zip');
-
+  let dbUrl = 'https://github.com/Questie/QuestieDB/releases/download/v1.0.13/QuestieDB-1.0.13-Forever.zip';
+  let dbBuf;
   const zip = await JSZip.loadAsync(coreBuf);
   await patchQuestie(zip);
+  try {
+    const res = await downloadQuestieDBForever();
+    dbUrl = res.dbUrl;
+    const candidateZip = await JSZip.loadAsync(res.dbBuf);
+    const tocFile =
+      candidateZip.file('QuestieDB/QuestieDB_Forever.toc') || candidateZip.file('QuestieDB/QuestieDB_Camelot.toc');
+    if (!tocFile) {
+      throw new Error('Downloaded QuestieDB archive is missing QuestieDB TOC.');
+    }
+    await tocFile.async('string');
+    const { valid, reason } = await promoteValidQuestieDBBuffer(res.dbBuf, dbUrl);
+    if (!valid) {
+      throw new Error(reason || 'Downloaded QuestieDB archive failed validation.');
+    }
+    dbBuf = res.dbBuf;
+  } catch (err) {
+    const dbCachePath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+    const dbMetaPath = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.meta.json');
+    if (fs.existsSync(dbCachePath) && fs.statSync(dbCachePath).size > 0) {
+      const cachedBuf = fs.readFileSync(dbCachePath);
+      const cachedCheck = await validateQuestieDBArchiveBuffer(cachedBuf);
+      if (!cachedCheck.valid) {
+        throw err;
+      }
+      const cachedSha256 = crypto.createHash('sha256').update(cachedBuf).digest('hex');
+      let cachedUrl = 'unknown (cached questie-db-forever.zip)';
+      if (fs.existsSync(dbMetaPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(dbMetaPath, 'utf8'));
+          if (meta?.url && meta?.sha256 === cachedSha256) {
+            cachedUrl = meta.url;
+          }
+        } catch {
+          // ignore malformed meta
+        }
+      }
+      dbUrl = cachedUrl;
+      console.warn(`[Questie] QuestieDB refresh/validation failed (${err.message}); falling back to validated cached questie-db-forever.zip.`);
+      dbBuf = cachedBuf;
+    } else {
+      throw err;
+    }
+  }
   await zip.loadAsync(dbBuf);
+  const camelotToc = zip.file('QuestieDB/QuestieDB_Camelot.toc');
+  if (camelotToc && !zip.file('QuestieDB/QuestieDB_Forever.toc')) {
+    zip.file('QuestieDB/QuestieDB_Forever.toc', await camelotToc.async('nodebuffer'));
+  }
   await patchQuestieDB(zip);
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
@@ -549,6 +753,7 @@ async function processQuestieForever() {
     `${coreUrl} + ${dbUrl}`
   );
   console.log(`[✓] questie-forever.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  return dbBuf;
 }
 
 // ---------------------------------------------------------------------------
@@ -633,8 +838,8 @@ async function processSpellActivationOverlay() {
 // ---------------------------------------------------------------------------
 // 11. WoWF Companion (wowf.io In-Game Dynamic Guide for WoW Forever)
 // ---------------------------------------------------------------------------
-async function processWoWF() {
-  const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl);
+async function processWoWF(questieDbBuf = null) {
+  const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl, questieDbBuf);
   recordBundledVersion('wowf', await readTocVersion(zip, 'WoWF/WoWF.toc'), source);
 }
 
@@ -685,7 +890,8 @@ async function ensureClientBinaries() {
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
-    await processWoWF();
+    const questieSource = await ensureValidQuestieDBCache();
+    await processWoWF(questieSource);
     writeBundledVersions();
     return;
   }
@@ -703,11 +909,11 @@ async function main() {
   await processDungeonsForever();
   await processBagnon();
   await processLueur();
-  await processQuestieForever();
+  const questieDbBuf = await processQuestieForever();
   await processForeverMouseTooltip();
   await processMapzeroth();
   await processSpellActivationOverlay();
-  await processWoWF();
+  await processWoWF(questieDbBuf);
   await processForeverTransit();
   writeBundledVersions();
   console.log('=== All 12 Addons successfully bundled & localized into public/addons/ ===');

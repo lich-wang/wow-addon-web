@@ -1269,11 +1269,12 @@ function enrichRoutesWithAltZones(routesData) {
         scored.push({ az, overlap });
       }
       scored.sort((a, b) => b.overlap - a.overlap || a.az.from - b.az.from);
-      const seenZones = new Set();
+      const seenZoneEntries = new Set();
       const picked = [];
       for (const item of scored) {
-        if (seenZones.has(item.az.zone)) continue;
-        seenZones.add(item.az.zone);
+        const key = `${item.az.zone}:${item.az.from}:${item.az.to}:${item.az.hub || ''}`;
+        if (seenZoneEntries.has(key)) continue;
+        seenZoneEntries.add(key);
         picked.push({
           zone: item.az.zone,
           hub: item.az.hub,
@@ -1283,7 +1284,6 @@ function enrichRoutesWithAltZones(routesData) {
           y: item.az.y,
           note: item.az.note,
         });
-        if (picked.length >= 5) break;
       }
       band.altZones = picked;
     }
@@ -2036,10 +2036,25 @@ function decodeCborValue(buf, state = { offset: 0 }) {
     }
     return obj;
   }
+  if (major === 6) {
+    readLen();
+    return decodeCborValue(buf, state);
+  }
   if (major === 7) {
     if (info === 20) return false;
     if (info === 21) return true;
     if (info === 22) return null;
+    if (info === 23) return undefined;
+    if (info === 25) {
+      const half = buf.readUInt16BE(state.offset);
+      state.offset += 2;
+      const sign = half >> 15 ? -1 : 1;
+      const exp = (half >> 10) & 0x1f;
+      const mant = half & 0x3ff;
+      if (exp === 0) return sign * Math.pow(2, -14) * (mant / 1024);
+      if (exp === 31) return mant ? NaN : sign * Infinity;
+      return sign * Math.pow(2, exp - 15) * (1 + mant / 1024);
+    }
     if (info === 26) {
       const v = buf.readFloatBE(state.offset);
       state.offset += 4;
@@ -2058,47 +2073,248 @@ function decodeCborValue(buf, state = { offset: 0 }) {
  * 从本地缓存的 questie-db-forever.zip 读取无限服官方 QuestieDB 的任务前置关系 (preQuestSingle / preQuestGroup)
  * 用于补全 wowf.io 网页端遗漏的前置任务链
  */
-async function loadQuestiePrereqs(cacheDir) {
+async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zip', zipBuffer = null) {
   const dbMap = new Map();
-  const zipPath = path.join(cacheDir, 'questie-db-forever.zip');
-  if (!fs.existsSync(zipPath)) return dbMap;
+  let parseErrors = 0;
   try {
-    const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
+    let buf = zipBuffer;
+    if (!buf) {
+      const zipPath = path.join(cacheDir, zipFilename);
+      if (!fs.existsSync(zipPath)) return dbMap;
+      buf = fs.readFileSync(zipPath);
+    }
+    const zip = await JSZip.loadAsync(buf);
     const tocFile = zip.file('QuestieDB/QuestieDB_Forever.toc') || zip.file('QuestieDB/QuestieDB_Camelot.toc');
     if (!tocFile) return dbMap;
     const toc = await tocFile.async('string');
+    const verMatch = toc.match(/^## Version:\s*(.+)$/m);
+    if (verMatch) dbMap._questieDbVersion = verMatch[1].trim();
     const getOrCreate = qid => {
       let entry = dbMap.get(qid);
       if (!entry) {
-        entry = { preSingle: null, preGroup: null, breadcrumbs: null, repeatable: false, name: '', level: 0, minLevel: 0 };
+        entry = {
+          preSingle: null,
+          preGroup: null,
+          breadcrumbs: null,
+          repeatable: false,
+          name: '',
+          level: 0,
+          minLevel: 0,
+          races: 0,
+          classes: 0,
+          zoneOrSort: 0,
+          requiredSkill: null,
+          nextQuest: 0,
+          starterNpcIds: null,
+          starterObjIds: null,
+          starterAreas: null,
+        };
         dbMap.set(qid, entry);
       }
       return entry;
     };
-    for (const line of toc.split(/\r?\n/)) {
-      const m = line.match(/^## X-Quest-(\d+)-(12|13|28|S):\s*(.+)$/);
-      if (!m) continue;
-      const qid = Number(m[1]);
-      const field = m[2];
-      const raw = m[3].trim();
-      if (!raw || raw.startsWith('~')) continue;
+    const npcAreas = new Map();
+    const objAreas = new Map();
+    const addAreas = (map, eid, aids) => {
+      let set = map.get(eid);
+      if (!set) {
+        set = new Set();
+        map.set(eid, set);
+      }
+      for (const aid of aids) {
+        const n = Number(aid);
+        if (n > 0) set.add(n);
+      }
+    };
+    const extractSpawnAreas = val => {
+      if (Array.isArray(val)) {
+        const aids = [];
+        for (let idx = 0; idx < val.length; idx++) {
+          if (val[idx] != null) aids.push(idx + 1);
+        }
+        return aids;
+      }
+      if (val && typeof val === 'object') {
+        return Object.keys(val);
+      }
+      return [];
+    };
+    const seenTableRecords = new Set();
+    const expectedTableChecks = [];
+    const maskByEntity = new Map();
+    const isValidTableField = (kind, field, val) => {
+      if (!val || typeof val !== 'object') return false;
+      if (kind === 'Npc' && field === '7') return true;
+      if (kind === 'Object' && field === '4') return true;
+      if (kind === 'Quest') {
+        if (field === '2') {
+          const slots = Array.isArray(val) ? [val[0], val[1], val[2]] : [val[1], val[2], val[3]];
+          return slots.every(s => s == null || typeof s === 'object');
+        }
+        if (field === '12' || field === '13' || field === '28' || field === '35') {
+          return Array.isArray(val);
+        }
+        if (field === '18') return typeof val === 'object';
+      }
+      return true;
+    };
+    const processDecodedRecord = (kind, entityId, field, rawBase64) => {
       try {
-        const val = decodeCborValue(Buffer.from(raw, 'base64'));
-        if (field === '13' && Array.isArray(val) && val.length > 0) {
+        const val = decodeCborValue(Buffer.from(rawBase64, 'base64'));
+        if (field === 'S' && (!val || typeof val !== 'object' || Buffer.isBuffer(val))) {
+          parseErrors++;
+          return;
+        }
+        if (field !== 'S') {
+          if (!isValidTableField(kind, field, val)) {
+            parseErrors++;
+            return;
+          }
+          seenTableRecords.add(`${kind}:${entityId}:${field}`);
+        } else if (typeof val.p === 'number' && Number.isSafeInteger(val.p) && val.p >= 0) {
+          const mask = BigInt(val.p);
+          expectedTableChecks.push({ kind, entityId, mask });
+          maskByEntity.set(`${kind}:${entityId}`, mask);
+        }
+        if (kind === 'Npc') {
+          if (field === '7' && val && typeof val === 'object') {
+            addAreas(npcAreas, entityId, extractSpawnAreas(val));
+          } else if (field === 'S' && typeof val[9] === 'number' && val[9] > 0) {
+            addAreas(npcAreas, entityId, [val[9]]);
+          }
+          return;
+        }
+        if (kind === 'Object') {
+          if (field === '4' && val && typeof val === 'object') {
+            addAreas(objAreas, entityId, extractSpawnAreas(val));
+          } else if (field === 'S' && typeof val[5] === 'number' && val[5] > 0) {
+            addAreas(objAreas, entityId, [val[5]]);
+          }
+          return;
+        }
+        const qid = entityId;
+        if (field === '2' && Array.isArray(val)) {
+          const entry = getOrCreate(qid);
+          if (Array.isArray(val[0]) && val[0].length > 0) entry.starterNpcIds = val[0].map(Number).filter(Boolean);
+          if (Array.isArray(val[1]) && val[1].length > 0) entry.starterObjIds = val[1].map(Number).filter(Boolean);
+        } else if (field === '13' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).preSingle = val.map(Number).filter(Boolean);
         } else if (field === '12' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).preGroup = val.map(Number).filter(Boolean);
+        } else if (field === '18' && val != null) {
+          getOrCreate(qid).requiredSkill = val;
+        } else if (field === '35' && Array.isArray(val) && val.length > 0) {
+          getOrCreate(qid).requiredSkill = val;
         } else if (field === '28' && Array.isArray(val) && val.length > 0) {
           getOrCreate(qid).breadcrumbs = val.map(Number).filter(Boolean);
         } else if (field === 'S' && val && typeof val === 'object') {
+          if (val[6] != null && (typeof val[6] !== 'number' || !Number.isSafeInteger(val[6]) || val[6] < 0)) {
+            parseErrors++;
+            return;
+          }
           const entry = getOrCreate(qid);
           if (typeof val[1] === 'string') entry.name = val[1];
           if (typeof val[4] === 'number') entry.minLevel = val[4];
           if (typeof val[5] === 'number') entry.level = val[5];
+          if (typeof val[6] === 'number') entry.races = val[6];
+          if (typeof val[7] === 'number') entry.classes = val[7];
+          if (typeof val[17] === 'number') entry.zoneOrSort = val[17];
+          if (typeof val[22] === 'number') entry.nextQuest = val[22];
           if (Number(val[24]) & 1) entry.repeatable = true;
+          if ((typeof val[31] === 'number' && val[31] > 0) || (Array.isArray(val[35]) && val[35].length > 0)) {
+            entry.requiredSkill = val[31] || val[35];
+          }
         }
       } catch {
-        // 忽略单条损坏的 CBOR 记录
+        parseErrors++;
+      }
+    };
+
+    const sharded = new Map();
+    for (const line of toc.split(/\r?\n/)) {
+      const m = line.match(/^## X-(Quest|Npc|Object)-(\d+)-(2|4|7|12|13|18|28|35|S)(?:-(\d+))?:\s*(.+)$/);
+      if (!m) continue;
+      const kind = m[1];
+      const entityId = Number(m[2]);
+      const field = m[3];
+      const shardIdx = m[4] ? Number(m[4]) : 0;
+      const raw = m[5].trim();
+      if (!raw) continue;
+      const recKey = `${kind}:${entityId}:${field}`;
+      if (shardIdx > 0) {
+        let s = sharded.get(recKey);
+        if (!s) {
+          s = { kind, entityId, field, expected: 0, base: '', chunks: [] };
+          sharded.set(recKey, s);
+        }
+        s.chunks[shardIdx] = raw;
+        continue;
+      }
+      if (raw.startsWith('~')) {
+        const sm = raw.match(/^~(\d+)~$/);
+        if (!sm || Number(sm[1]) <= 0) {
+          parseErrors++;
+          continue;
+        }
+        let s = sharded.get(recKey);
+        if (!s) {
+          s = { kind, entityId, field, expected: Number(sm[1]), chunks: [] };
+          sharded.set(recKey, s);
+        } else {
+          s.expected = Number(sm[1]);
+        }
+        continue;
+      }
+      processDecodedRecord(kind, entityId, field, raw);
+    }
+    for (const s of sharded.values()) {
+      const parts = [];
+      let missing = s.expected <= 0;
+      for (let i = 1; i <= s.expected; i++) {
+        if (!s.chunks[i]) {
+          missing = true;
+          break;
+        }
+        parts.push(s.chunks[i]);
+      }
+      if (missing || parts.length === 0) {
+        parseErrors++;
+        continue;
+      }
+      processDecodedRecord(s.kind, s.entityId, s.field, parts.join(''));
+    }
+    const tableFieldsByKind = { Npc: [7], Object: [4], Quest: [2, 12, 13, 18, 28, 35] };
+    for (const chk of expectedTableChecks) {
+      const fields = tableFieldsByKind[chk.kind];
+      if (!fields) continue;
+      for (const f of fields) {
+        if ((chk.mask >> BigInt(f - 1)) & 1n) {
+          if (!seenTableRecords.has(`${chk.kind}:${chk.entityId}:${f}`)) {
+            parseErrors++;
+          }
+        }
+      }
+    }
+    for (const recKey of seenTableRecords) {
+      const [kind, eid, fieldStr] = recKey.split(':');
+      const mask = maskByEntity.get(`${kind}:${eid}`);
+      if (mask === undefined || !((mask >> BigInt(Number(fieldStr) - 1)) & 1n)) {
+        parseErrors++;
+      }
+    }
+    dbMap._parseErrors = parseErrors;
+    for (const entry of dbMap.values()) {
+      const areas = new Set();
+      for (const nid of entry.starterNpcIds || []) {
+        const s = npcAreas.get(nid);
+        if (s) for (const aid of s) areas.add(aid);
+      }
+      for (const oid of entry.starterObjIds || []) {
+        const s = objAreas.get(oid);
+        if (s) for (const aid of s) areas.add(aid);
+      }
+      if (areas.size > 0) {
+        entry.starterAreas = areas;
       }
     }
   } catch {
@@ -2236,6 +2452,280 @@ function annotateQuestStepsPrereqs(steps, questiePrereqs) {
   });
 }
 
+const ZONE_NAME_TO_AREA_IDS = {
+  艾尔文森林: [12, 9, 6170, 16510],
+  丹莫罗: [1, 132, 131, 133, 135, 801, 6176, 6457],
+  泰达希尔: [141, 188],
+  西部荒野: [40],
+  洛克莫丹: [38, 146],
+  黑海岸: [148, 442],
+  赤脊山: [44],
+  湿地: [11, 16876],
+  灰谷: [331],
+  暮色森林: [10],
+  石爪山脉: [406],
+  希尔斯布莱德丘陵: [267],
+  奥特兰克山脉: [36],
+  凄凉之地: [405],
+  荆棘谷: [33, 5287, 5339],
+  千针石林: [400],
+  阿拉希高地: [45],
+  尘泥沼泽: [15],
+  河林: [16591, 16820],
+  荒芜之地: [3],
+  悲伤沼泽: [8],
+  辛特兰: [47],
+  菲拉斯: [357],
+  塔纳利斯: [440],
+  灼热峡谷: [51],
+  艾萨拉: [16],
+  费伍德森林: [361],
+  安戈洛环形山: [490],
+  诅咒之地: [4],
+  燃烧平原: [46],
+  西瘟疫之地: [28],
+  东瘟疫之地: [139],
+  冬泉谷: [618],
+  希利苏斯: [1377],
+  海加尔山: [616],
+  杜隆塔尔: [14, 363],
+  提瑞斯法林地: [85, 154, 6454],
+  莫高雷: [215, 220],
+  贫瘠之地: [17, 392],
+  银松森林: [130],
+  泽风岛: [16593],
+  逆风小径: [41],
+  月光林地: [493],
+  吉尔尼斯: [16756, 16757, 17065],
+};
+
+function buildZoneQuestsIndex(questiePrereqs) {
+  if (!questiePrereqs || questiePrereqs.size === 0) return {};
+  const ALLIANCE_MASK = 1n | 4n | 8n | 64n | 4294967296n;
+  const HORDE_MASK = 2n | 16n | 32n | 128n | 8589934592n;
+  const FULL_ALLIANCE_MASK = 4294967373n;
+  const FULL_HORDE_MASK = 8589934770n;
+
+  const getFactionCode = races => {
+    if (!races) return 'b';
+    const r = BigInt(races);
+    const hasA = (r & ALLIANCE_MASK) !== 0n;
+    const hasH = (r & HORDE_MASK) !== 0n;
+    if (hasA && !hasH) return 'a';
+    if (hasH && !hasA) return 'h';
+    return 'b';
+  };
+
+  const out = {};
+  for (const [zoneName, areaIds] of Object.entries(ZONE_NAME_TO_AREA_IDS)) {
+    const areaSet = new Set(areaIds);
+    const list = [];
+    for (const [qid, info] of questiePrereqs.entries()) {
+      const matchesZoneOrSort = areaSet.has(info.zoneOrSort);
+      let matchesStarterArea = false;
+      if (!matchesZoneOrSort && info.starterAreas) {
+        for (const aid of info.starterAreas) {
+          if (areaSet.has(aid)) {
+            matchesStarterArea = true;
+            break;
+          }
+        }
+      }
+      if ((matchesZoneOrSort || matchesStarterArea) && !info.repeatable && !info.classes && !info.requiredSkill) {
+        list.push([qid, info]);
+      }
+    }
+    if (list.length === 0) continue;
+
+    const PLAYABLE_RACE_MASK = ALLIANCE_MASK | HORDE_MASK;
+    const effectiveRaces = races => {
+      if (!races || races === 0) return PLAYABLE_RACE_MASK;
+      return BigInt(races) & PLAYABLE_RACE_MASK;
+    };
+    const racesCoveredBy = (preRaces, childRaces) => {
+      return (effectiveRaces(preRaces) & ~effectiveRaces(childRaces)) === 0n;
+    };
+
+    const idSet = new Set(list.map(([qid]) => qid));
+    const covered = new Set();
+    for (const [qid, info] of list) {
+      const canCover = pid => {
+        if (!idSet.has(pid)) return false;
+        const p = questiePrereqs.get(pid);
+        if (!p) return false;
+        return racesCoveredBy(p.races, info.races);
+      };
+      if (Array.isArray(info.preSingle) && info.preSingle.length === 1 && canCover(info.preSingle[0])) {
+        covered.add(info.preSingle[0]);
+      }
+      if (Array.isArray(info.preGroup)) {
+        for (const pid of info.preGroup) {
+          if (canCover(pid)) covered.add(pid);
+        }
+      }
+      if (info.nextQuest && idSet.has(info.nextQuest)) {
+        const nq = questiePrereqs.get(info.nextQuest);
+        const nqHasRecoverableBackLink =
+          nq &&
+          ((Array.isArray(nq.preSingle) && nq.preSingle.length === 1 && nq.preSingle[0] === qid) ||
+            (Array.isArray(nq.preGroup) && nq.preGroup.includes(qid)));
+        if (nqHasRecoverableBackLink && racesCoveredBy(info.races, nq.races)) {
+          covered.add(qid);
+        }
+      }
+    }
+
+    // 按适用种族校验每个区域起点的可接任务在运行时回溯深度 (depth < 12) 内是否可达；
+    // 使用与 Lua ResolveQuestChainFromQuestieDB 一致的 per-root visited 规则，避免长分支提前占位导致短路径被跳过
+    const reachableByRace = new Map();
+    const markRootReachable = (rootId, rootRaces) => {
+      const rootVisited = new Set();
+      const dfs = (curId, depth, pathRaces) => {
+        if (depth >= 12 || rootVisited.has(curId)) return;
+        rootVisited.add(curId);
+        const cur = questiePrereqs.get(curId);
+        const eff = cur ? pathRaces & effectiveRaces(cur.races) : pathRaces;
+        if (eff !== 0n) {
+          reachableByRace.set(curId, (reachableByRace.get(curId) || 0n) | eff);
+        }
+        if (!cur) return;
+        const preIds =
+          Array.isArray(cur.preGroup) && cur.preGroup.length > 0
+            ? cur.preGroup
+            : Array.isArray(cur.preSingle) && cur.preSingle.length === 1
+              ? [cur.preSingle[0]]
+              : [];
+        for (const pid of preIds) {
+          if (pid) dfs(pid, depth + 1, eff);
+        }
+      };
+      dfs(rootId, 0, rootRaces);
+    };
+    for (const [qid, info] of list) {
+      if (!covered.has(qid)) {
+        markRootReachable(qid, effectiveRaces(info.races));
+      }
+    }
+    for (const [qid, info] of list) {
+      if (covered.has(qid)) {
+        const needed = effectiveRaces(info.races);
+        const reached = reachableByRace.get(qid) || 0n;
+        if ((needed & ~reached) !== 0n) {
+          covered.delete(qid);
+          markRootReachable(qid, needed);
+        }
+      }
+    }
+
+    const entries = [];
+    const coveredIds = [];
+    for (const [qid, info] of list) {
+      if (covered.has(qid)) {
+        coveredIds.push(qid);
+        continue;
+      }
+      const f = getFactionCode(info.races);
+
+      // 沿前置链回溯起点等级与整条链最高等级，避免长链后半段等级过高导致前半段在低级时被过滤
+      let rootMin = info.minLevel || info.level || 1;
+      let rootLv = info.level || info.minLevel || 1;
+      let maxLv = info.level || info.minLevel || 1;
+      const bestDepth = new Map();
+      const walkBack = (curId, depth) => {
+        if (depth >= 12) return;
+        const prevDepth = bestDepth.get(curId);
+        if (prevDepth !== undefined && prevDepth <= depth) return;
+        bestDepth.set(curId, depth);
+        const cur = questiePrereqs.get(curId);
+        if (!cur) return;
+        const curMin = cur.minLevel || cur.level || 1;
+        const curLv = cur.level || cur.minLevel || 1;
+        if (curMin < rootMin) rootMin = curMin;
+        if (curLv < rootLv) rootLv = curLv;
+        if (curLv > maxLv) maxLv = curLv;
+        const preIds =
+          Array.isArray(cur.preGroup) && cur.preGroup.length > 0
+            ? cur.preGroup.map(pid => Math.abs(Number(pid) || 0)).filter(Boolean)
+            : Array.isArray(cur.preSingle) && cur.preSingle.length > 0
+              ? cur.preSingle.map(pid => Math.abs(Number(pid) || 0)).filter(Boolean)
+              : [];
+        for (const pid of preIds) {
+          if (!pid) continue;
+          walkBack(pid, depth + 1);
+        }
+      };
+      walkBack(qid, 0);
+
+      const entry = {
+        id: qid,
+        f,
+        min: rootMin,
+        lv: rootLv,
+        maxLv,
+      };
+      if (info.races > 0) {
+        const rBig = BigInt(info.races);
+        if (rBig !== FULL_ALLIANCE_MASK && rBig !== FULL_HORDE_MASK) {
+          entry.r = info.races;
+        }
+      }
+      entries.push(entry);
+    }
+
+    entries.sort((a, b) => a.min - b.min || a.lv - b.lv || a.id - b.id);
+    if (entries.length > 0) {
+      out[zoneName] = entries;
+      if (coveredIds.length > 0) {
+        if (!out._coveredByZone) {
+          Object.defineProperty(out, '_coveredByZone', { value: {}, enumerable: false });
+        }
+        out._coveredByZone[zoneName] = coveredIds;
+      }
+    }
+  }
+  return out;
+}
+
+export function isValidZoneQuestsData(zoneQuests, zoneAreaIds) {
+  if (!zoneQuests || typeof zoneQuests !== 'object' || !zoneAreaIds || typeof zoneAreaIds !== 'object') {
+    return false;
+  }
+  const zones = Object.keys(zoneQuests);
+  if (zones.length < 30) return false;
+  return zones.every(
+    z =>
+      Array.isArray(zoneQuests[z]) &&
+      zoneQuests[z].length > 0 &&
+      zoneQuests[z].every(e => e && typeof e === 'object' && Number.isInteger(e.id) && e.id > 0) &&
+      Array.isArray(zoneAreaIds[z]) &&
+      zoneAreaIds[z].length > 0 &&
+      zoneAreaIds[z].every(a => Number.isInteger(a) && a > 0)
+  );
+}
+
+export async function hasValidZoneQuestsBuffer(zipBuffer) {
+  try {
+    if (!zipBuffer || zipBuffer.length === 0) return false;
+    const prereqs = await loadQuestiePrereqs('', 'questie-db-forever.zip', zipBuffer);
+    if (!prereqs || prereqs.size === 0 || (prereqs._parseErrors || 0) > 0) return false;
+    const index = buildZoneQuestsIndex(prereqs);
+    return isValidZoneQuestsData(index, ZONE_NAME_TO_AREA_IDS);
+  } catch {
+    return false;
+  }
+}
+
+export async function hasValidZoneQuestsIndex(cacheDir, zipFilename = 'questie-db-forever.zip') {
+  try {
+    const prereqs = await loadQuestiePrereqs(cacheDir, zipFilename);
+    if (!prereqs || prereqs.size === 0 || (prereqs._parseErrors || 0) > 0) return false;
+    const index = buildZoneQuestsIndex(prereqs);
+    return isValidZoneQuestsData(index, ZONE_NAME_TO_AREA_IDS);
+  } catch {
+    return false;
+  }
+}
+
 function annotateDatasetPrereqs(dataset, questiePrereqs) {
   if (!dataset || !questiePrereqs || questiePrereqs.size === 0) return dataset;
   const annotateQuestList = list => {
@@ -2261,6 +2751,19 @@ function annotateDatasetPrereqs(dataset, questiePrereqs) {
   }
   for (const c of Object.values(dataset.classes || {})) {
     annotateQuestList(c.classRuns);
+  }
+  if ((questiePrereqs._parseErrors || 0) === 0) {
+    const builtZoneQuests = buildZoneQuestsIndex(questiePrereqs);
+    if (Object.keys(builtZoneQuests).length >= 30) {
+      dataset.zoneQuests = builtZoneQuests;
+      dataset.zoneAreaIds = ZONE_NAME_TO_AREA_IDS;
+      if (builtZoneQuests._coveredByZone) {
+        dataset.zoneCoveredIds = builtZoneQuests._coveredByZone;
+      }
+      if (questiePrereqs._questieDbVersion && dataset.meta) {
+        dataset.meta.questieDbVersion = questiePrereqs._questieDbVersion;
+      }
+    }
   }
   return dataset;
 }
@@ -2728,7 +3231,7 @@ function toLuaValue(val, indent = 0) {
 /**
  * 构建完整数据集：优先从 wowf.io 实时抓取并缓存，断网或局部请求失败时按粒度回退到已有缓存
  */
-async function buildWoWFDataset(cacheDir, getHeaders) {
+async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
   const cacheFile = path.join(cacheDir, 'wowf-dataset.json');
   let cachedDataset = null;
   if (fs.existsSync(cacheFile)) {
@@ -3274,13 +3777,43 @@ async function buildWoWFDataset(cacheDir, getHeaders) {
     foreverSystems: FOREVER_SYSTEMS_DATA,
     news,
   };
-  const livePrereqs = await loadQuestiePrereqs(cacheDir);
-  annotateDatasetPrereqs(dataset, livePrereqs);
+  const useSnapshotOnly = Boolean(questieSource && typeof questieSource === 'object' && !Buffer.isBuffer(questieSource) && questieSource.useSnapshotOnly);
+  const prevalidatedSnapshot =
+    useSnapshotOnly && questieSource && typeof questieSource === 'object' ? questieSource.snapshot || null : null;
+  const questieDbBuf = Buffer.isBuffer(questieSource)
+    ? questieSource
+    : questieSource && typeof questieSource === 'object'
+      ? questieSource.questieDbBuf || null
+      : null;
+  if (useSnapshotOnly && prevalidatedSnapshot) {
+    dataset.zoneQuests = prevalidatedSnapshot.zoneQuests;
+    dataset.zoneAreaIds = prevalidatedSnapshot.zoneAreaIds;
+    if (prevalidatedSnapshot.zoneCoveredIds) {
+      dataset.zoneCoveredIds = prevalidatedSnapshot.zoneCoveredIds;
+    }
+    if (prevalidatedSnapshot.questieDbVersion) {
+      dataset.meta.questieDbVersion = prevalidatedSnapshot.questieDbVersion;
+    }
+  } else if (!useSnapshotOnly) {
+    const livePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
+    annotateDatasetPrereqs(dataset, livePrereqs);
+  }
+  if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds) && cachedDataset?.zoneQuests && cachedDataset?.zoneAreaIds) {
+    dataset.zoneQuests = cachedDataset.zoneQuests;
+    dataset.zoneAreaIds = cachedDataset.zoneAreaIds;
+    if (cachedDataset.zoneCoveredIds) {
+      dataset.zoneCoveredIds = cachedDataset.zoneCoveredIds;
+    }
+    if (cachedDataset.meta?.questieDbVersion) {
+      dataset.meta.questieDbVersion = cachedDataset.meta.questieDbVersion;
+    }
+  }
 
   // 仅当本次抓取完整（或尚无本地缓存快照）时才写入缓存文件，防止局部网络波动覆盖完整缓存
   const hasCompleteRoutes = Object.keys(routesData).length >= RACE_ROUTES.length;
   const hasCompleteClasses = CLASS_CONFIGS.every(c => Array.isArray(classesData[c.key]?.specs) && classesData[c.key].specs.length > 0);
-  if ((!hasPartialFailure && hasCompleteRoutes && hasCompleteClasses) || !cachedDataset) {
+  const hasZoneQuests = isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds);
+  if ((!hasPartialFailure && hasCompleteRoutes && hasCompleteClasses && hasZoneQuests) || !cachedDataset) {
     try {
       fs.mkdirSync(cacheDir, { recursive: true });
       fs.writeFileSync(cacheFile, JSON.stringify(dataset, null, 2), 'utf-8');
@@ -4186,17 +4719,23 @@ end
 local questMetaById = {}
 local questMetaByKey = {}
 
-local function GetQuestMetaKey(qid, faction)
-  if qid and (faction == "alliance" or faction == "horde") then
+local function GetQuestMetaKey(qid, faction, navCtx)
+  if not qid then return nil end
+  if navCtx and navCtx ~= "" then
+    return tostring(qid) .. ":" .. tostring(faction or "both") .. ":" .. tostring(navCtx)
+  end
+  if faction == "alliance" or faction == "horde" then
     return tostring(qid) .. ":" .. faction
   end
   return nil
 end
 
-local function LookupQuestMeta(qid, faction)
-  local key = GetQuestMetaKey(qid, faction)
-  if key and questMetaByKey[key] then
-    return questMetaByKey[key]
+local function LookupQuestMeta(qid, fKey)
+  if qid and fKey and fKey ~= "" then
+    local directKey = tostring(qid) .. ":" .. tostring(fKey)
+    if questMetaByKey[directKey] then
+      return questMetaByKey[directKey]
+    end
   end
   return qid and questMetaById[qid] or nil
 end
@@ -4205,8 +4744,9 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
   if type(q) ~= "table" then return end
   local qid = tonumber(q.id or q.questId)
   if not qid or qid <= 0 then return end
-  local metaKey = GetQuestMetaKey(qid, q.faction)
-  local prev = (metaKey and questMetaByKey[metaKey]) or questMetaById[qid] or {}
+  local hasNavCtx = (q._navCtx ~= nil and q._navCtx ~= "")
+  local metaKey = GetQuestMetaKey(qid, q.faction, q._navCtx)
+  local prev = (metaKey and questMetaByKey[metaKey]) or (not hasNavCtx and questMetaById[qid]) or {}
   local resolvedZone = (q.zone and q.zone ~= "") and q.zone or (q.place and q.place ~= "" and q.place) or fallbackZone or prev.zone or ""
   local sameZone = (not prev.zone or prev.zone == "" or resolvedZone == prev.zone)
   local qx = tonumber(q.x)
@@ -4225,7 +4765,9 @@ local function RegisterQuestMeta(q, fallbackLevel, fallbackZone)
     teaches = (q.teaches and q.teaches ~= "") and q.teaches or prev.teaches or "",
     steps = q.steps or prev.steps,
   }
-  questMetaById[qid] = entry
+  if not hasNavCtx then
+    questMetaById[qid] = entry
+  end
   if metaKey then
     questMetaByKey[metaKey] = entry
   end
@@ -4384,16 +4926,16 @@ local function IsQuestActiveById(qid)
 end
 
 local questieNpcCache = {}
-local function ResolveQuestieNpc(npcIds)
-  if type(npcIds) ~= "table" or not _G.NpcDB then return nil end
-  local npcId = tonumber(npcIds[1])
-  if not npcId or npcId <= 0 then return nil end
-  if questieNpcCache[npcId] ~= nil then
-    return questieNpcCache[npcId] or nil
+local questieObjectCache = {}
+local function ResolveSingleQuestieEntity(entityId, db, cache)
+  entityId = tonumber(entityId)
+  if not entityId or entityId <= 0 or not db then return nil end
+  if cache[entityId] ~= nil then
+    return cache[entityId] or nil
   end
-  local name = _G.NpcDB.name and _G.NpcDB.name(npcId) or ""
-  local spawns = _G.NpcDB.spawns and _G.NpcDB.spawns(npcId)
-  local prefZoneId = _G.NpcDB.zoneID and _G.NpcDB.zoneID(npcId)
+  local name = db.name and db.name(entityId) or ""
+  local spawns = db.spawns and db.spawns(entityId)
+  local prefZoneId = db.zoneID and db.zoneID(entityId)
   local areaId, x, y = nil, nil, nil
   if type(spawns) == "table" then
     if prefZoneId and type(spawns[prefZoneId]) == "table" and type(spawns[prefZoneId][1]) == "table" then
@@ -4411,18 +4953,60 @@ local function ResolveQuestieNpc(npcIds)
       end
     end
   end
+  if not areaId and type(prefZoneId) == "number" and prefZoneId > 0 then
+    areaId = prefZoneId
+  end
   local zoneName = ""
   if areaId and C_Map and C_Map.GetAreaInfo then
     local ok, z = pcall(C_Map.GetAreaInfo, areaId)
     if ok and type(z) == "string" then zoneName = z end
   end
-  if name == "" and not x then
-    questieNpcCache[npcId] = false
+  if name == "" and not x and not areaId then
+    cache[entityId] = false
     return nil
   end
-  local res = { npc = name, zone = zoneName, x = x, y = y }
-  questieNpcCache[npcId] = res
+  local res = { npc = name, zone = zoneName, areaId = areaId, spawns = spawns, x = x, y = y }
+  cache[entityId] = res
   return res
+end
+
+local function ResolveQuestieEntity(entityIds, db, cache, preferredAreaIds)
+  if type(entityIds) ~= "table" or not db then return nil end
+  local fallback = nil
+  for _, eid in ipairs(entityIds) do
+    local res = ResolveSingleQuestieEntity(eid, db, cache)
+    if res then
+      if not fallback or (not fallback.areaId and res.areaId) then
+        fallback = res
+      end
+      if type(preferredAreaIds) == "table" then
+        if res.areaId and preferredAreaIds[res.areaId] then
+          return res
+        end
+        if type(res.spawns) == "table" then
+          for aid, pts in pairs(res.spawns) do
+            if preferredAreaIds[aid] and type(pts) == "table" and type(pts[1]) == "table" then
+              local zName = res.zone
+              if C_Map and C_Map.GetAreaInfo then
+                local ok, z = pcall(C_Map.GetAreaInfo, aid)
+                if ok and type(z) == "string" then zName = z end
+              end
+              return { npc = res.npc, zone = zName, areaId = aid, spawns = res.spawns, x = pts[1][1], y = pts[1][2] }
+            end
+          end
+        end
+      end
+    end
+  end
+  return fallback
+end
+
+local function ResolveQuestieNpc(npcIds, preferredAreaIds)
+  return ResolveQuestieEntity(npcIds, _G.NpcDB, questieNpcCache, preferredAreaIds)
+end
+
+local function ResolveQuestieObject(objectIds, preferredAreaIds)
+  return ResolveQuestieEntity(objectIds, _G.ObjectDB, questieObjectCache, preferredAreaIds)
 end
 
 local questieQuestInfoCache = {}
@@ -4440,8 +5024,15 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
       local qMinLevel = _G.QuestDB.requiredLevel and _G.QuestDB.requiredLevel(qid)
       local started = _G.QuestDB.startedBy and _G.QuestDB.startedBy(qid)
       local finished = _G.QuestDB.finishedBy and _G.QuestDB.finishedBy(qid)
-      local startInfo = ResolveQuestieNpc(started and started[1])
-      local endInfo = ResolveQuestieNpc(finished and finished[1])
+      local startInfo = ResolveQuestieNpc(started and started[1]) or ResolveQuestieObject(started and started[2])
+      if not startInfo and type(started and started[3]) == "table" and tonumber(started[3][1]) then
+        local itemId = tonumber(started[3][1])
+        local itemName = (_G.ItemDB and _G.ItemDB.name and _G.ItemDB.name(itemId)) or (GetItemInfo and GetItemInfo(itemId))
+        if itemName and itemName ~= "" then
+          startInfo = { npc = "[物品] " .. itemName, zone = "", x = nil, y = nil }
+        end
+      end
+      local endInfo = ResolveQuestieNpc(finished and finished[1]) or ResolveQuestieObject(finished and finished[2])
       local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(qid)
       local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(qid)
       local nextQ = _G.QuestDB.nextQuestInChain and _G.QuestDB.nextQuestInChain(qid)
@@ -4912,21 +5503,32 @@ local function CountLeadingCompletedChainSteps(entries)
   return count
 end
 
-local function GetQuestChainFoldKey(q)
+local function GetQuestChainFoldKey(q, ctxZone)
   local qid = tonumber(q and (q.id or q.questId))
   if not qid or qid <= 0 then return nil end
-  return string.format("%d:%s", qid, tostring(q.faction or ""))
+  local origin = q and q._originId and (":" .. tostring(q._originId)) or ""
+  local z = (ctxZone and ctxZone ~= "") and ctxZone or (q and q._navCtx)
+  if z and z ~= "" then
+    return string.format("%d:%s:%s%s", qid, tostring(q.faction or ""), z, origin)
+  end
+  return string.format("%d:%s%s", qid, tostring(q.faction or ""), origin)
 end
 
-local function GetQuestStepFoldKey(sid, faction)
+local function GetQuestStepFoldKey(sid, faction, ctxZone)
   local stepId = tonumber(sid)
   if not stepId or stepId <= 0 then return nil end
+  if ctxZone and ctxZone ~= "" then
+    return string.format("step:%d:%s:%s", stepId, tostring(faction or ""), ctxZone)
+  end
   return string.format("step:%d:%s", stepId, tostring(faction or ""))
 end
 
-local function GetSharedPrefixFoldKey(sid, faction)
+local function GetSharedPrefixFoldKey(sid, faction, ctxZone)
   local stepId = tonumber(sid)
   if not stepId or stepId <= 0 then return nil end
+  if ctxZone and ctxZone ~= "" then
+    return string.format("prefix:%d:%s:%s", stepId, tostring(faction or ""), ctxZone)
+  end
   return string.format("prefix:%d:%s", stepId, tostring(faction or ""))
 end
 
@@ -5043,6 +5645,9 @@ local function FormatQuestLink(q, fallbackLevel, fallbackZone, suppressDoneTag, 
     if completed == nil then completed = IsQuestCompletedById(qid) end
     local active = (not completed) and IsQuestActiveById(qid)
     local color = completed and "|cff888888" or (active and "|cff00ff00" or "|cffffff00")
+    if q._navCtx and q._navCtx ~= "" then
+      return string.format("%s|Hwowfquest:%d:%d:%s:%s|h[%s]|h|r", color, qid, qLevel, tostring(q.faction or "both"), q._navCtx, qName)
+    end
     if q.faction == "alliance" or q.faction == "horde" then
       return string.format("%s|Hwowfquest:%d:%d:%s|h[%s]|h|r", color, qid, qLevel, q.faction, qName)
     end
@@ -5112,6 +5717,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, 
       local stepObj = {
         id = sid,
         faction = q.faction,
+        _navCtx = q._navCtx,
         name = st.name or q.name,
         level = st.level or q.level or q.minLevel or fallbackLevel,
         npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
@@ -5359,7 +5965,7 @@ local function GroupQuestsBySharedPrefix(quests)
   return groups
 end
 
-local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseIndent, foldCompletedPrefix)
+local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseIndent, foldCompletedPrefix, foldZoneCtx)
   local quests = grp.quests
   local k = grp.prefixLen
   local q1 = quests[1]
@@ -5380,6 +5986,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
     local stepObj = {
       id = sid,
       faction = q1.faction,
+      _navCtx = q1._navCtx,
       name = st.name or q1.name,
       level = st.level or q1.level or q1.minLevel or fallbackLevel,
       npc = (st.npc and st.npc ~= "") and st.npc or q1.npc,
@@ -5396,7 +6003,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
     local npcPart = FormatStepNpcInfo(stepObj, preZone)
     local stepFoldKey = nil
     if foldCompletedPrefix and sid and IsQuestCompletedById(sid) and not IsQuestActiveById(sid) then
-      stepFoldKey = GetQuestStepFoldKey(sid, q1.faction)
+      stepFoldKey = GetQuestStepFoldKey(sid, q1.faction, foldZoneCtx)
     end
     if stepFoldKey and not IsQuestChainFoldExpanded(stepFoldKey) then
       table.insert(outLines, baseIndent .. string.format("|cff888888|Hwowfchain:%s|h[+]|h|r 已完成前置", stepFoldKey))
@@ -5414,6 +6021,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
       id = lastPre.id,
       name = lastPre.name,
       faction = q1.faction,
+      _navCtx = q1._navCtx,
       level = lastPre.level or q1.level,
       minLevel = q1.minLevel or fallbackLevel,
       npc = (lastPre.npc and lastPre.npc ~= "") and lastPre.npc or q1.npc,
@@ -5423,7 +6031,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
       y = (lastPre.y ~= nil) and lastPre.y or q1.y,
       steps = prefixSteps,
     }
-    local prefixFoldKey = GetSharedPrefixFoldKey(lastPre.id, q1.faction)
+    local prefixFoldKey = GetSharedPrefixFoldKey(lastPre.id, q1.faction, foldZoneCtx)
     local _, prefixTree = FormatQuestWithSteps(prefixQuest, q1.minLevel or fallbackLevel, q1Zone, baseIndent, foldCompletedPrefix, prefixFoldKey)
     if prefixTree and prefixTree ~= "" then
       local prefixVisibleLines = 0
@@ -5458,6 +6066,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
         local stepObj = {
           id = sid,
           faction = bq.faction,
+          _navCtx = bq._navCtx,
           name = st.name or bq.name,
           level = st.level or bq.level or bq.minLevel or fallbackLevel,
           npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and bq.npc or ""),
@@ -5482,7 +6091,7 @@ local function FormatSharedPrefixGroup(grp, fallbackLevel, fallbackZone, baseInd
     local branchFoldKey = nil
     local branchFolded = false
     if branchFoldCount > 0 then
-      branchFoldKey = GetQuestChainFoldKey(bq)
+      branchFoldKey = GetQuestChainFoldKey(bq, foldZoneCtx)
       branchFolded = branchFoldKey ~= nil and not IsQuestChainFoldExpanded(branchFoldKey)
     end
     local startIdx = branchFolded and (branchFoldCount + 1) or 1
@@ -5798,11 +6407,14 @@ local function FormatBandZonesTitle(band)
     return string.format("|cff00ffcc%s|r (%s)", band.zone or "", hubName or "")
   end
   local names = {}
+  local seen = {}
   if band.zone and band.zone ~= "" then
+    seen[band.zone] = true
     table.insert(names, band.zone)
   end
   for _, az in ipairs(band.altZones) do
-    if az.zone and az.zone ~= "" then
+    if az.zone and az.zone ~= "" and not seen[az.zone] then
+      seen[az.zone] = true
       table.insert(names, az.zone)
     end
   end
@@ -5841,6 +6453,548 @@ local function FormatBandZonesBlock(band, headerLabel)
     ))
   end
   return string.format("|cffffd100%s:|r\n%s", headerLabel or "适龄练级区域 (可自由切换/穿插)", table.concat(zoneLines, "\n"))
+end
+
+local ROUTE_RACE_BIT = {
+  ["human"] = 1,
+  ["orc"] = 2,
+  ["dwarf"] = 4,
+  ["night-elf"] = 8,
+  ["undead"] = 16,
+  ["tauren"] = 32,
+  ["gnome"] = 64,
+  ["troll"] = 128,
+  ["skyborne-alliance"] = 4294967296,
+  ["skyborne-horde"] = 8589934592,
+}
+
+local function MatchesQuestRace(q)
+  local mask = tonumber(q and q.r)
+  if not mask or mask <= 0 then return true end
+  local raceBit = ROUTE_RACE_BIT[state.routeId]
+  if not raceBit then return true end
+  return math.floor(mask / raceBit) % 2 == 1
+end
+
+local zoneQuestObjPool = {}
+local function GetZoneQuestPool(zoneName)
+  local cleanName = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
+  if cleanName == "" or not Data.zoneQuests then return nil end
+  if zoneQuestObjPool[cleanName] then return zoneQuestObjPool[cleanName] end
+  local rawList = Data.zoneQuests[cleanName]
+  if type(rawList) ~= "table" then return nil end
+  local pool = {}
+  for _, raw in ipairs(rawList) do
+    local fStr = (raw.f == "a" and "alliance") or (raw.f == "h" and "horde") or "both"
+    table.insert(pool, {
+      id = raw.id,
+      faction = fStr,
+      r = raw.r,
+      min = raw.min or 1,
+      lv = raw.lv or 1,
+      maxLv = raw.maxLv or raw.lv or 1,
+      minLevel = raw.min or 1,
+      level = raw.lv or 1,
+    })
+  end
+  zoneQuestObjPool[cleanName] = pool
+  return pool
+end
+
+local function IsQuestEligibleForZoneChain(qid)
+  local id = tonumber(qid)
+  if not id or id <= 0 or not _G.QuestDB then return true end
+  local reqCls = _G.QuestDB.requiredClasses and _G.QuestDB.requiredClasses(id)
+  if type(reqCls) == "number" and reqCls > 0 then return false end
+  local reqSkill = _G.QuestDB.requiredSkill and _G.QuestDB.requiredSkill(id)
+  if type(reqSkill) == "table" and tonumber(reqSkill[1]) and tonumber(reqSkill[1]) > 0 then return false end
+  local reqSpec = _G.QuestDB.requiredSpecialization and _G.QuestDB.requiredSpecialization(id)
+  if type(reqSpec) == "number" and reqSpec > 0 then return false end
+  local reqRanks = _G.QuestDB.requiredRanks and _G.QuestDB.requiredRanks(id)
+  if type(reqRanks) == "table" and #reqRanks > 0 then return false end
+  local sFlags = _G.QuestDB.specialFlags and _G.QuestDB.specialFlags(id)
+  if type(sFlags) == "number" and bit and bit.band and bit.band(sFlags, 1) ~= 0 then return false end
+  local reqRaces = _G.QuestDB.requiredRaces and _G.QuestDB.requiredRaces(id)
+  if type(reqRaces) == "number" and reqRaces > 0 then
+    if not MatchesQuestRace({ r = reqRaces }) then return false end
+  end
+  return true
+end
+
+local function IsGroupPrereqItemSatisfied(pid)
+  local numPid = tonumber(pid)
+  if not numPid or numPid == 0 then return true end
+  local absId = math.abs(numPid)
+  if IsQuestCompletedById(absId) then return true end
+  if numPid > 0 and _G.QuestDB and _G.QuestDB.exclusiveTo then
+    local ex = _G.QuestDB.exclusiveTo(absId)
+    if type(ex) == "table" then
+      for _, eid in ipairs(ex) do
+        if IsQuestCompletedById(eid) then return true end
+      end
+    end
+  end
+  return false
+end
+
+local function IsZoneStepUnlocked(st)
+  if not st or not st.id then return false end
+  local sid = tonumber(st.id)
+  if IsQuestActiveById(sid) then return true end
+  if _G.QuestDB and _G.QuestDB.disabledByQuest then
+    local disQid = _G.QuestDB.disabledByQuest(sid)
+    if type(disQid) == "number" and disQid > 0 and IsQuestActiveById(disQid) then
+      return false
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.parentQuest then
+    local parentId = _G.QuestDB.parentQuest(sid)
+    if type(parentId) == "number" and parentId > 0 and not IsQuestActiveById(parentId) then
+      return false
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.nextQuestInChain then
+    local nextQ = _G.QuestDB.nextQuestInChain(sid)
+    if type(nextQ) == "number" and nextQ > 0 and (IsQuestCompletedById(nextQ) or IsQuestActiveById(nextQ)) then
+      return false
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.breadcrumbForQuestId then
+    local targetQid = _G.QuestDB.breadcrumbForQuestId(sid)
+    if type(targetQid) == "number" and targetQid > 0 and (IsQuestCompletedById(targetQid) or IsQuestActiveById(targetQid)) then
+      return false
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.breadcrumbs then
+    local bcs = _G.QuestDB.breadcrumbs(sid)
+    if type(bcs) == "table" then
+      for _, bcId in ipairs(bcs) do
+        if IsQuestActiveById(bcId) then
+          return false
+        end
+      end
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.availableUntilCompleted then
+    local closingQid = _G.QuestDB.availableUntilCompleted(sid)
+    if type(closingQid) == "number" and closingQid > 0 and IsQuestCompletedById(closingQid) then
+      return false
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.exclusiveTo then
+    local ex = _G.QuestDB.exclusiveTo(sid)
+    if type(ex) == "table" then
+      for _, eid in ipairs(ex) do
+        if IsQuestCompletedById(eid) or IsQuestActiveById(eid) then
+          return false
+        end
+      end
+    end
+  end
+  if _G.QuestDB then
+    local function getRepStanding(fid)
+      if GetFactionInfoByID then
+        local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, fid)
+        if ok and type(barValue) == "number" then return barValue end
+      elseif C_Reputation and C_Reputation.GetFactionDataByID then
+        local ok, data = pcall(C_Reputation.GetFactionDataByID, fid)
+        if ok and type(data) == "table" and type(data.currentStanding) == "number" then
+          return data.currentStanding
+        end
+      end
+      return nil
+    end
+    local reqMinRep = _G.QuestDB.requiredMinRep and _G.QuestDB.requiredMinRep(sid)
+    if type(reqMinRep) == "table" and tonumber(reqMinRep[1]) and tonumber(reqMinRep[2]) then
+      local barValue = getRepStanding(tonumber(reqMinRep[1]))
+      if type(barValue) ~= "number" or barValue < tonumber(reqMinRep[2]) then
+        return false
+      end
+    end
+    local reqMaxRep = _G.QuestDB.requiredMaxRep and _G.QuestDB.requiredMaxRep(sid)
+    if type(reqMaxRep) == "table" and tonumber(reqMaxRep[1]) and tonumber(reqMaxRep[2]) then
+      local barValue = getRepStanding(tonumber(reqMaxRep[1]))
+      if type(barValue) ~= "number" or barValue >= tonumber(reqMaxRep[2]) then
+        return false
+      end
+    end
+  end
+  if _G.QuestDB and _G.QuestDB.startedBy then
+    local started = _G.QuestDB.startedBy(sid)
+    local getItemCount = GetItemCount or (C_Item and C_Item.GetItemCount)
+    if type(started) == "table"
+      and (type(started[1]) ~= "table" or #started[1] == 0)
+      and (type(started[2]) ~= "table" or #started[2] == 0)
+      and type(started[3]) == "table" and #started[3] > 0
+      and getItemCount then
+      local hasStarterItem = false
+      for _, itemId in ipairs(started[3]) do
+        local ok, cnt = pcall(getItemCount, tonumber(itemId))
+        if ok and type(cnt) == "number" and cnt > 0 then
+          hasStarterItem = true
+          break
+        end
+      end
+      if not hasStarterItem then
+        return false
+      end
+    end
+  end
+  if _G.QuestDB then
+    local preG = _G.QuestDB.preQuestGroup and _G.QuestDB.preQuestGroup(sid)
+    if type(preG) == "table" and #preG > 0 then
+      for _, pid in ipairs(preG) do
+        if not IsGroupPrereqItemSatisfied(pid) then return false end
+      end
+    end
+    local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(sid)
+    if type(preS) == "table" and #preS > 0 then
+      local anyDone = false
+      for _, pid in ipairs(preS) do
+        if IsQuestCompletedById(pid) then
+          anyDone = true
+          break
+        end
+      end
+      if not anyDone then return false end
+    end
+    local startWith = _G.QuestDB.availableStartingWith and _G.QuestDB.availableStartingWith(sid)
+    if type(startWith) == "number" and startWith > 0
+      and not (IsQuestActiveById(startWith) or IsQuestCompletedById(startWith)) then
+      return false
+    end
+    return true
+  end
+  if type(st.reqAll) == "table" and #st.reqAll > 0 then
+    for _, pid in ipairs(st.reqAll) do
+      if not IsGroupPrereqItemSatisfied(pid) then return false end
+    end
+  elseif st.preId then
+    if not IsQuestCompletedById(st.preId) then return false end
+  end
+  return true
+end
+
+local function CloneZoneQuestCandidate(q)
+  local copy = {}
+  for k, v in pairs(q) do
+    if k ~= "steps" then copy[k] = v end
+  end
+  copy._originId = tonumber(q.id or q.questId)
+  if type(q.steps) == "table" and #q.steps > 0 then
+    local ineligibleIds = {}
+    local blockingIneligibleIds = {}
+    for _, st in ipairs(q.steps) do
+      local sid = tonumber(st and st.id)
+      if not sid or not IsQuestEligibleForZoneChain(sid) then
+        if sid then
+          ineligibleIds[sid] = true
+          if not IsQuestCompletedById(sid) then
+            blockingIneligibleIds[sid] = true
+          end
+        end
+      end
+    end
+    -- 仅沿未完成的不可接前置传播阻塞标记；已完成的不展示前置不再阻断后续步骤
+    local changed = true
+    while changed do
+      changed = false
+      for _, st in ipairs(q.steps) do
+        local sid = tonumber(st and st.id)
+        if sid and not ineligibleIds[sid] then
+          local blocked = false
+          if st.preId and blockingIneligibleIds[tonumber(st.preId)] and not IsGroupPrereqItemSatisfied(st.preId) then
+            blocked = true
+          elseif type(st.reqAll) == "table" then
+            for _, pid in ipairs(st.reqAll) do
+              local absPid = math.abs(tonumber(pid) or 0)
+              if blockingIneligibleIds[absPid] and not IsGroupPrereqItemSatisfied(pid) then
+                blocked = true
+                break
+              end
+            end
+          end
+          if blocked then
+            ineligibleIds[sid] = true
+            if not IsQuestCompletedById(sid) then
+              blockingIneligibleIds[sid] = true
+            end
+            changed = true
+          end
+        end
+      end
+    end
+    local kept = {}
+    for _, st in ipairs(q.steps) do
+      local sid = tonumber(st and st.id)
+      if sid and not ineligibleIds[sid] then
+        table.insert(kept, st)
+      end
+    end
+    copy.steps = kept
+    copy.stepCount = #kept
+    if #kept == 0 then
+      copy._zoneIneligible = true
+    elseif #kept < #q.steps then
+      local lastKept = kept[#kept]
+      if lastKept then
+        copy.id = lastKept.id
+        copy.name = lastKept.name or copy.name
+        copy.level = lastKept.level or copy.level
+        copy.minLevel = lastKept.minLevel or copy.minLevel
+        copy.npc = lastKept.npc
+        copy.zone = lastKept.zone
+        copy.place = lastKept.place
+        copy.x = lastKept.x
+        copy.y = lastKept.y
+      end
+    end
+  elseif not IsQuestEligibleForZoneChain(q.id) then
+    copy._zoneIneligible = true
+  end
+  return copy
+end
+
+local function GetZoneSuitableQuestChains(zoneName, lvl)
+  local pool = GetZoneQuestPool(zoneName)
+  if not pool or #pool == 0 then return {} end
+  local minOkLv = math.max(1, (lvl or 1) - 7)
+  local maxOkLv = (lvl or 1) + 5
+  local candidates = {}
+
+  local bundledQdbVer = Data.meta and Data.meta.questieDbVersion
+  local clientQdbVer = (GetAddOnMetadata and GetAddOnMetadata("QuestieDB", "Version"))
+    or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("QuestieDB", "Version"))
+  local sameQuestieDbVersion = (type(bundledQdbVer) == "string" and bundledQdbVer ~= "" and clientQdbVer == bundledQdbVer)
+  local iterPool = pool
+  if not sameQuestieDbVersion then
+    local cleanZoneKey = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
+    local coveredPool = Data.zoneCoveredIds and Data.zoneCoveredIds[cleanZoneKey]
+    if type(coveredPool) == "table" and #coveredPool > 0 then
+      iterPool = {}
+      for _, q in ipairs(pool) do table.insert(iterPool, q) end
+      for _, cid in ipairs(coveredPool) do table.insert(iterPool, { id = cid }) end
+    end
+  end
+
+  for _, q in ipairs(iterPool) do
+    local preFilterOk = false
+    if GetQuestieQuestInfo(q.id) ~= nil then
+      if sameQuestieDbVersion then
+        local factionOk = (q.faction == "both" or q.faction == state.faction)
+        preFilterOk = factionOk and MatchesQuestRace(q) and q.min <= lvl and q.maxLv >= minOkLv
+      else
+        local liveRaces = _G.QuestDB and _G.QuestDB.requiredRaces and _G.QuestDB.requiredRaces(q.id)
+        preFilterOk = (type(liveRaces) ~= "number" or liveRaces <= 0 or MatchesQuestRace({ r = liveRaces }))
+      end
+    end
+    if preFilterOk then
+      ResolveQuestChainFromQuestieDB(q)
+      local cand = CloneZoneQuestCandidate(q)
+
+      if not cand._zoneIneligible then
+        local cleanZone = tostring(zoneName or ""):gsub("%s*%([^)]*%)%s*$", "")
+        local areaSet = {}
+        local areaList = Data.zoneAreaIds and Data.zoneAreaIds[cleanZone]
+        if type(areaList) == "table" then
+          for _, aid in ipairs(areaList) do areaSet[aid] = true end
+        end
+        local matchedStep = nil
+        local matchedStarter = nil
+        local acceptLv = nil
+        local function checkStepInZone(stObj, curMin, curLv)
+          if curMin > lvl or curLv < minOkLv or curLv > maxOkLv then
+            return false
+          end
+          local mId = tonumber(stObj and stObj.id)
+          if mId and not IsQuestActiveById(mId) and _G.QuestDB and _G.QuestDB.requiredMaxLevel then
+            local maxReqLv = _G.QuestDB.requiredMaxLevel(mId)
+            if type(maxReqLv) == "number" and maxReqLv > 0 and lvl > maxReqLv then
+              return false
+            end
+          end
+          local started = mId and _G.QuestDB and _G.QuestDB.startedBy and _G.QuestDB.startedBy(mId)
+          local npcStarter = started and ResolveQuestieNpc(started[1], areaSet) or nil
+          local objStarter = started and ResolveQuestieObject(started[2], areaSet) or nil
+          local npcInZone = npcStarter and npcStarter.areaId and areaSet[npcStarter.areaId]
+          local objInZone = objStarter and objStarter.areaId and areaSet[objStarter.areaId]
+          local zoneStarter = (npcInZone and npcStarter) or (objInZone and objStarter) or npcStarter or objStarter
+          local starterInZone = npcInZone or objInZone
+          local hasAnyStarterArea = (npcStarter and npcStarter.areaId ~= nil) or (objStarter and objStarter.areaId ~= nil)
+          local inThisZone = starterInZone or (not hasAnyStarterArea)
+          if not inThisZone then
+            return false
+          end
+          matchedStep = stObj
+          if starterInZone and zoneStarter then
+            local validCoords = type(zoneStarter.x) == "number" and type(zoneStarter.y) == "number" and zoneStarter.x >= 0 and zoneStarter.y >= 0
+            matchedStarter = {
+              npc = zoneStarter.npc,
+              zone = cleanZone,
+              areaId = zoneStarter.areaId,
+              x = validCoords and zoneStarter.x or nil,
+              y = validCoords and zoneStarter.y or nil,
+            }
+          elseif not hasAnyStarterArea and started and type(started[3]) == "table" and #started[3] > 0 then
+            local getItemCount = GetItemCount or (C_Item and C_Item.GetItemCount)
+            local pickedItemId = nil
+            if getItemCount then
+              for _, itemId in ipairs(started[3]) do
+                local ok, cnt = pcall(getItemCount, tonumber(itemId))
+                if ok and type(cnt) == "number" and cnt > 0 then
+                  pickedItemId = tonumber(itemId)
+                  break
+                end
+              end
+            end
+            if pickedItemId then
+              local itemName = (_G.ItemDB and _G.ItemDB.name and _G.ItemDB.name(pickedItemId)) or (GetItemInfo and GetItemInfo(pickedItemId)) or ("物品 #" .. pickedItemId)
+              matchedStarter = {
+                npc = "[物品] " .. itemName,
+                zone = cleanZone,
+                areaId = nil,
+                x = nil,
+                y = nil,
+              }
+            else
+              matchedStarter = nil
+            end
+          else
+            matchedStarter = nil
+          end
+          acceptLv = curMin
+          return true
+        end
+
+        if type(cand.steps) == "table" and #cand.steps > 0 then
+          for _, st in ipairs(cand.steps) do
+            local sid = tonumber(st and st.id)
+            if sid and sid > 0 and not IsQuestCompletedById(sid) and IsZoneStepUnlocked(st) then
+              local stInfo = GetQuestieQuestInfo(sid)
+              local curMin = (stInfo and stInfo.minLevel) or st.level or cand.min
+              local curLv = (stInfo and stInfo.level) or st.level or cand.lv
+              if checkStepInZone(st, curMin, curLv) then
+                break
+              end
+            end
+          end
+        elseif not IsQuestCompleted(cand) then
+          if IsZoneStepUnlocked({ id = cand.id }) then
+            local curMin = cand.minLevel or cand.min
+            local curLv = cand.level or cand.lv
+            checkStepInZone(cand, curMin, curLv)
+          end
+        end
+
+        if matchedStep then
+          if matchedStarter then
+            local msNpc = matchedStarter.npc or ""
+            local msZone = (matchedStarter.zone and matchedStarter.zone ~= "") and matchedStarter.zone or cleanZone
+            if type(cand.steps) == "table" and #cand.steps > 0 then
+              local newSteps = {}
+              for _, st in ipairs(cand.steps) do
+                if st == matchedStep then
+                  local stCopy = {}
+                  for k, v in pairs(st) do stCopy[k] = v end
+                  if msNpc ~= "" then stCopy.npc = msNpc end
+                  stCopy.zone = msZone
+                  stCopy.x = matchedStarter.x
+                  stCopy.y = matchedStarter.y
+                  matchedStep = stCopy
+                  table.insert(newSteps, stCopy)
+                else
+                  table.insert(newSteps, st)
+                end
+              end
+              cand.steps = newSteps
+            end
+            if cand == matchedStep or (tonumber(cand.id) == tonumber(matchedStep.id)) then
+              if msNpc ~= "" then cand.npc = msNpc end
+              cand.zone = msZone
+              cand.x = matchedStarter.x
+              cand.y = matchedStarter.y
+            end
+          end
+          local chainNavCtx = cleanZone .. "#" .. tostring(cand.id or cand.questId or (#candidates + 1))
+          cand._matchedStarter = matchedStarter
+          cand._matchedStep = matchedStep
+          cand._acceptLv = acceptLv
+          cand._navCtx = chainNavCtx
+          if type(cand.steps) == "table" and #cand.steps > 0 then
+            local ctxSteps = {}
+            for _, st in ipairs(cand.steps) do
+              local stCopy = {}
+              for k, v in pairs(st) do stCopy[k] = v end
+              stCopy._navCtx = chainNavCtx
+              stCopy.faction = stCopy.faction or cand.faction
+              table.insert(ctxSteps, stCopy)
+            end
+            cand.steps = ctxSteps
+            if matchedStep then
+              for _, st in ipairs(ctxSteps) do
+                if tonumber(st.id) == tonumber(matchedStep.id) then
+                  cand._matchedStep = st
+                  break
+                end
+              end
+            end
+          end
+          table.insert(candidates, cand)
+        end
+      end
+    end
+  end
+
+  if #candidates == 0 then return {} end
+  local exactUnique = {}
+  local seenSeq = {}
+  for _, q in ipairs(candidates) do
+    local parts = {}
+    if type(q.steps) == "table" and #q.steps > 0 then
+      for _, st in ipairs(q.steps) do
+        table.insert(parts, tostring(st.id or ""))
+      end
+    else
+      table.insert(parts, tostring(q.id or q.questId or ""))
+    end
+    local seqKey = table.concat(parts, ":")
+    if not seenSeq[seqKey] then
+      seenSeq[seqKey] = true
+      table.insert(exactUnique, q)
+    end
+  end
+  return GroupQuestsBySharedPrefix(exactUnique)
+end
+
+local function CollectBandZoneInfos(band, lvl)
+  local out = {}
+  local seen = {}
+  local function addZone(zName, hubName, hubZone, fromLv, toLv, x, y, note)
+    local clean = tostring(zName or ""):gsub("%s*%([^)]*%)%s*$", "")
+    if clean == "" or seen[clean] then return end
+    seen[clean] = true
+    table.insert(out, {
+      zone = clean,
+      hub = hubName or "",
+      hubZone = (hubZone and hubZone ~= "") and hubZone or clean,
+      from = fromLv or band.from or 1,
+      to = toLv or band.to or 60,
+      x = x,
+      y = y,
+      note = note,
+    })
+  end
+  addZone(band.zone, band.hub and band.hub.name, band.hub and band.hub.zone, band.from, band.to, band.hub and band.hub.x, band.hub and band.hub.y, nil)
+  if type(band.altZones) == "table" then
+    for _, az in ipairs(band.altZones) do
+      local azFrom = az.from or band.from or 1
+      local azTo = az.to or band.to or 60
+      if not lvl or (azFrom <= lvl and lvl <= azTo) then
+        addZone(az.zone, az.hub, az.zone, azFrom, azTo, az.x, az.y, az.note)
+      end
+    end
+  end
+  return out
 end
 
 local function MatchesSearch(text)
@@ -6568,6 +7722,8 @@ local function RenderTabRoutes()
     end
   end
 
+  local shownZoneCards = 0
+  local shownZoneNames = {}
   for _, entry in ipairs(orderedBands) do
     local b = entry.band
     local stepIdx = entry.idx
@@ -6619,12 +7775,14 @@ local function RenderTabRoutes()
 
       if matchedQuests and #matchedQuests > 0 then
         for _, q in ipairs(matchedQuests) do
-          local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or b.zone)
-          local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
-          local qTag = (q.kind == "class") and string.format("|cff00ffcc[★%s职业任务]|r", cls and cls.name or "") or "|cffffd100[区域关键任务]|r"
-          local qLink, qTree = FormatQuestWithSteps(q, q.level or b.from, qZone, "    ")
-          table.insert(lines, string.format("%s %s (Lv.%d) — %s %s%s", qTag, qLink, q.level or b.from, q.place or "", q.npc or "", qc))
-          if qTree then table.insert(lines, qTree) end
+          if not (isMatchMode and IsQuestCompleted(q)) then
+            local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or b.zone)
+            local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
+            local qTag = (q.kind == "class") and string.format("|cff00ffcc[★%s职业任务]|r", cls and cls.name or "") or "|cffffd100[区域关键任务]|r"
+            local qLink, qTree = FormatQuestWithSteps(q, q.level or b.from, qZone, "    ", true)
+            table.insert(lines, string.format("%s %s (Lv.%d) — %s %s%s", qTag, qLink, q.level or b.from, q.place or "", q.npc or "", qc))
+            if qTree then table.insert(lines, qTree) end
+          end
         end
       end
 
@@ -6637,7 +7795,7 @@ local function RenderTabRoutes()
           local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or b.zone
           local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
           local npcInfo = firstStep and string.format(" — %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-          local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "    ")
+          local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "    ", true)
           table.insert(lines, string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r %s%s%s", cr.level, cls and cls.name or "", crLink, teachStr, npcInfo))
           if crTree then table.insert(lines, crTree) end
         end
@@ -6735,6 +7893,72 @@ local function RenderTabRoutes()
           SetWaypointOrPrint(b.zone, b.hub.name, b.hub.x, b.hub.y)
         end or nil
       )
+    end
+
+    -- 为当前等级所在阶段的多个适龄区域分别展示任务链形式的适合可接任务（已全部完成过滤，部分完成自动折叠前置）
+    if isCurrent and shownZoneCards < 6 then
+      for _, zInfo in ipairs(CollectBandZoneInfos(b, lvl)) do
+        if shownZoneCards >= 6 then break end
+        if zInfo.from <= lvl and lvl <= zInfo.to and not shownZoneNames[zInfo.zone] then
+          local groups = GetZoneSuitableQuestChains(zInfo.zone, lvl)
+          if #groups > 0 then
+            local zoneSearchBlob = (zInfo.zone or "") .. " " .. (zInfo.hub or "") .. " " .. (zInfo.note or "")
+            for _, grp in ipairs(groups) do
+              for _, gq in ipairs(grp.quests or {}) do
+                zoneSearchBlob = zoneSearchBlob .. " " .. (gq.name or "")
+                if type(gq.steps) == "table" then
+                  for _, st in ipairs(gq.steps) do
+                    zoneSearchBlob = zoneSearchBlob .. " " .. (st.name or "")
+                  end
+                end
+              end
+            end
+            if MatchesSearch(zoneSearchBlob) then
+              shownZoneNames[zInfo.zone] = true
+              shownZoneCards = shownZoneCards + 1
+              local zLines = {}
+              if zInfo.note and zInfo.note ~= "" then
+                table.insert(zLines, "|cff99e6ff区域指引:|r " .. zInfo.note)
+              end
+              for _, grp in ipairs(groups) do
+                local q = grp.quests[1]
+                local matched = q._matchedStarter or q._matchedStep or q
+                local qZone = (matched.zone and matched.zone ~= "") and matched.zone or ((q.zone and q.zone ~= "") and q.zone or zInfo.zone)
+                local acceptLv = q._acceptLv or q.minLevel or q.min or zInfo.from
+                local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", acceptLv) or ""
+                local npcInfo = FormatStepNpcInfo(matched, qZone)
+                local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
+                if #grp.quests > 1 and grp.prefixLen >= 1 then
+                  local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, zInfo.from, qZone, "      ", true, zInfo.zone)
+                  local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
+                  table.insert(zLines, string.format("  - %s%s%s%s", headerPrefix, branchTag, acceptTag, npcSuffix))
+                  table.insert(zLines, treeBody)
+                else
+                  local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
+                  local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or q.level or zInfo.from, qZone, "      ", true, GetQuestChainFoldKey(q, zInfo.zone))
+                  table.insert(zLines, string.format("  - %s%s%s%s", qLink, acceptTag, chainTag, npcSuffix))
+                  if qTree then table.insert(zLines, qTree) end
+                end
+              end
+
+              local hubPart = (zInfo.hub and zInfo.hub ~= "") and (" · " .. zInfo.hub) or ""
+              local zCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+              y = LayoutCard(
+                zCard, y,
+                string.format("|cff00ffcc▶ [区域任务链] %s|r%s  |cffffd100(Lv.%d-%d)|r", zInfo.zone, hubPart, zInfo.from, zInfo.to),
+                table.concat(zLines, "\n"),
+                { 0.0, 0.75, 0.65, 0.90 },
+                { 0.05, 0.12, 0.14, 0.93 },
+                string.format("可接 %d 条任务链", #groups),
+                (zInfo.x and zInfo.y) and "标记营地坐标" or nil,
+                (zInfo.x and zInfo.y) and function()
+                  SetWaypointOrPrint(zInfo.hubZone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone), zInfo.x, zInfo.y)
+                end or nil
+              )
+            end
+          end
+        end
+      end
     end
   end
 
@@ -7659,13 +8883,19 @@ local function CreateMinimapButton()
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cff00ffccWoWF Companion|r |cffffd100(wowf.io 无限服百科)|r")
     local zoneList = {}
+    local seenZones = {}
     if band and band.zone and band.zone ~= "" then
+      seenZones[band.zone] = true
       table.insert(zoneList, band.zone)
     end
     if band and band.altZones then
-      for i = 1, math.min(3, #band.altZones) do
-        if band.altZones[i].zone and band.altZones[i].zone ~= "" then
-          table.insert(zoneList, band.altZones[i].zone)
+      local altAdded = 0
+      for _, az in ipairs(band.altZones) do
+        if az.zone and az.zone ~= "" and not seenZones[az.zone] then
+          seenZones[az.zone] = true
+          table.insert(zoneList, az.zone)
+          altAdded = altAdded + 1
+          if altAdded >= 3 then break end
         end
       end
     end
@@ -7700,6 +8930,8 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+eventFrame:RegisterEvent("UPDATE_FACTION")
+pcall(eventFrame.RegisterEvent, eventFrame, "BAG_UPDATE_DELAYED")
 for _, questEv in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_LOG_UPDATE" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, questEv)
 end
@@ -7747,6 +8979,10 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
+  elseif event == "UPDATE_FACTION" or event == "BAG_UPDATE_DELAYED" then
+    if mainFrame and mainFrame:IsShown() and (state.activeTab == 1 or state.activeTab == 2) then
+      RefreshUI(true)
+    end
   elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
     SyncPlayerCharacter()
     RefreshUI(true)
@@ -7791,9 +9027,12 @@ end
  * @param {(url: string) => Record<string, string>} getHeaders
  * @returns {Promise<{ zip: JSZip, outPath: string, version: string, source: string }>}
  */
-export async function buildWoWFAddon(outputDir, cacheDir, getHeaders) {
+export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbBuf = null) {
   console.log('Synchronizing live data from https://wowf.io/zh for WoWF Companion...');
-  const dataset = await buildWoWFDataset(cacheDir, getHeaders);
+  const dataset = await buildWoWFDataset(cacheDir, getHeaders, questieDbBuf);
+  if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds)) {
+    throw new Error('[WoWF] 缺少完整的区域任务链索引 (zoneQuests/zoneAreaIds)，请确认 .cache/upstream-addons/questie-db-forever.zip 可读。');
+  }
   enrichRoutesWithAltZones(dataset.routes);
   normalizeWowfDatasetText(dataset);
   const fullVersion = dataset.meta.version || `${WOWF_VERSION} + DB v2026.11.15`;
