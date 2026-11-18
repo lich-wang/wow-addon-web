@@ -4719,6 +4719,7 @@ local function DedupeQuestieQuests(quests)
     if not (_G.QuestDB and _G.QuestDB.breadcrumbs) then return false end
     local omittedSet = {}
     for k = 1, offset do
+      if IsQuestActiveById(ids[k]) then return false end
       omittedSet[ids[k]] = true
       local prevId = ids[k]
       local nextId = ids[k + 1]
