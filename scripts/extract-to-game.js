@@ -19,7 +19,7 @@ async function extractZip(zipPath, targetDir) {
 async function main() {
   const gameAddonDir = 'C:/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns';
   await extractZip('public/addons/sbf.zip', gameAddonDir);
-  await extractZip('public/addons/easycraft.zip', gameAddonDir);
+  await extractZip('public/addons/easyauction-forever.zip', gameAddonDir);
   await extractZip('public/addons/questie-forever.zip', gameAddonDir);
   await extractZip('public/addons/forever-mouse-tooltip.zip', gameAddonDir);
   console.log('=== All addons updated in game directory! ===');
