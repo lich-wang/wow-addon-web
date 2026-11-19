@@ -256,12 +256,24 @@ async function processSBF() {
 // 2. EasyAuction Forever (无限服拍卖行助手)
 // ---------------------------------------------------------------------------
 async function processEasyAuctionForever() {
-  let url = 'https://edge.forgecdn.net/files/9699/551/EasyAuctionForever-1.0.9.zip';
+  const fallbackUrl = 'https://edge.forgecdn.net/files/9699/551/EasyAuctionForever-1.0.9.zip';
   const latest = await getLatestCurseForgeFile(1808870, name => /^EasyAuctionForever-[\d.]+\.zip$/i.test(name));
-  if (latest?.url) url = latest.url;
+  const cachePath = path.join(UPSTREAM_CACHE_DIR, 'easyauction-forever.zip');
+
+  let url = latest?.url;
+  let buf;
+  if (url) {
+    buf = await downloadBuffer(url, 'easyauction-forever.zip');
+  } else if (fs.existsSync(cachePath)) {
+    console.log(`[Cache Fallback] CurseForge query failed, using cached upstream: ${cachePath}`);
+    buf = fs.readFileSync(cachePath);
+    url = fallbackUrl;
+  } else {
+    url = fallbackUrl;
+    buf = await downloadBuffer(url, 'easyauction-forever.zip');
+  }
 
   const outPath = path.join(OUTPUT_DIR, 'easyauction-forever.zip');
-  const buf = await downloadBuffer(url, 'easyauction-forever.zip');
   const zip = await JSZip.loadAsync(buf);
 
   const tocFile = zip.file('EasyAuctionForever/EasyAuctionForever.toc');
