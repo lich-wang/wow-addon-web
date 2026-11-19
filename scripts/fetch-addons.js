@@ -67,15 +67,34 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
   const cachePath = SafeName ? path.join(UPSTREAM_CACHE_DIR, SafeName) : null;
   const tagPath = cachePath ? `${cachePath}.tag` : null;
   const sourcePath = cachePath ? `${cachePath}.source` : null;
+  let buf;
   try {
     console.log(`Downloading: ${url}...`);
     const res = await fetch(url, { headers: getHeadersForUrl(url), ...(signal ? { signal } : {}) });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (cachePath) {
+    buf = Buffer.from(await res.arrayBuffer());
+  } catch (e) {
+    if (cachePath && fs.existsSync(cachePath)) {
+      console.log(`[Cache Fallback] Download failed (${e.message}), using cached upstream: ${cachePath}`);
+      const cached = fs.readFileSync(cachePath);
+      if (tagPath && fs.existsSync(tagPath)) {
+        cached.releaseTag = fs.readFileSync(tagPath, 'utf-8').trim();
+      }
+      cached.sourceUrl = sourcePath && fs.existsSync(sourcePath)
+        ? fs.readFileSync(sourcePath, 'utf-8').trim()
+        : 'cache://unknown';
+      return cached;
+    }
+    throw e;
+  }
+
+  if (cachePath) {
+    try {
       fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
+      if (sourcePath && fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
+      if (tagPath && fs.existsSync(tagPath)) fs.unlinkSync(tagPath);
       fs.writeFileSync(cachePath, buf);
       if (sourcePath) {
         fs.writeFileSync(sourcePath, url, 'utf-8');
@@ -83,24 +102,13 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
       if (tagPath && releaseTag) {
         fs.writeFileSync(tagPath, releaseTag, 'utf-8');
       }
+    } catch (cacheErr) {
+      console.warn(`[Warn] Failed to update upstream cache ${cachePath}: ${cacheErr.message}`);
     }
-    if (releaseTag) buf.releaseTag = releaseTag;
-    buf.sourceUrl = url;
-    return buf;
-  } catch (e) {
-    if (cachePath && fs.existsSync(cachePath)) {
-      console.log(`[Cache Fallback] Download failed (${e.message}), using cached upstream: ${cachePath}`);
-      const buf = fs.readFileSync(cachePath);
-      if (tagPath && fs.existsSync(tagPath)) {
-        buf.releaseTag = fs.readFileSync(tagPath, 'utf-8').trim();
-      }
-      buf.sourceUrl = sourcePath && fs.existsSync(sourcePath)
-        ? fs.readFileSync(sourcePath, 'utf-8').trim()
-        : 'cache://unknown';
-      return buf;
-    }
-    throw e;
   }
+  if (releaseTag) buf.releaseTag = releaseTag;
+  buf.sourceUrl = url;
+  return buf;
 }
 
 /**
