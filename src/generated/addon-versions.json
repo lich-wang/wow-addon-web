@@ -1,11 +1,11 @@
 {
   "bagnon": {
-    "version": "v12.1.11",
-    "source": "https://edge.forgecdn.net/files/9638/308/Bagnon-12.1.11.zip"
+    "version": "v12.1.12",
+    "source": "https://edge.forgecdn.net/files/9688/481/Bagnon-12.1.12.zip"
   },
   "dungeonsforever": {
-    "version": "v2.1.109",
-    "source": "https://edge.forgecdn.net/files/9649/511/DungeonsForever2.1.109.zip"
+    "version": "v2.1.118",
+    "source": "https://edge.forgecdn.net/files/9696/731/DungeonsForever2.1.118.zip"
   },
   "easycraft": {
     "version": "v1.3.2",
@@ -32,8 +32,8 @@
     "source": "https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip"
   },
   "questie-forever": {
-    "version": "v12.9.0 + DB v1.1.2",
-    "source": "https://edge.forgecdn.net/files/9602/663/Questie-v12.9.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.2/QuestieDB-1.1.2-Forever.zip"
+    "version": "v12.11.0 + DB v1.1.3",
+    "source": "https://edge.forgecdn.net/files/9687/964/Questie-v12.11.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.3/QuestieDB-1.1.3-Forever.zip"
   },
   "sbf": {
     "version": "2026.11.14.8",
@@ -44,7 +44,7 @@
     "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v3.0.0/SpellActivationOverlay-3.0.0-universal.zip"
   },
   "wowf": {
-    "version": "v1.2.57 + DB v2026.11.17",
-    "source": "https://wowf.io/zh (deploy-d78f3b17-1794997467194)"
+    "version": "v1.2.28 + DB v2026.11.14",
+    "source": "https://wowf.io/zh (deploy-dab37282-1794747048682)"
   }
 }
