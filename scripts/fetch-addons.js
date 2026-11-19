@@ -269,48 +269,23 @@ async function processSBF() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. EasyAuction Forever (无限服拍卖行助手)
+// 2. EasyAuction (无限服拍卖行助手，上游自带简体中文)
 // ---------------------------------------------------------------------------
-async function processEasyAuctionForever() {
-  const fallbackUrl = 'https://edge.forgecdn.net/files/9699/551/EasyAuctionForever-1.0.9.zip';
-  const latest = await getLatestCurseForgeFile(1808870, name => /^EasyAuctionForever-[\d.]+\.zip$/i.test(name));
-  const cachePath = path.join(UPSTREAM_CACHE_DIR, 'easyauction-forever.zip');
-  const sourcePath = `${cachePath}.source`;
+async function processEasyAuction() {
+  // 兜底地址仅在 CurseForge 接口不可用时使用；正常情况下始终分发上游最新正式版
+  const fallbackUrl = 'https://edge.forgecdn.net/files/9695/475/EasyAuction-V20261119.3.zip';
+  const latest = await getLatestCurseForgeFile(1595608, name => /^EasyAuction-V?[\d.]+\.zip$/i.test(name));
+  const url = latest?.url || fallbackUrl;
 
-  let buf;
-  let sourceUrl;
-  if (latest?.url) {
-    buf = await downloadBuffer(latest.url, 'easyauction-forever.zip');
-    sourceUrl = buf.sourceUrl || latest.url;
-  } else if (fs.existsSync(cachePath)) {
-    console.log(`[Cache Fallback] CurseForge query failed, using cached upstream: ${cachePath}`);
-    buf = fs.readFileSync(cachePath);
-    sourceUrl = fs.existsSync(sourcePath)
-      ? fs.readFileSync(sourcePath, 'utf-8').trim()
-      : 'cache://unknown';
-  } else {
-    buf = await downloadBuffer(fallbackUrl, 'easyauction-forever.zip');
-    sourceUrl = buf.sourceUrl || fallbackUrl;
-  }
+  const outPath = path.join(OUTPUT_DIR, 'easyauction.zip');
+  // 上游为专有许可协议且已自带完整简体中文与无限服 Interface (16001)，
+  // 因此这里只做原样分发，不改写 TOC / Lua 等任何文件内容
+  const buf = await downloadBuffer(url, 'easyauction.zip');
+  fs.writeFileSync(outPath, buf);
 
-  const outPath = path.join(OUTPUT_DIR, 'easyauction-forever.zip');
   const zip = await JSZip.loadAsync(buf);
-
-  const tocFile = zip.file('EasyAuctionForever/EasyAuctionForever.toc');
-  if (tocFile) {
-    let toc = await tocFile.async('string');
-    if (!toc.includes('Title-zhCN:')) {
-      toc = toc
-        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r EasyAuction Forever (拍卖行助手)')
-        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 无限服专属拍卖行助手：打开拍卖行自动扫描全服物价，背包一键列出可售物品与推荐定价、附魔分解比价、历史走势与扫货购买。');
-    }
-    zip.file('EasyAuctionForever/EasyAuctionForever.toc', toc);
-  }
-
-  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  fs.writeFileSync(outPath, outBuf);
-  recordBundledVersion('easyauction-forever', await readTocVersion(zip, 'EasyAuctionForever/EasyAuctionForever.toc'), sourceUrl);
-  console.log(`[✓] easyauction-forever.zip saved (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  recordBundledVersion('easyauction', await readTocVersion(zip, 'EasyAuction/EasyAuction.toc'), buf.sourceUrl || url);
+  console.log(`[✓] easyauction.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -794,8 +769,8 @@ async function main() {
     writeBundledVersions();
     return;
   }
-  if (onlyArg === 'easyauction-forever') {
-    await processEasyAuctionForever();
+  if (onlyArg === 'easyauction') {
+    await processEasyAuction();
     writeBundledVersions();
     return;
   }
@@ -803,7 +778,7 @@ async function main() {
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await ensureClientBinaries();
   await processSBF();
-  await processEasyAuctionForever();
+  await processEasyAuction();
   await processIceHUD();
   await processDungeonsForever();
   await processBagnon();
