@@ -3,13 +3,13 @@
     "version": "v12.1.11",
     "source": "https://edge.forgecdn.net/files/9638/308/Bagnon-12.1.11.zip"
   },
-  "blackthornes-tradeskills": {
-    "version": "v1.32.0",
-    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.32.0/Blackthornes_TS-v1.32.0-forever.zip"
-  },
   "dungeonsforever": {
     "version": "v2.1.109",
     "source": "https://edge.forgecdn.net/files/9649/511/DungeonsForever2.1.109.zip"
+  },
+  "easycraft": {
+    "version": "v1.3.2",
+    "source": "https://github.com/elrijk/EasyCraft/archive/refs/tags/v1.3.2.zip"
   },
   "forever-mouse-tooltip": {
     "version": "v0.2.0",

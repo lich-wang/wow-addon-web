@@ -218,6 +218,27 @@ async function getLatestGitHubRelease(repo, assetMatch, signal) {
   return null;
 }
 
+/**
+ * 查询指定 GitHub 仓库最新正式版 Release 的标签名（不依赖 Release 是否上传资产）。
+ * 适配 EasyCraft 这类「只发版本与更新日志、不上传 zip 资产」的仓库：
+ * 拿到 tag 后用 zipball API (https://github.com/{repo}/archive/refs/tags/{tag}.zip) 下载源码包。
+ * @param {string} repo - GitHub 仓库全名（例如 owner/repo）
+ * @returns {Promise<string | null>} 最新正式版标签名（如 v1.3.2），失败时返回 null
+ */
+async function getLatestGitHubTag(repo) {
+  try {
+    const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
+    const res = await fetch(apiUrl, { headers: GITHUB_HEADERS });
+    if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.draft || data.prerelease) throw new Error('latest release is draft/prerelease');
+    return data.tag_name || null;
+  } catch (err) {
+    console.warn(`[Warn] Failed to query latest release tag for ${repo}: ${err.message}`);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Single-Button Fishing (SBF)
 // ---------------------------------------------------------------------------
@@ -253,170 +274,47 @@ async function processSBF() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Blackthornes Tradeskills (BT)
+// 2. EasyCraft (无限服专业制造与拍卖比价)
 // ---------------------------------------------------------------------------
-async function processBlackthornes() {
-  let url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.21.0/Blackthornes_TS-v1.21.0-forever.zip';
-  let tag = 'v1.21.0';
-  const latest = await getLatestGitHubRelease('Blackthornes/Blackthornes_Tradeskills', name => name.endsWith('-forever.zip') || name.endsWith('.zip'));
-  if (latest?.url) {
-    url = latest.url;
-    tag = latest.tag;
+const EASYCRAFT_REPO = 'elrijk/EasyCraft';
+const EASYCRAFT_FALLBACK_TAG = 'v1.3.2';
+
+async function processEasyCraft() {
+  // EasyCraft 只发版本与更新日志，不上传 Release 资产：读取最新正式版 tag，
+  // 再用 GitHub 的 tag 源码包 (zipball) 作为上游包。始终跟随上游最新版本。
+  const tag = await getLatestGitHubTag(EASYCRAFT_REPO) || EASYCRAFT_FALLBACK_TAG;
+  const sourceUrl = `https://github.com/${EASYCRAFT_REPO}/archive/refs/tags/${tag}.zip`;
+  const outPath = path.join(OUTPUT_DIR, 'easycraft.zip');
+  const buf = await downloadBuffer(sourceUrl, 'easycraft.zip', tag);
+  const srcZip = await JSZip.loadAsync(buf);
+
+  // zipball 顶层目录形如 elrijk-EasyCraft-<sha>/，重映射为 EasyCraft/ 并严格校验防路径穿越
+  const zip = new JSZip();
+  for (const [p, file] of Object.entries(srcZip.files)) {
+    if (file.dir) continue;
+    const rel = p.replace(/^[^/]+\//, 'EasyCraft/');
+    if (!rel.startsWith('EasyCraft/') || rel.includes('..')) continue;
+    zip.file(rel, await file.async('nodebuffer'));
   }
 
-  const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
-  const buf = await downloadBuffer(url, 'blackthornes-tradeskills.zip');
-  const zip = await JSZip.loadAsync(buf);
-
-  console.log(`Injecting clean 100% complete zhCN for Blackthornes Tradeskills ${tag}...`);
-
-  // Targeted fixes dictionary (ensuring PR changes are always applied even if upstream has new version)
-  const BT_TARGETED_FIXES = {
-    "Made for": "制造成本",
-    "Train Artisan %s": "学习大师级%s",
-    "Learn Artisan %s": "学习大师级%s",
-    "Start with %s in %s. Catch the four rare fish he asks for. Then he teaches you Artisan %s.": "先去%2$s找%1$s。钓到他要的四条稀有鱼。然后他会教你大师级%3$s。",
-    "%s %s: %s%s. %s.": "%s %s：%s%s。%s。",
-    "Deals: Craftsman's Writs": "划算货：工匠文书",
-    "Craftsman's Writ: %s": "工匠文书：%s",
-    "Craftsman's Writs": "工匠文书",
-    "Deals: Merchant's Favor": "划算货：商人的青睐",
-    "Merchant's Favor": "商人的青睐",
-    "Waylaid Crate: %s": "遭劫的货物：%s",
-    "WAYLAID CRATE": "遭劫的货物",
-    "All bought. Fill the crates and take them to the Supply Officer.": "都买好了。装满箱子，交给军需官。",
-    // Enchanting material fallback names
-    "Strange Dust": "奇异之尘",
-    "Soul Dust": "灵魂之尘",
-    "Vision Dust": "幻象之尘",
-    "Dream Dust": "梦境之尘",
-    "Illusion Dust": "幻影之尘",
-    "Lesser Magic Essence": "次级魔法精华",
-    "Greater Magic Essence": "强效魔法精华",
-    "Lesser Astral Essence": "次级星界精华",
-    "Greater Astral Essence": "强效星界精华",
-    "Lesser Mystic Essence": "次级秘法精华",
-    "Greater Mystic Essence": "强效秘法精华",
-    "Lesser Nether Essence": "次级虚空精华",
-    "Greater Nether Essence": "强效虚空精华",
-    "Lesser Eternal Essence": "次级不灭精华",
-    "Greater Eternal Essence": "强效不灭精华",
-    "Small Glimmering Shard": "小块微光碎片",
-    "Large Glimmering Shard": "大块微光碎片",
-    "Small Glowing Shard": "小块闪光碎片",
-    "Large Glowing Shard": "大块闪光碎片",
-    "Small Radiant Shard": "小块强光碎片",
-    "Large Radiant Shard": "大块强光碎片",
-    "Small Brilliant Shard": "小块魔光碎片",
-    "Large Brilliant Shard": "大块魔光碎片",
-    "Nexus Crystal": "连结水晶",
-  };
-
-  const zhFile = zip.file('Blackthornes_TS/Locale/zhCN.lua');
-  if (zhFile) {
-    let zh = await zhFile.async('string');
-    for (const [enKey, zhVal] of Object.entries(BT_TARGETED_FIXES)) {
-      const pattern = new RegExp(`L\\["${enKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\]\\s*=\\s*"([^"\\\\]|\\\\.)*"`);
-      if (pattern.test(zh)) {
-        zh = zh.replace(pattern, `L[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`);
-      } else {
-        zh += `\nL[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`;
-      }
-    }
-    zip.file('Blackthornes_TS/Locale/zhCN.lua', zh);
-    // Keep scripts/locales/bt_zhCN.lua in sync
-    fs.writeFileSync(path.resolve('scripts/locales/bt_zhCN.lua'), zh, 'utf-8');
-  }
-
-  // Localize enchanting material names in Logic/Disenchant.lua
-  const deFile = zip.file('Blackthornes_TS/Logic/Disenchant.lua');
-  if (deFile) {
-    let deText = await deFile.async('string');
-    deText = deText
-      .replace(
-        /for _, material in ipairs\(Disenchant\.MATERIALS\) do\r?\n\s*MATERIAL_NAME\[material\.itemID\] = material\.name\r?\nend/,
-        'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
-      )
-      .replace(
-        /function Disenchant:MaterialName\(itemID\)\r?\n\s*return MATERIAL_NAME\[itemID\]\r?\nend/,
-        'function Disenchant:MaterialName(itemID)\n    return MATERIAL_NAME[itemID] and self:ItemName(itemID) or nil\nend'
-      );
-    zip.file('Blackthornes_TS/Logic/Disenchant.lua', deText);
-  }
-
-  // Patch money unit symbols to 金/银/铜
-  const utilFile = zip.file('Blackthornes_TS/Core/Util.lua');
-  if (utilFile) {
-    let utilText = await utilFile.async('string');
-    utilText = utilText
-      .replace('local GOLD_SUFFIX   = "|cffffd700g|r"', 'local GOLD_SUFFIX   = "|cffffd700金|r"')
-      .replace('local SILVER_SUFFIX = "|cffc7c7cfs|r"', 'local SILVER_SUFFIX = "|cffc7c7cf银|r"')
-      .replace('local COPPER_SUFFIX = "|cffeda55fc|r"', 'local COPPER_SUFFIX = "|cffeda55f铜|r"')
-      .replace('g, s, c = "g", "s", "c"', 'g, s, c = "金", "银", "铜"');
-    zip.file('Blackthornes_TS/Core/Util.lua', utilText);
-  }
-
-  const peFile = zip.file('Blackthornes_TS/UI/PriceEditor.lua');
-  if (peFile) {
-    let peText = await peFile.async('string');
-    peText = peText
-      .replace('Coin(48, 214748, "|cffffd700g|r")', 'Coin(48, 214748, "|cffffd700金|r")')
-      .replace('Coin(30, 99, "|cffc7c7cfs|r")', 'Coin(30, 99, "|cffc7c7cf银|r")')
-      .replace('Coin(30, 99, "|cffeda55fc|r")', 'Coin(30, 99, "|cffeda55f铜|r")');
-    zip.file('Blackthornes_TS/UI/PriceEditor.lua', peText);
-  }
-
-  const tpFile = zip.file('Blackthornes_TS/UI/Tab_Prices.lua');
-  if (tpFile) {
-    let tpText = await tpFile.async('string');
-    tpText = tpText
-      .replace('Coin("gold", 44, 214748, "|cffffd700g|r")', 'Coin("gold", 44, 214748, "|cffffd700金|r")')
-      .replace('Coin("silver", 28, 99, "|cffc7c7cfs|r")', 'Coin("silver", 28, 99, "|cffc7c7cf银|r")')
-      .replace('Coin("copper", 28, 99, "|cffeda55fc|r")', 'Coin("copper", 28, 99, "|cffeda55f铜|r")');
-    zip.file('Blackthornes_TS/UI/Tab_Prices.lua', tpText);
-  }
-
-  const ggFile = zip.file('Blackthornes_TS/UI/GoldGoal.lua');
-  if (ggFile) {
-    let ggText = await ggFile.async('string');
-    ggText = ggText.replace('unit:SetText("g")', 'unit:SetText("金")');
-    zip.file('Blackthornes_TS/UI/GoldGoal.lua', ggText);
-  }
-
-  const tsFile = zip.file('Blackthornes_TS/UI/Tab_Settings.lua');
-  if (tsFile) {
-    let tsText = await tsFile.async('string');
-    tsText = tsText.replace('AddUnit(goalRow, widgets.goldGoal, "g")', 'AddUnit(goalRow, widgets.goldGoal, "金")');
-    zip.file('Blackthornes_TS/UI/Tab_Settings.lua', tsText);
-  }
-
-  const themeFile = zip.file('Blackthornes_TS/UI/Theme.lua');
-  if (themeFile) {
-    let themeText = await themeFile.async('string');
-    if (themeText.includes('[[Fonts\\FRIZQT__.TTF]]')) {
-      themeText = themeText.replace('[[Fonts\\FRIZQT__.TTF]]', '(STANDARD_TEXT_FONT or [[Fonts\\ARKai_T.TTF]])');
-      zip.file('Blackthornes_TS/UI/Theme.lua', themeText);
-    }
-  }
-
-  const tocFile = zip.file('Blackthornes_TS/Blackthornes_TS.toc');
+  // 上游已内置 zhCN 简中（Locales/zhCN.lua 且已在 TOC 中引用），无需注入翻译。
+  // 仅补全 TOC 的简体中文标题/说明，让游戏内插件列表显示友好名称。
+  const tocFile = zip.file('EasyCraft/EasyCraft.toc');
   if (tocFile) {
     let toc = await tocFile.async('string');
     if (!toc.includes('Title-zhCN:')) {
       toc = toc
-        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r Blackthornes Tradeskills (商业制造与拍卖)')
-        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 专为无限服打造的专业制造与拍卖行全能管理插件，实时计算配方利润、排队制造与防亏损上架。');
-      if (!toc.includes('Locale\\zhCN.lua')) {
-        toc = toc.replace('Locale\\deDE.lua', 'Locale\\deDE.lua\nLocale\\zhCN.lua');
-      }
-      zip.file('Blackthornes_TS/Blackthornes_TS.toc', toc);
+        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r EasyCraft (专业制造与拍卖助手)')
+        .replace(/## Notes-zhCN:.*/g, '## Notes-zhCN: 无限服专业制造升级助手：推荐当前最易升级的配方，自动统计材料/银行/拍卖行价格，内置完整简体中文。');
     }
+    zip.file('EasyCraft/EasyCraft.toc', toc);
   }
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
-  recordBundledVersion('blackthornes-tradeskills', await readTocVersion(zip, 'Blackthornes_TS/Blackthornes_TS.toc') || tag, url);
-  console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  // 版本从产物 TOC 的 ## Version 读取；读取失败时回退到 tag，保证版本清单始终可比对
+  recordBundledVersion('easycraft', await readTocVersion(zip, 'EasyCraft/EasyCraft.toc') || tag.replace(/^v/, ''), sourceUrl);
+  console.log(`[✓] easycraft.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB), tag ${tag}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -900,11 +798,16 @@ async function main() {
     writeBundledVersions();
     return;
   }
+  if (onlyArg === 'easycraft') {
+    await processEasyCraft();
+    writeBundledVersions();
+    return;
+  }
 
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await ensureClientBinaries();
   await processSBF();
-  await processBlackthornes();
+  await processEasyCraft();
   await processIceHUD();
   await processDungeonsForever();
   await processBagnon();
