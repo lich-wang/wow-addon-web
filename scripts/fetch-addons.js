@@ -55,6 +55,9 @@ function getHeadersForUrl(url) {
 // 避免把 public/addons 下已打过补丁的产物再次打补丁（补丁重复注入）
 const UPSTREAM_CACHE_DIR = path.resolve('.cache/upstream-addons');
 
+// CurseForge 的 Flavor 标识：88568 = 无限服 (WoW Forever / 1.60.1)
+const FOREVER_GAME_VERSION_TYPE_ID = 88568;
+
 /**
  * 安全下载远程二进制 Buffer，成功时缓存原始上游包（及可选的 Release 标签），失败时回退到原始上游包缓存
  * @param {string} url - 远程文件下载地址
@@ -115,7 +118,8 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
  * 按页查询 CurseForge 项目最新的正式版 (Release) 文件并拼出 CDN 下载地址
  * 使用 CurseForge 网站公开的文件列表接口（无需 API Key），失败时返回 null 由调用方使用兜底地址
  * @param {number} projectId - CurseForge 项目 ID（见插件 TOC 的 X-Curse-Project-ID）
- * @param {(fileName: string) => boolean} [fileMatch] - 文件名匹配断言（如仅匹配 -forever.zip 变体）
+ * @param {(fileName: string, file: { gameVersionTypeIds?: number[] }) => boolean} [fileMatch] - 文件名/文件元信息匹配断言
+ *   （如仅匹配 -forever.zip 变体，或用 gameVersionTypeIds 限定必须包含无限服 88568）
  * @returns {Promise<{ tag: string, fileName: string, url: string } | null>} 最新正式版信息
  */
 async function getLatestCurseForgeFile(projectId, fileMatch = () => true) {
@@ -132,7 +136,11 @@ async function getLatestCurseForgeFile(projectId, fileMatch = () => true) {
       const files = Array.isArray(data.data) ? data.data : [];
       // releaseType: 1 = Release, 2 = Beta, 3 = Alpha；只分发正式版
       const file = files.find(
-        f => f.releaseType === 1 && typeof f.fileName === 'string' && f.fileName.endsWith('.zip') && fileMatch(f.fileName)
+        f =>
+          f.releaseType === 1 &&
+          typeof f.fileName === 'string' &&
+          f.fileName.endsWith('.zip') &&
+          fileMatch(f.fileName, f)
       );
       if (file?.id) {
         const url = `https://edge.forgecdn.net/files/${Math.floor(file.id / 1000)}/${file.id % 1000}/${encodeURIComponent(file.fileName)}`;
@@ -269,48 +277,47 @@ async function processSBF() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. EasyAuction Forever (无限服拍卖行助手)
+// 2. EasyAuction (无限服拍卖行助手，上游自带简体中文)
 // ---------------------------------------------------------------------------
-async function processEasyAuctionForever() {
-  const fallbackUrl = 'https://edge.forgecdn.net/files/9699/551/EasyAuctionForever-1.0.9.zip';
-  const latest = await getLatestCurseForgeFile(1808870, name => /^EasyAuctionForever-[\d.]+\.zip$/i.test(name));
-  const cachePath = path.join(UPSTREAM_CACHE_DIR, 'easyauction-forever.zip');
+async function processEasyAuction() {
+  // 兜底地址仅在「CurseForge 查询失败 + 本地无上游缓存」的首次运行时使用；
+  // 有缓存时优先复用缓存，避免旧兜底地址把较新的缓存覆盖成旧版
+  const fallbackUrl = 'https://edge.forgecdn.net/files/9695/475/EasyAuction-V20261119.3.zip';
+  // 该项目同时发布 3.80.2 (Titan Reforged, 81212) 与 1.60.1 (无限服 Forever, 88568) 两套包，
+  // 必须限定包含无限服 Flavor 的文件，避免把不兼容的 Titan Reforged 包分发给无限服玩家
+  const latest = await getLatestCurseForgeFile(
+    1595608,
+    (name, file) =>
+      /^EasyAuction-V?[\d.]+\.zip$/i.test(name) && (file?.gameVersionTypeIds ?? []).includes(FOREVER_GAME_VERSION_TYPE_ID)
+  );
+
+  const cacheName = 'easyauction.zip';
+  const cachePath = path.join(UPSTREAM_CACHE_DIR, cacheName);
   const sourcePath = `${cachePath}.source`;
 
-  let buf;
+  const outPath = path.join(OUTPUT_DIR, 'easyauction.zip');
+  // 上游为专有许可协议，因此这里只做原样分发（不重建 ZIP、不改写 TOC / Lua）
+  const writeOutput = buf => fs.writeFileSync(outPath, buf);
+
   let sourceUrl;
   if (latest?.url) {
-    buf = await downloadBuffer(latest.url, 'easyauction-forever.zip');
+    const buf = await downloadBuffer(latest.url, cacheName);
+    writeOutput(buf);
     sourceUrl = buf.sourceUrl || latest.url;
   } else if (fs.existsSync(cachePath)) {
     console.log(`[Cache Fallback] CurseForge query failed, using cached upstream: ${cachePath}`);
-    buf = fs.readFileSync(cachePath);
-    sourceUrl = fs.existsSync(sourcePath)
-      ? fs.readFileSync(sourcePath, 'utf-8').trim()
-      : 'cache://unknown';
+    const buf = fs.readFileSync(cachePath);
+    writeOutput(buf);
+    sourceUrl = fs.existsSync(sourcePath) ? fs.readFileSync(sourcePath, 'utf-8').trim() : 'cache://unknown';
   } else {
-    buf = await downloadBuffer(fallbackUrl, 'easyauction-forever.zip');
+    const buf = await downloadBuffer(fallbackUrl, cacheName);
+    writeOutput(buf);
     sourceUrl = buf.sourceUrl || fallbackUrl;
   }
+  console.log(`[✓] easyauction.zip saved (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(2)} MB)`);
 
-  const outPath = path.join(OUTPUT_DIR, 'easyauction-forever.zip');
-  const zip = await JSZip.loadAsync(buf);
-
-  const tocFile = zip.file('EasyAuctionForever/EasyAuctionForever.toc');
-  if (tocFile) {
-    let toc = await tocFile.async('string');
-    if (!toc.includes('Title-zhCN:')) {
-      toc = toc
-        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r EasyAuction Forever (拍卖行助手)')
-        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 无限服专属拍卖行助手：打开拍卖行自动扫描全服物价，背包一键列出可售物品与推荐定价、附魔分解比价、历史走势与扫货购买。');
-    }
-    zip.file('EasyAuctionForever/EasyAuctionForever.toc', toc);
-  }
-
-  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-  fs.writeFileSync(outPath, outBuf);
-  recordBundledVersion('easyauction-forever', await readTocVersion(zip, 'EasyAuctionForever/EasyAuctionForever.toc'), sourceUrl);
-  console.log(`[✓] easyauction-forever.zip saved (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  const zip = await JSZip.loadAsync(fs.readFileSync(outPath));
+  recordBundledVersion('easyauction', await readTocVersion(zip, 'EasyAuction/EasyAuction.toc'), sourceUrl);
 }
 
 // ---------------------------------------------------------------------------
@@ -794,8 +801,8 @@ async function main() {
     writeBundledVersions();
     return;
   }
-  if (onlyArg === 'easyauction-forever') {
-    await processEasyAuctionForever();
+  if (onlyArg === 'easyauction') {
+    await processEasyAuction();
     writeBundledVersions();
     return;
   }
@@ -803,7 +810,7 @@ async function main() {
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await ensureClientBinaries();
   await processSBF();
-  await processEasyAuctionForever();
+  await processEasyAuction();
   await processIceHUD();
   await processDungeonsForever();
   await processBagnon();
