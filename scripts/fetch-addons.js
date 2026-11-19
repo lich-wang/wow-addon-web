@@ -66,6 +66,7 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
   const SafeName = cacheName ? path.basename(cacheName) : null;
   const cachePath = SafeName ? path.join(UPSTREAM_CACHE_DIR, SafeName) : null;
   const tagPath = cachePath ? `${cachePath}.tag` : null;
+  const sourcePath = cachePath ? `${cachePath}.source` : null;
   try {
     console.log(`Downloading: ${url}...`);
     const res = await fetch(url, { headers: getHeadersForUrl(url), ...(signal ? { signal } : {}) });
@@ -76,11 +77,15 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
     if (cachePath) {
       fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
       fs.writeFileSync(cachePath, buf);
+      if (sourcePath) {
+        fs.writeFileSync(sourcePath, url, 'utf-8');
+      }
       if (tagPath && releaseTag) {
         fs.writeFileSync(tagPath, releaseTag, 'utf-8');
       }
     }
     if (releaseTag) buf.releaseTag = releaseTag;
+    buf.sourceUrl = url;
     return buf;
   } catch (e) {
     if (cachePath && fs.existsSync(cachePath)) {
@@ -89,6 +94,9 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
       if (tagPath && fs.existsSync(tagPath)) {
         buf.releaseTag = fs.readFileSync(tagPath, 'utf-8').trim();
       }
+      buf.sourceUrl = sourcePath && fs.existsSync(sourcePath)
+        ? fs.readFileSync(sourcePath, 'utf-8').trim()
+        : 'cache://unknown';
       return buf;
     }
     throw e;
@@ -259,18 +267,22 @@ async function processEasyAuctionForever() {
   const fallbackUrl = 'https://edge.forgecdn.net/files/9699/551/EasyAuctionForever-1.0.9.zip';
   const latest = await getLatestCurseForgeFile(1808870, name => /^EasyAuctionForever-[\d.]+\.zip$/i.test(name));
   const cachePath = path.join(UPSTREAM_CACHE_DIR, 'easyauction-forever.zip');
+  const sourcePath = `${cachePath}.source`;
 
-  let url = latest?.url;
   let buf;
-  if (url) {
-    buf = await downloadBuffer(url, 'easyauction-forever.zip');
+  let sourceUrl;
+  if (latest?.url) {
+    buf = await downloadBuffer(latest.url, 'easyauction-forever.zip');
+    sourceUrl = buf.sourceUrl || latest.url;
   } else if (fs.existsSync(cachePath)) {
     console.log(`[Cache Fallback] CurseForge query failed, using cached upstream: ${cachePath}`);
     buf = fs.readFileSync(cachePath);
-    url = fallbackUrl;
+    sourceUrl = fs.existsSync(sourcePath)
+      ? fs.readFileSync(sourcePath, 'utf-8').trim()
+      : 'cache://unknown';
   } else {
-    url = fallbackUrl;
-    buf = await downloadBuffer(url, 'easyauction-forever.zip');
+    buf = await downloadBuffer(fallbackUrl, 'easyauction-forever.zip');
+    sourceUrl = buf.sourceUrl || fallbackUrl;
   }
 
   const outPath = path.join(OUTPUT_DIR, 'easyauction-forever.zip');
@@ -289,7 +301,7 @@ async function processEasyAuctionForever() {
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
-  recordBundledVersion('easyauction-forever', await readTocVersion(zip, 'EasyAuctionForever/EasyAuctionForever.toc'), url);
+  recordBundledVersion('easyauction-forever', await readTocVersion(zip, 'EasyAuctionForever/EasyAuctionForever.toc'), sourceUrl);
   console.log(`[✓] easyauction-forever.zip saved (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
