@@ -55,6 +55,9 @@ function getHeadersForUrl(url) {
 // 避免把 public/addons 下已打过补丁的产物再次打补丁（补丁重复注入）
 const UPSTREAM_CACHE_DIR = path.resolve('.cache/upstream-addons');
 
+// CurseForge 的 Flavor 标识：88568 = 无限服 (WoW Forever / 1.60.1)
+const FOREVER_GAME_VERSION_TYPE_ID = 88568;
+
 /**
  * 安全下载远程二进制 Buffer，成功时缓存原始上游包（及可选的 Release 标签），失败时回退到原始上游包缓存
  * @param {string} url - 远程文件下载地址
@@ -115,7 +118,8 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
  * 按页查询 CurseForge 项目最新的正式版 (Release) 文件并拼出 CDN 下载地址
  * 使用 CurseForge 网站公开的文件列表接口（无需 API Key），失败时返回 null 由调用方使用兜底地址
  * @param {number} projectId - CurseForge 项目 ID（见插件 TOC 的 X-Curse-Project-ID）
- * @param {(fileName: string) => boolean} [fileMatch] - 文件名匹配断言（如仅匹配 -forever.zip 变体）
+ * @param {(fileName: string, file: { gameVersionTypeIds?: number[] }) => boolean} [fileMatch] - 文件名/文件元信息匹配断言
+ *   （如仅匹配 -forever.zip 变体，或用 gameVersionTypeIds 限定必须包含无限服 88568）
  * @returns {Promise<{ tag: string, fileName: string, url: string } | null>} 最新正式版信息
  */
 async function getLatestCurseForgeFile(projectId, fileMatch = () => true) {
@@ -132,7 +136,11 @@ async function getLatestCurseForgeFile(projectId, fileMatch = () => true) {
       const files = Array.isArray(data.data) ? data.data : [];
       // releaseType: 1 = Release, 2 = Beta, 3 = Alpha；只分发正式版
       const file = files.find(
-        f => f.releaseType === 1 && typeof f.fileName === 'string' && f.fileName.endsWith('.zip') && fileMatch(f.fileName)
+        f =>
+          f.releaseType === 1 &&
+          typeof f.fileName === 'string' &&
+          f.fileName.endsWith('.zip') &&
+          fileMatch(f.fileName, f)
       );
       if (file?.id) {
         const url = `https://edge.forgecdn.net/files/${Math.floor(file.id / 1000)}/${file.id % 1000}/${encodeURIComponent(file.fileName)}`;
@@ -274,7 +282,13 @@ async function processSBF() {
 async function processEasyAuction() {
   // 兜底地址仅在 CurseForge 接口不可用时使用；正常情况下始终分发上游最新正式版
   const fallbackUrl = 'https://edge.forgecdn.net/files/9695/475/EasyAuction-V20261119.3.zip';
-  const latest = await getLatestCurseForgeFile(1595608, name => /^EasyAuction-V?[\d.]+\.zip$/i.test(name));
+  // 该项目同时发布 3.80.2 (Titan Reforged, 81212) 与 1.60.1 (无限服 Forever, 88568) 两套包，
+  // 必须限定包含无限服 Flavor 的文件，避免把不兼容的 Titan Reforged 包分发给无限服玩家
+  const latest = await getLatestCurseForgeFile(
+    1595608,
+    (name, file) =>
+      /^EasyAuction-V?[\d.]+\.zip$/i.test(name) && (file?.gameVersionTypeIds ?? []).includes(FOREVER_GAME_VERSION_TYPE_ID)
+  );
   const url = latest?.url || fallbackUrl;
 
   const outPath = path.join(OUTPUT_DIR, 'easyauction.zip');
