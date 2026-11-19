@@ -66,33 +66,49 @@ async function downloadBuffer(url, cacheName, releaseTag, signal) {
   const SafeName = cacheName ? path.basename(cacheName) : null;
   const cachePath = SafeName ? path.join(UPSTREAM_CACHE_DIR, SafeName) : null;
   const tagPath = cachePath ? `${cachePath}.tag` : null;
+  const sourcePath = cachePath ? `${cachePath}.source` : null;
+  let buf;
   try {
     console.log(`Downloading: ${url}...`);
     const res = await fetch(url, { headers: getHeadersForUrl(url), ...(signal ? { signal } : {}) });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (cachePath) {
-      fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
-      fs.writeFileSync(cachePath, buf);
-      if (tagPath && releaseTag) {
-        fs.writeFileSync(tagPath, releaseTag, 'utf-8');
-      }
-    }
-    if (releaseTag) buf.releaseTag = releaseTag;
-    return buf;
+    buf = Buffer.from(await res.arrayBuffer());
   } catch (e) {
     if (cachePath && fs.existsSync(cachePath)) {
       console.log(`[Cache Fallback] Download failed (${e.message}), using cached upstream: ${cachePath}`);
-      const buf = fs.readFileSync(cachePath);
+      const cached = fs.readFileSync(cachePath);
       if (tagPath && fs.existsSync(tagPath)) {
-        buf.releaseTag = fs.readFileSync(tagPath, 'utf-8').trim();
+        cached.releaseTag = fs.readFileSync(tagPath, 'utf-8').trim();
       }
-      return buf;
+      cached.sourceUrl = sourcePath && fs.existsSync(sourcePath)
+        ? fs.readFileSync(sourcePath, 'utf-8').trim()
+        : 'cache://unknown';
+      return cached;
     }
     throw e;
   }
+
+  if (cachePath) {
+    try {
+      fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
+      if (sourcePath && fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
+      if (tagPath && fs.existsSync(tagPath)) fs.unlinkSync(tagPath);
+      fs.writeFileSync(cachePath, buf);
+      if (sourcePath) {
+        fs.writeFileSync(sourcePath, url, 'utf-8');
+      }
+      if (tagPath && releaseTag) {
+        fs.writeFileSync(tagPath, releaseTag, 'utf-8');
+      }
+    } catch (cacheErr) {
+      console.warn(`[Warn] Failed to update upstream cache ${cachePath}: ${cacheErr.message}`);
+    }
+  }
+  if (releaseTag) buf.releaseTag = releaseTag;
+  buf.sourceUrl = url;
+  return buf;
 }
 
 /**
@@ -218,27 +234,6 @@ async function getLatestGitHubRelease(repo, assetMatch, signal) {
   return null;
 }
 
-/**
- * 查询指定 GitHub 仓库最新正式版 Release 的标签名（不依赖 Release 是否上传资产）。
- * 适配 EasyCraft 这类「只发版本与更新日志、不上传 zip 资产」的仓库：
- * 拿到 tag 后用 zipball API (https://github.com/{repo}/archive/refs/tags/{tag}.zip) 下载源码包。
- * @param {string} repo - GitHub 仓库全名（例如 owner/repo）
- * @returns {Promise<string | null>} 最新正式版标签名（如 v1.3.2），失败时返回 null
- */
-async function getLatestGitHubTag(repo) {
-  try {
-    const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
-    const res = await fetch(apiUrl, { headers: GITHUB_HEADERS });
-    if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.draft || data.prerelease) throw new Error('latest release is draft/prerelease');
-    return data.tag_name || null;
-  } catch (err) {
-    console.warn(`[Warn] Failed to query latest release tag for ${repo}: ${err.message}`);
-  }
-  return null;
-}
-
 // ---------------------------------------------------------------------------
 // 1. Single-Button Fishing (SBF)
 // ---------------------------------------------------------------------------
@@ -274,47 +269,48 @@ async function processSBF() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. EasyCraft (无限服专业制造与拍卖比价)
+// 2. EasyAuction Forever (无限服拍卖行助手)
 // ---------------------------------------------------------------------------
-const EASYCRAFT_REPO = 'elrijk/EasyCraft';
-const EASYCRAFT_FALLBACK_TAG = 'v1.3.2';
+async function processEasyAuctionForever() {
+  const fallbackUrl = 'https://edge.forgecdn.net/files/9699/551/EasyAuctionForever-1.0.9.zip';
+  const latest = await getLatestCurseForgeFile(1808870, name => /^EasyAuctionForever-[\d.]+\.zip$/i.test(name));
+  const cachePath = path.join(UPSTREAM_CACHE_DIR, 'easyauction-forever.zip');
+  const sourcePath = `${cachePath}.source`;
 
-async function processEasyCraft() {
-  // EasyCraft 只发版本与更新日志，不上传 Release 资产：读取最新正式版 tag，
-  // 再用 GitHub 的 tag 源码包 (zipball) 作为上游包。始终跟随上游最新版本。
-  const tag = await getLatestGitHubTag(EASYCRAFT_REPO) || EASYCRAFT_FALLBACK_TAG;
-  const sourceUrl = `https://github.com/${EASYCRAFT_REPO}/archive/refs/tags/${tag}.zip`;
-  const outPath = path.join(OUTPUT_DIR, 'easycraft.zip');
-  const buf = await downloadBuffer(sourceUrl, 'easycraft.zip', tag);
-  const srcZip = await JSZip.loadAsync(buf);
-
-  // zipball 顶层目录形如 elrijk-EasyCraft-<sha>/，重映射为 EasyCraft/ 并严格校验防路径穿越
-  const zip = new JSZip();
-  for (const [p, file] of Object.entries(srcZip.files)) {
-    if (file.dir) continue;
-    const rel = p.replace(/^[^/]+\//, 'EasyCraft/');
-    if (!rel.startsWith('EasyCraft/') || rel.includes('..')) continue;
-    zip.file(rel, await file.async('nodebuffer'));
+  let buf;
+  let sourceUrl;
+  if (latest?.url) {
+    buf = await downloadBuffer(latest.url, 'easyauction-forever.zip');
+    sourceUrl = buf.sourceUrl || latest.url;
+  } else if (fs.existsSync(cachePath)) {
+    console.log(`[Cache Fallback] CurseForge query failed, using cached upstream: ${cachePath}`);
+    buf = fs.readFileSync(cachePath);
+    sourceUrl = fs.existsSync(sourcePath)
+      ? fs.readFileSync(sourcePath, 'utf-8').trim()
+      : 'cache://unknown';
+  } else {
+    buf = await downloadBuffer(fallbackUrl, 'easyauction-forever.zip');
+    sourceUrl = buf.sourceUrl || fallbackUrl;
   }
 
-  // 上游已内置 zhCN 简中（Locales/zhCN.lua 且已在 TOC 中引用），无需注入翻译。
-  // 仅补全 TOC 的简体中文标题/说明，让游戏内插件列表显示友好名称。
-  const tocFile = zip.file('EasyCraft/EasyCraft.toc');
+  const outPath = path.join(OUTPUT_DIR, 'easyauction-forever.zip');
+  const zip = await JSZip.loadAsync(buf);
+
+  const tocFile = zip.file('EasyAuctionForever/EasyAuctionForever.toc');
   if (tocFile) {
     let toc = await tocFile.async('string');
     if (!toc.includes('Title-zhCN:')) {
       toc = toc
-        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r EasyCraft (专业制造与拍卖助手)')
-        .replace(/## Notes-zhCN:.*/g, '## Notes-zhCN: 无限服专业制造升级助手：推荐当前最易升级的配方，自动统计材料/银行/拍卖行价格，内置完整简体中文。');
+        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r EasyAuction Forever (拍卖行助手)')
+        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 无限服专属拍卖行助手：打开拍卖行自动扫描全服物价，背包一键列出可售物品与推荐定价、附魔分解比价、历史走势与扫货购买。');
     }
-    zip.file('EasyCraft/EasyCraft.toc', toc);
+    zip.file('EasyAuctionForever/EasyAuctionForever.toc', toc);
   }
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
-  // 版本从产物 TOC 的 ## Version 读取；读取失败时回退到 tag，保证版本清单始终可比对
-  recordBundledVersion('easycraft', await readTocVersion(zip, 'EasyCraft/EasyCraft.toc') || tag.replace(/^v/, ''), sourceUrl);
-  console.log(`[✓] easycraft.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB), tag ${tag}`);
+  recordBundledVersion('easyauction-forever', await readTocVersion(zip, 'EasyAuctionForever/EasyAuctionForever.toc'), sourceUrl);
+  console.log(`[✓] easyauction-forever.zip saved (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -798,8 +794,8 @@ async function main() {
     writeBundledVersions();
     return;
   }
-  if (onlyArg === 'easycraft') {
-    await processEasyCraft();
+  if (onlyArg === 'easyauction-forever') {
+    await processEasyAuctionForever();
     writeBundledVersions();
     return;
   }
@@ -807,7 +803,7 @@ async function main() {
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await ensureClientBinaries();
   await processSBF();
-  await processEasyCraft();
+  await processEasyAuctionForever();
   await processIceHUD();
   await processDungeonsForever();
   await processBagnon();
