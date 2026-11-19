@@ -280,7 +280,8 @@ async function processSBF() {
 // 2. EasyAuction (无限服拍卖行助手，上游自带简体中文)
 // ---------------------------------------------------------------------------
 async function processEasyAuction() {
-  // 兜底地址仅在 CurseForge 接口不可用时使用；正常情况下始终分发上游最新正式版
+  // 兜底地址仅在「CurseForge 查询失败 + 本地无上游缓存」的首次运行时使用；
+  // 有缓存时优先复用缓存，避免旧兜底地址把较新的缓存覆盖成旧版
   const fallbackUrl = 'https://edge.forgecdn.net/files/9695/475/EasyAuction-V20261119.3.zip';
   // 该项目同时发布 3.80.2 (Titan Reforged, 81212) 与 1.60.1 (无限服 Forever, 88568) 两套包，
   // 必须限定包含无限服 Flavor 的文件，避免把不兼容的 Titan Reforged 包分发给无限服玩家
@@ -289,17 +290,34 @@ async function processEasyAuction() {
     (name, file) =>
       /^EasyAuction-V?[\d.]+\.zip$/i.test(name) && (file?.gameVersionTypeIds ?? []).includes(FOREVER_GAME_VERSION_TYPE_ID)
   );
-  const url = latest?.url || fallbackUrl;
+
+  const cacheName = 'easyauction.zip';
+  const cachePath = path.join(UPSTREAM_CACHE_DIR, cacheName);
+  const sourcePath = `${cachePath}.source`;
 
   const outPath = path.join(OUTPUT_DIR, 'easyauction.zip');
-  // 上游为专有许可协议且已自带完整简体中文与无限服 Interface (16001)，
-  // 因此这里只做原样分发，不改写 TOC / Lua 等任何文件内容
-  const buf = await downloadBuffer(url, 'easyauction.zip');
-  fs.writeFileSync(outPath, buf);
+  // 上游为专有许可协议，因此这里只做原样分发（不重建 ZIP、不改写 TOC / Lua）
+  const writeOutput = buf => fs.writeFileSync(outPath, buf);
 
-  const zip = await JSZip.loadAsync(buf);
-  recordBundledVersion('easyauction', await readTocVersion(zip, 'EasyAuction/EasyAuction.toc'), buf.sourceUrl || url);
-  console.log(`[✓] easyauction.zip saved (${(buf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  let sourceUrl;
+  if (latest?.url) {
+    const buf = await downloadBuffer(latest.url, cacheName);
+    writeOutput(buf);
+    sourceUrl = buf.sourceUrl || latest.url;
+  } else if (fs.existsSync(cachePath)) {
+    console.log(`[Cache Fallback] CurseForge query failed, using cached upstream: ${cachePath}`);
+    const buf = fs.readFileSync(cachePath);
+    writeOutput(buf);
+    sourceUrl = fs.existsSync(sourcePath) ? fs.readFileSync(sourcePath, 'utf-8').trim() : 'cache://unknown';
+  } else {
+    const buf = await downloadBuffer(fallbackUrl, cacheName);
+    writeOutput(buf);
+    sourceUrl = buf.sourceUrl || fallbackUrl;
+  }
+  console.log(`[✓] easyauction.zip saved (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(2)} MB)`);
+
+  const zip = await JSZip.loadAsync(fs.readFileSync(outPath));
+  recordBundledVersion('easyauction', await readTocVersion(zip, 'EasyAuction/EasyAuction.toc'), sourceUrl);
 }
 
 // ---------------------------------------------------------------------------
