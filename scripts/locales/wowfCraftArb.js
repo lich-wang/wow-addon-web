@@ -5,10 +5,13 @@
  * - EasyAuction 行情：全局 `EasyAuctionAPI`（GetRecord / GetDepth / GetSettings / GetMarketInfo）
  * - EasyAuction 专业数据库：账号级存档 `EasyAuctionDB12.professions.characters[*]`，
  *   含各角色已学配方与专业等级（详见 EasyAuction/EASYAUCTION_API.md 的存档结构说明）
- * - 本插件自行采集：`C_TradeSkillUI`（WoWFDB.recipeCache），在打开专业窗口时补全
+ * - 本插件自行采集：`C_TradeSkillUI`（WoWFDB.recipeCache[角色键]），在打开专业窗口时补全
  *
- * 计算模型：把每条已学配方折算成「按拍卖行采购 → 制作 → 出售或分解」的净利润，
- * 材料成本会递归展开中间产物（布 → 布卷 → 装备），附魔角色额外估算分解期望值。
+ * 计算模型（两阶段，避免「同一种原料按不同数量分别计价」的失真）：
+ * 1. 结构决策：按单件成本比较「拍卖行直购」与「自己制作」，递归展开中间产物
+ *    （布 → 布卷 → 装备），路径上已出现的物品不再自产，防止配方互引死循环；
+ * 2. 统一计价：把整条方案里所有要买的原料按物品汇总，再用同一份 EasyAuction
+ *    可购深度按合并后的数量算成本，缺货单独标注。
  */
 
 /**
@@ -29,13 +32,14 @@ WoWFDB = WoWFDB or {}
 Arb.VERSION = 1
 
 local type, tonumber, tostring, pairs, ipairs, pcall = type, tonumber, tostring, pairs, ipairs, pcall
-local floor, ceil, max, min, huge = math.floor, math.ceil, math.max, math.min, math.huge
-local tinsert, tsort, tconcat = table.insert, table.sort, table.concat
-local format, lower, find = string.format, string.lower, string.find
+local floor, ceil, max, min, abs, huge = math.floor, math.ceil, math.max, math.min, math.abs, math.huge
+local tinsert, tsort, tconcat, sort = table.insert, table.sort, table.concat, table.sort
+local format, lower, find, sub = string.format, string.lower, string.find, string.sub
 local time = time
 local Enum = _G.Enum
 local C_TradeSkillUI = _G.C_TradeSkillUI
 local C_Item = _G.C_Item
+local C_GameRules = _G.C_GameRules
 
 local function now()
   local ok, value = pcall(time)
@@ -47,7 +51,7 @@ local MAX_CRAFT_DEPTH = 4 -- 递归展开中间产物的最大层数（布 → �
 local DEFAULT_CUT = 0.05 -- EasyAuction 未提供手续费设置时的兜底值
 
 -- ============================================================================
--- 1. 专业名称与角色专业等级
+-- 1. 专业名称、角色身份与专业等级
 -- ============================================================================
 
 local PROFESSION_KEYS = {
@@ -89,6 +93,70 @@ end
 ---@return boolean
 function Arb.IsGathering(key)
   return GATHERING[key] == true
+end
+
+-- 与 EasyAuction 保持一致的身份规则：无限服按「规则集」，正式服/怀旧服按服务器名
+local RULESET_LABELS = {
+  pvp = "PvP", pve = "PvE", normal = "PvE", rp = "RP", rppvp = "RP-PvP",
+  hardcore = "Hardcore", ["普通"] = "PvE", ["角色扮演"] = "RP",
+  ["角色扮演pvp"] = "RP-PvP", ["专家模式"] = "Hardcore", ["硬核"] = "Hardcore",
+}
+
+local function liveRuleset()
+  local rules = Enum and Enum.GameRule
+  local active = C_GameRules and C_GameRules.IsGameRuleActive
+  if rules and active then
+    local function on(flag)
+      if not flag then return nil end
+      local ok, value = pcall(active, flag)
+      if ok then return value end
+    end
+    local hardcore, pvp, rp = on(rules.HardcoreRuleset), on(rules.PvPRuleset), on(rules.RPRuleset)
+    if hardcore == true then return "Hardcore" end
+    if rp == true and pvp == true then return "RP-PvP" end
+    if rp == true then return "RP" end
+    if pvp == true then return "PvP" end
+    if hardcore == false and pvp == false and rp == false then return "PvE" end
+  end
+  return nil
+end
+
+local function playerName()
+  if type(UnitName) ~= "function" then return "Player" end
+  local ok, value = pcall(UnitName, "player")
+  if ok and type(value) == "string" and value ~= "" then return value end
+  return "Player"
+end
+
+local function realmName()
+  if type(GetRealmName) ~= "function" then return "" end
+  local ok, value = pcall(GetRealmName)
+  if ok and type(value) == "string" then return value end
+  return ""
+end
+
+---当前角色的完整身份（EasyAuction 存档键 = 角色名-规则集/服务器）
+---@return table { name, ruleset, key }
+function Arb.Identity()
+  local name, realm = playerName(), realmName()
+  local ruleset = liveRuleset() or realm or "Realm"
+  return { name = name, ruleset = ruleset, key = name .. "-" .. ruleset }
+end
+
+---EasyAuction 里的存档键是否为当前角色
+---按完整身份键比较；记录里带 name/ruleset 时同时校验，避免同名不同规则集串号
+---@param owner string|nil EasyAuction 存档键
+---@param ownerName string|nil 记录里的角色名
+---@param ruleset string|nil 记录里的规则集/服务器
+---@return boolean
+function Arb.IsOwnCharacter(owner, ownerName, ruleset)
+  local identity = Arb.Identity()
+  if type(ownerName) == "string" and ownerName ~= "" then
+    if ownerName ~= identity.name then return false end
+    local label = type(ruleset) == "string" and RULESET_LABELS[lower(ruleset)] or nil
+    return (label or ruleset) == nil or label == identity.ruleset or ruleset == identity.ruleset
+  end
+  return type(owner) == "string" and owner == identity.key
 end
 
 ---读取当前角色已学的专业与等级（优先 GetProfessions，其次 C_TradeSkillUI）
@@ -146,35 +214,6 @@ function Arb.Professions()
   return list
 end
 
----当前角色存档键（与 EasyAuction 的 name-realm 形式保持一致，仅用于展示）
----@return string
-local function ownCharacter()
-  local name, realm = "Player", ""
-  if type(UnitName) == "function" then
-    local ok, value = pcall(UnitName, "player")
-    if ok and type(value) == "string" and value ~= "" then name = value end
-  end
-  if type(GetRealmName) == "function" then
-    local ok, value = pcall(GetRealmName)
-    if ok and type(value) == "string" then realm = value end
-  end
-  return name .. "-" .. realm
-end
-
----EasyAuction 里的存档键是否为当前角色
----经典客户端是「角色名-服务器」，无限服是「角色名-规则集(PvE/PvP/...)」，统一按角色名前缀匹配
----@param owner string|nil
----@return boolean
-function Arb.IsOwnCharacter(owner)
-  if type(owner) ~= "string" or owner == "" then return false end
-  local name = "Player"
-  if type(UnitName) == "function" then
-    local ok, value = pcall(UnitName, "player")
-    if ok and type(value) == "string" and value ~= "" then name = value end
-  end
-  return owner == name or owner:sub(1, #name + 1) == name .. "-"
-end
-
 -- ============================================================================
 -- 2. 物品数据（名称/品质/装等/类型），带客户端异步加载处理
 -- ============================================================================
@@ -188,6 +227,8 @@ local GEAR_CLASS_BY_ID = { [2] = "weapon", [4] = "armor" }
 local GEAR_CLASS_BY_TEXT = { ["武器"] = "weapon", ["护甲"] = "armor", weapon = "weapon", armor = "armor" }
 
 local itemCache = {}
+-- 物品数据从「未加载」变成「已加载」时自增，用于让分析缓存失效
+local itemDataVersion = 0
 
 local function rawItemInfo(itemID)
   local getter
@@ -209,7 +250,7 @@ function Arb.Items(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
   local cached = itemCache[id]
-  if cached then return cached end
+  if cached and cached.loaded then return cached end
   local values = rawItemInfo(id)
   if not values or type(values[1]) ~= "string" or values[1] == "" then
     -- 首次读取会触发客户端加载，下一次渲染再取
@@ -230,6 +271,7 @@ function Arb.Items(itemID)
   info.weapon, info.armor = kind == "weapon", kind == "armor"
   info.gear = info.weapon or info.armor
   itemCache[id] = info
+  itemDataVersion = itemDataVersion + 1
   return info
 end
 
@@ -274,19 +316,15 @@ function Arb.ApiState()
   return "loading"
 end
 
-local quoteCache = {}
-local sellCache = {}
--- 配方列表缓存（在「配方来源」一节填充）与分析结果缓存（在「分析入口」一节填充），
--- 统一提前声明，Reset 才能在拍卖行开关时一并清空，触发按新行情重算。
-local recipeListCache = { stamp = nil, list = nil }
-local rowCache = { stamp = nil }
+local quoteCache, sellCache, recipeListCache, rowCache
 
----清空全部缓存（行情修订号变化、拍卖行开关时自动调用）
+---清空全部缓存（行情修订号变化、物品数据加载完成、拍卖行开关时调用）
 function Arb.Reset()
   quoteCache, sellCache = {}, {}
-  recipeListCache.stamp, recipeListCache.list = nil, nil
+  recipeListCache = { stamp = nil, list = nil }
   rowCache = { stamp = nil }
 end
+Arb.Reset()
 
 local function revision()
   local api = Arb.Market()
@@ -296,15 +334,16 @@ local function revision()
 end
 
 ---按需要购买的数量取单价：优先用 EasyAuction 的可购深度，其次回落到存档报价
+---库存买不齐时仍给出估价，但通过 detail.shortfall 标记，调用方必须区别对待
 ---@param itemID number
 ---@param quantity number 需要购买的数量（>0）
 ---@return number|nil unitPrice 单价（铜）
 ---@return string|nil source "depth" | "record" | "insufficient" | "no-api"
----@return table|nil detail
+---@return table|nil detail 形如 { unit, source, shortfall = {have, need} }
 function Arb.PriceFor(itemID, quantity)
   local id = tonumber(itemID)
   if not id then return nil, "no-api" end
-  local wanted = max(1, tonumber(quantity) or 1)
+  local wanted = max(1, ceil(tonumber(quantity) or 1))
   local key = id .. "|" .. wanted
   local cached = quoteCache[key]
   if cached then return cached.unit, cached.source, cached end
@@ -319,7 +358,7 @@ function Arb.PriceFor(itemID, quantity)
       local total = tonumber(depth.totalQuantity) or 0
       local covered = tonumber(depth.coveredQuantity) or 0
       if total < wanted then
-        -- 库存不足：仍可用报价估算单价，但要标记买不齐，避免给出「能全额采购」的假象
+        -- 库存不足：仍可用报价估算单价，但要标记「买不齐」
         shortfall = { have = total, need = wanted }
       end
       if covered >= wanted then
@@ -346,7 +385,6 @@ function Arb.PriceFor(itemID, quantity)
 
   local entry = { unit = unit, source = source or (shortfall and "insufficient" or "no-data"), shortfall = shortfall }
   quoteCache[key] = entry
-  if not shortfall and not unit and source == nil then entry.source = "insufficient" end
   if unit then return unit, entry.source, entry end
   return nil, entry.source, entry
 end
@@ -439,7 +477,7 @@ local function normalizeStoredRecipe(raw)
 end
 
 ---读取 EasyAuction 账号级专业数据库里的全部角色配方
----@return table[] 形如 { owner, ownerName, skills, recipes, source }
+---@return table[] 形如 { owner, ownerName, ruleset, skills, recipes, source }
 local function storedRecipeSets()
   local sets = {}
   local db = _G.EasyAuctionDB12
@@ -462,7 +500,7 @@ local function storedRecipeSets()
       end
       if #recipes > 0 then
         tinsert(sets, {
-          owner = tostring(owner), ownerName = record.name or tostring(owner),
+          owner = tostring(owner), ownerName = record.name, ruleset = record.ruleset or record.realm,
           skills = skills, recipes = recipes, source = "easyauction",
         })
       end
@@ -471,10 +509,14 @@ local function storedRecipeSets()
   return sets
 end
 
----本插件自己采集的配方（WoWFDB.recipeCache），当前角色专用
+---本插件自己采集的配方（WoWFDB.recipeCache[角色键]），按角色隔离
+---@param owner string 角色键
 ---@return table|nil
-local function ownRecipeSet()
-  local cache = WoWFDB.recipeCache
+local function ownRecipeSet(owner)
+  local all = WoWFDB.recipeCache
+  if type(all) ~= "table" then return nil end
+  local cache = all[owner]
+  -- 旧版本把配方直接平铺在 recipeCache 上，归属无法确认，不迁移到当前角色
   if type(cache) ~= "table" then return nil end
   local recipes = {}
   for _, raw in pairs(cache) do
@@ -494,10 +536,13 @@ local function ownRecipeSet()
   for _, profession in ipairs(Arb.Professions()) do
     skills[profession.key] = { level = profession.level, max = profession.max }
   end
-  return { owner = ownCharacter(), ownerName = "当前角色", skills = skills, recipes = recipes, source = "local" }
+  return {
+    owner = owner, ownerName = Arb.Identity().name, ruleset = Arb.Identity().ruleset,
+    skills = skills, recipes = recipes, source = "local",
+  }
 end
 
----签名用于判定配方缓存是否过期（行情修订号 / 账号库采集时间 / 本地采集时间）
+---签名用于判定配方缓存是否过期（账号库采集时间 / 本地采集时间 / 配方条数）
 ---@return string
 local function recipeSignature()
   local count, stamp, characters = 0, 0, 0
@@ -511,9 +556,13 @@ local function recipeSignature()
       if at and at > stamp then stamp = at end
     end
   end
-  local local_cache = WoWFDB.recipeCache
-  if type(local_cache) == "table" then
-    for _ in pairs(local_cache) do count = count + 1 end
+  local cache = WoWFDB.recipeCache
+  if type(cache) == "table" then
+    for _, scoped in pairs(cache) do
+      if type(scoped) == "table" then
+        for _ in pairs(scoped) do count = count + 1 end
+      end
+    end
   end
   return tconcat({ characters, floor(stamp), count, floor(tonumber(WoWFDB.recipeCacheAt) or 0) }, ":")
 end
@@ -527,42 +576,49 @@ function Arb.RecipeList()
   local function ingest(sets)
     for _, set in ipairs(sets) do
       for _, recipe in ipairs(set.recipes) do
-        local key = tostring(recipe.output) .. "@" .. tostring(recipe.id) .. "@" .. tostring(set.owner)
+        local key = set.owner .. "#" .. tostring(recipe.id)
         if not seen[key] then
           seen[key] = true
           local professionKey = Arb.ProfessionKey(recipe.professionName) or Arb.ProfessionKey(set.professionName)
           local skill = professionKey and set.skills and set.skills[professionKey] or nil
-          if not professionKey and type(recipe.professionName) == "string" then
-            -- 未收录的专业名（如后续资料片新增专线）原样保留，避免被清空
-            recipe.professionKey, recipe.professionName = nil, recipe.professionName
-          else
-            recipe.professionKey = professionKey
-            recipe.professionName = professionKey and Arb.ProfessionNames[professionKey] or recipe.professionName
-          end
+          recipe.professionKey = professionKey
+          -- 未收录的专业名（如后续资料片新增专线）原样保留，避免被清空；其 skill 为 nil，页面不显示技能等级
+          recipe.professionName = professionKey and Arb.ProfessionNames[professionKey] or recipe.professionName
           recipe.owner, recipe.ownerName, recipe.ownerSource = set.owner, set.ownerName, set.source
+          recipe.ruleset = set.ruleset
           recipe.skill, recipe.skillMax = skill and skill.level or nil, skill and skill.max or nil
           tinsert(list, recipe)
         end
       end
     end
   end
+
   local sets = storedRecipeSets()
-  ingest(sets)
-  local own = ownRecipeSet()
-  -- 同一角色若 EasyAuction 已有采集结果，则不再叠加本插件的副本
-  if own then
-    local duplicated = false
-    for _, set in ipairs(sets) do
-      if set.owner == own.owner or Arb.IsOwnCharacter(set.owner) then duplicated = true; break end
+  local identity = Arb.Identity()
+  -- 本插件采集的配方只属于当前角色；与 EasyAuction 逐条去重，保留 EasyAuction 条目并补充本插件独有配方
+  local own = ownRecipeSet(identity.key)
+  local matchedOwner
+  for _, set in ipairs(sets) do
+    if set.owner == identity.key or Arb.IsOwnCharacter(set.owner, set.ownerName, set.ruleset) then
+      matchedOwner = set.owner
+      break
     end
-    if not duplicated then ingest({ own }) end
   end
-  tsort(list, function(left, right) return left.id < right.id end)
+  ingest(sets)
+  if own then
+    if matchedOwner then own.owner = matchedOwner end
+    ingest({ own })
+  end
+
+  tsort(list, function(left, right)
+    if left.id ~= right.id then return left.id < right.id end
+    return tostring(left.owner) < tostring(right.owner)
+  end)
   recipeListCache.stamp, recipeListCache.list = stamp, list
   return list
 end
 
----从原生专业窗口采集当前专业线的全部已学配方（打开专业窗口时调用）
+---从原生专业窗口采集当前角色已学的配方（打开专业窗口时调用）
 ---@return number count
 ---@return string|nil message
 function Arb.Harvest()
@@ -574,8 +630,11 @@ function Arb.Harvest()
   if not ok or type(ids) ~= "table" or #ids == 0 then
     return 0, "没有采集到配方（请先打开专业窗口）"
   end
-  local cache = WoWFDB.recipeCache
-  if type(cache) ~= "table" then cache = {}; WoWFDB.recipeCache = cache end
+  local all = WoWFDB.recipeCache
+  if type(all) ~= "table" then all = {}; WoWFDB.recipeCache = all end
+  local owner = Arb.Identity().key
+  local cache = all[owner]
+  if type(cache) ~= "table" then cache = {}; all[owner] = cache end
   local basic = Enum and Enum.CraftingReagentType and Enum.CraftingReagentType.Basic or 1
   local count, touched = 0, {}
 
@@ -625,11 +684,13 @@ function Arb.Harvest()
   end
 
   -- 在同一专业线内清理已遗忘的配方，避免残留条目冒充「当前可以制作」
-  local current = {}
-  for _, recipeID in ipairs(ids) do current[recipeID] = true end
-  for recipeID, record in pairs(cache) do
-    local line = type(record) == "table" and tonumber(record.skillLineID)
-    if line and touched[line] and not current[recipeID] then cache[recipeID] = nil end
+  if count > 0 then
+    local current = {}
+    for _, recipeID in ipairs(ids) do current[recipeID] = true end
+    for recipeID, record in pairs(cache) do
+      local line = type(record) == "table" and tonumber(record.skillLineID)
+      if line and touched[line] and not current[recipeID] then cache[recipeID] = nil end
+    end
   end
 
   WoWFDB.recipeCacheAt = now()
@@ -702,7 +763,7 @@ end
 
 ---估算分解收益（期望值）
 ---@param itemID number
----@return table|nil result 形如 { ev, parts = { { itemID, chance, quantity, price, value } }, unknown }
+---@return table|nil result 形如 { ev, parts = { { itemID, chance, quantity, unit, value } }, unknown, incomplete }
 ---@return string|nil reason
 function Arb.Disenchant(itemID)
   local info = Arb.Items(itemID)
@@ -741,7 +802,7 @@ function Arb.Disenchant(itemID)
 end
 
 -- ============================================================================
--- 6. 成本引擎：递归展开中间产物
+-- 6. 成本引擎：先做结构决策，再对整条方案的原料统一计价
 -- ============================================================================
 
 local function averageYield(recipe)
@@ -751,128 +812,263 @@ local function averageYield(recipe)
   return (low + high) / 2
 end
 
----递归计算一条配方的材料成本；同一（配方,深度）在单次根计算内复用
-local function recipeCost(recipe, ctx)
-  local key = tostring(recipe.id) .. "@" .. tostring(ctx.depth)
-  local cached = ctx.crafts[key]
-  if cached ~= nil then return cached end
-  ctx.crafts[key] = false -- 占位，防止配方互相引用时无限递归
+---递归路径签名：同一配方在不同路径下可用性不同，缓存键必须带上它
+local function pathKey(path)
+  local names = {}
+  for itemID in pairs(path) do names[#names + 1] = tostring(itemID) end
+  sort(names)
+  return tconcat(names, ",")
+end
 
-  local result = {
-    total = 0, lines = {}, leaves = {}, leafIndex = {}, missing = {}, unknown = false,
-    crafts = {}, yield = averageYield(recipe),
+---候选自产配方：优先当前角色，允许时可借用同账号其他角色
+local function producersFor(itemID, ctx)
+  local producers = ctx.index[itemID]
+  if not producers then return nil end
+  local own, others = {}, {}
+  for _, producer in ipairs(producers) do
+    if producer.owner == ctx.owner then
+      tinsert(own, producer)
+    else
+      tinsert(others, producer)
+    end
+  end
+  if #own > 0 then return own end
+  return ctx.crossOwner and others or nil
+end
+
+---估算某物品「自己做」的单件成本与选中的配方（前向声明，供 estimateRecipe 调用）
+local estimateUnit
+
+---估算一条配方的单件成本（仅用于「直购 vs 自产」决策）
+local function estimateRecipe(recipe, ctx)
+  local key = "r:" .. tostring(recipe.id) .. ":" .. tostring(ctx.depth) .. ":" .. pathKey(ctx.path)
+  local cached = ctx.est[key]
+  if cached ~= nil then return cached or nil end
+  ctx.est[key] = false
+
+  local childCtx = {
+    depth = ctx.depth - 1, path = ctx.path, est = ctx.est, index = ctx.index,
+    owner = ctx.owner, crossOwner = ctx.crossOwner,
   }
-  local function addLeaf(itemID, quantity, unit)
-    local leaf = result.leafIndex[itemID]
-    if leaf then
-      leaf.quantity = leaf.quantity + quantity
-    else
-      leaf = { itemID = itemID, quantity = quantity, unit = unit }
-      result.leafIndex[itemID] = leaf
-      tinsert(result.leaves, leaf)
+
+  local function ingredientUnit(itemID)
+    local buy, _, buyDetail = Arb.PriceFor(itemID, 1)
+    local best = buy
+    local made = estimateUnit(itemID, childCtx)
+    local madeCost = made and made.cost or nil
+    if madeCost then
+      -- 直购买不齐时，即便自产更贵也应选自产，避免「缺货估价」盖掉可执行方案
+      if not buy or (buyDetail and buyDetail.shortfall) or madeCost < buy then best = madeCost end
     end
+    return best
   end
 
-  local function addLine(itemID, quantity, unit, source, detail)
-    local line = {
-      itemID = itemID, quantity = quantity, unit = unit, source = source, detail = detail,
-      cost = unit and unit * quantity or nil,
-    }
-    tinsert(result.lines, line)
-    if line.cost then
-      result.total = result.total + line.cost
-    else
-      result.unknown = true
-      tinsert(result.missing, itemID)
-    end
-    if source == "craft" and detail and detail.cost then
-      -- 中间产物自产时，把子配方的叶子材料按「需要几份」放大后合并上来，
-      -- 否则采购清单只会停在中间产物层级，玩家仍然买不到真正的原料。
-      tinsert(result.crafts, line)
-      local sub = detail.cost
-      local factor = sub.yield > 0 and (quantity / sub.yield) or quantity
-      for _, subLeaf in ipairs(sub.leaves or {}) do
-        addLeaf(subLeaf.itemID, subLeaf.quantity * factor, subLeaf.unit)
-      end
-      if detail.shortfall then result.stockShort = true end
-    elseif source ~= "craft" then
-      addLeaf(itemID, quantity, unit)
-      if detail and detail.shortfall then result.stockShort = true end
-    end
+  local total = 0
+  for _, reagent in ipairs(recipe.reagents or {}) do
+    local unit = ingredientUnit(reagent.id)
+    if not unit then ctx.est[key] = false; return nil end
+    total = total + unit * reagent.qty
   end
-
-  local function unitCost(itemID, quantity)
-    local buy, source, detail = Arb.PriceFor(itemID, quantity)
+  for _, slot in ipairs(recipe.slots or {}) do
     local best
-    if ctx.depth > 0 and not ctx.path[itemID] then
-      local producers = ctx.index[itemID]
+    for _, candidate in ipairs(slot.candidates or {}) do
+      local unit = ingredientUnit(candidate)
+      if unit and (not best or unit < best) then best = unit end
+    end
+    if not best then ctx.est[key] = false; return nil end
+    total = total + best * (slot.qty or 1)
+  end
+
+  local perUnit = total / averageYield(recipe)
+  ctx.est[key] = perUnit
+  return perUnit
+end
+
+---估算某物品「自己做」的单件成本与选中的配方
+estimateUnit = function(itemID, ctx)
+  local key = "u:" .. tostring(itemID) .. ":" .. tostring(ctx.depth) .. ":" .. pathKey(ctx.path)
+  local cached = ctx.est[key]
+  if cached ~= nil then return cached or nil end
+  if ctx.depth <= 0 or ctx.path[itemID] then
+    ctx.est[key] = false
+    return nil
+  end
+  local producers = producersFor(itemID, ctx)
+  if not producers then
+    ctx.est[key] = false
+    return nil
+  end
+  ctx.est[key] = false
+  ctx.path[itemID] = true
+  local best
+  for _, producer in ipairs(producers) do
+    local cost = estimateRecipe(producer, ctx)
+    if cost and cost > 0 and (not best or cost < best.cost) then
+      best = { recipe = producer, cost = cost }
+    end
+  end
+  ctx.path[itemID] = nil
+  ctx.est[key] = best or false
+  return best
+end
+
+---按结构决策展开一条配方：产出 yield 件，递归把可自产的原料替换成子配方
+local function expandPlan(recipe, ctx)
+  local key = "p:" .. tostring(recipe.id) .. ":" .. tostring(ctx.depth) .. ":" .. pathKey(ctx.path)
+  local cached = ctx.expanded[key]
+  if cached ~= nil then return cached or nil end
+  ctx.expanded[key] = false
+
+  local plan = { recipe = recipe, yield = averageYield(recipe), ingredients = {}, crafts = {} }
+  local childCtx = {
+    depth = ctx.depth, path = ctx.path, est = ctx.est, expanded = ctx.expanded,
+    index = ctx.index, owner = ctx.owner, crossOwner = ctx.crossOwner,
+  }
+
+  local function resolve(itemID, qty)
+    local buy, _, buyDetail = Arb.PriceFor(itemID, qty)
+    local made
+    if childCtx.depth > 0 and not childCtx.path[itemID] then
+      local producers = producersFor(itemID, childCtx)
       if producers then
-        -- 先用同一角色自己的配方（才是「当前能自己做」），再按设置决定是否借用同账号其他角色
-        local candidates, fallback = {}, {}
+        childCtx.path[itemID] = true
         for _, producer in ipairs(producers) do
-          if producer.owner == ctx.owner then tinsert(candidates, producer) else tinsert(fallback, producer) end
-        end
-        if #candidates == 0 then
-          if ctx.crossOwner then
-            candidates, fallback = fallback, {}
-          else
-            candidates = {}
-          end
-        end
-        ctx.path[itemID] = true
-        for _, producer in ipairs(candidates) do
-          local sub = recipeCost(producer, {
-            depth = ctx.depth - 1, path = ctx.path, crafts = ctx.crafts, index = ctx.index,
-            quotes = ctx.quotes, owner = ctx.owner, crossOwner = ctx.crossOwner,
+          local sub = expandPlan(producer, {
+            depth = childCtx.depth - 1, path = childCtx.path, est = ctx.est, expanded = ctx.expanded,
+            index = ctx.index, owner = ctx.owner, crossOwner = ctx.crossOwner,
           })
-          if sub and not sub.unknown and sub.total and sub.total > 0 and sub.perUnit then
-            if not best or sub.perUnit < best.unit then
-              best = { unit = sub.perUnit, recipe = producer, cost = sub }
+          if sub then
+            local batchTotal = sub.total * ceil(qty / sub.yield)
+            if not made or batchTotal < made.batchTotal then
+              made = { batchTotal = batchTotal, plan = sub }
             end
           end
         end
-        ctx.path[itemID] = nil
+        childCtx.path[itemID] = nil
       end
     end
-    if best and (not buy or best.unit < buy) then
-      return best.unit, "craft", {
-        recipe = best.recipe, cost = best.cost, marketUnit = buy,
-        saved = buy and (buy - best.unit) * quantity,
-        crossOwner = best.recipe.owner ~= ctx.owner,
-      }
+    -- 直购买不齐时优先自产，避免用缺货估价覆盖可执行方案；按实际制作批次总成本与直购总成本比较
+    local buyTotal = buy and (buy * qty) or nil
+    local buyUsable = buyTotal and not (buyDetail and buyDetail.shortfall)
+    if made and (not buyUsable or made.batchTotal < buyTotal) then
+      return { itemID = itemID, qty = qty, craft = made.plan, crossOwner = made.plan.recipe.owner ~= ctx.owner }
     end
-    if buy then
-      return buy, source or "auction", { quote = detail, shortfall = detail and detail.shortfall }
-    end
-    if best then return best.unit, "craft", { recipe = best.recipe, cost = best.cost, crossOwner = best.recipe.owner ~= ctx.owner } end
-    return nil, (source == "insufficient") and "insufficient" or "unknown", nil
+    return { itemID = itemID, qty = qty }
   end
 
   for _, reagent in ipairs(recipe.reagents or {}) do
-    local unit, source, detail = unitCost(reagent.id, reagent.qty)
-    addLine(reagent.id, reagent.qty, unit, source, detail)
+    plan.ingredients[#plan.ingredients + 1] = resolve(reagent.id, reagent.qty)
   end
   for _, slot in ipairs(recipe.slots or {}) do
     local quantity = max(1, tonumber(slot.qty) or 1)
     local best
     for _, candidate in ipairs(slot.candidates or {}) do
-      local unit, source, detail = unitCost(candidate, quantity)
-      if unit and (not best or unit < best.unit) then
-        best = { itemID = candidate, unit = unit, source = source, detail = detail }
+      local option = resolve(candidate, quantity)
+      local cost
+      if option.craft then
+        cost = option.craft.total * ceil(quantity / option.craft.yield)
+      else
+        local unit = Arb.PriceFor(candidate, quantity)
+        cost = unit and (unit * quantity) or huge
       end
+      if not best or cost < best.cost then best = { option = option, cost = cost } end
     end
-    if best then
-      addLine(best.itemID, quantity, best.unit, best.source, best.detail)
-    else
-      result.unknown = true
-      tinsert(result.missing, (slot.candidates or {})[1] or 0)
-    end
+    if best then plan.ingredients[#plan.ingredients + 1] = best.option end
   end
 
-  result.perUnit = (not result.unknown) and result.total / result.yield or nil
-  if result.stockShort then result.partial = true end
-  ctx.crafts[key] = result
-  return result
+  -- 结构成本 = 各原料按「批量整体制作」后的可执行成本（用于与后续统一计价互校）
+  local total = 0
+  for _, ingredient in ipairs(plan.ingredients) do
+    if ingredient.craft then
+      local batches = ceil(ingredient.qty / ingredient.craft.yield)
+      total = total + ingredient.craft.total * batches
+      ingredient.batches = batches
+      plan.crafts[#plan.crafts + 1] = ingredient
+    else
+      local unit = Arb.PriceFor(ingredient.itemID, ingredient.qty)
+      total = total + (unit or 0) * ingredient.qty
+    end
+  end
+  plan.total = total
+  ctx.expanded[key] = plan
+  return plan
+end
+
+---收集整条方案需要从拍卖行购买的原料（按物品合并总量）
+local function collectDemand(plan, factor, demand)
+  for _, ingredient in ipairs(plan.ingredients) do
+    local qty = ingredient.qty * factor
+    if ingredient.craft then
+      -- 配方按整批制作：不足一批也要做一批，原料按批次放大
+      local batches = ceil(qty / ingredient.craft.yield)
+      ingredient.batches = factor == 1 and batches or ceil(qty / ingredient.craft.yield)
+      collectDemand(ingredient.craft, batches, demand)
+    else
+      demand[ingredient.itemID] = (demand[ingredient.itemID] or 0) + qty
+    end
+  end
+end
+
+---用合并后的数量统一计价（同一种原料只按一次真实深度购买）
+local function priceDemand(demand)
+  local prices, total, unpriced, short = {}, 0, {}, false
+  for itemID, qty in pairs(demand) do
+    local unit, source, detail = Arb.PriceFor(itemID, qty)
+    prices[itemID] = { unit = unit, source = source, amount = qty }
+    if unit then
+      total = total + unit * qty
+      if detail and detail.shortfall then short = true end
+    else
+      tinsert(unpriced, itemID)
+    end
+  end
+  return prices, total, unpriced, short
+end
+
+---按统一价格回算方案成本（叶子用合并单价，自产节点递归）
+local function planCost(plan, factor, prices)
+  local total = 0
+  for _, ingredient in ipairs(plan.ingredients) do
+    local qty = ingredient.qty * factor
+    if ingredient.craft then
+      local batches = ceil(qty / ingredient.craft.yield)
+      local sub = planCost(ingredient.craft, batches, prices)
+      if sub == nil then return nil end
+      total = total + sub
+    else
+      local quote = prices[ingredient.itemID]
+      if not quote or not quote.unit then return nil end
+      total = total + quote.unit * qty
+    end
+  end
+  return total
+end
+
+---把结构里的材料明细展开成展示用数据（采购清单 + 自产说明）
+local function describePlan(plan, factor, prices, leaves, leafIndex, crafts)
+  for _, ingredient in ipairs(plan.ingredients) do
+    local qty = ingredient.qty * factor
+    if ingredient.craft then
+      local batches = ceil(qty / ingredient.craft.yield)
+      local unit = ingredient.craft.total / ingredient.craft.yield
+      tinsert(crafts, {
+        itemID = ingredient.itemID, quantity = qty, batches = batches,
+        recipe = ingredient.craft.recipe, crossOwner = ingredient.crossOwner == true,
+        unit = unit, batchCost = ingredient.craft.total * batches, saved = nil,
+      })
+      describePlan(ingredient.craft, batches, prices, leaves, leafIndex, crafts)
+    else
+      local quote = prices[ingredient.itemID]
+      local leaf = leafIndex[ingredient.itemID]
+      if leaf then
+        leaf.quantity = leaf.quantity + qty
+      else
+        leaf = { itemID = ingredient.itemID, quantity = qty, unit = quote and quote.unit or nil }
+        leafIndex[ingredient.itemID] = leaf
+        tinsert(leaves, leaf)
+      end
+    end
+  end
 end
 
 -- ============================================================================
@@ -880,7 +1076,9 @@ end
 -- ============================================================================
 
 local function ensureFresh()
-  local stamp = tostring(revision()) .. "|" .. recipeSignature()
+  local stamp = tconcat({
+    tostring(revision()), recipeSignature(), tostring(itemDataVersion), tostring(Arb.ApiState()),
+  }, "|")
   if rowCache.stamp ~= stamp then
     rowCache = { stamp = stamp }
     quoteCache, sellCache = {}, {}
@@ -897,22 +1095,44 @@ local function buildRows(mode, crossOwner)
   end
   local cut = Arb.AuctionCut()
   local rows, priced = {}, 0
+  local identity = Arb.Identity()
+
   for _, recipe in ipairs(list) do
-    local cost = recipeCost(recipe, {
-      depth = MAX_CRAFT_DEPTH, path = {}, crafts = {}, index = index, quotes = quoteCache,
+    local ctx = {
+      depth = MAX_CRAFT_DEPTH, path = {}, est = {}, expanded = {}, index = index,
       owner = recipe.owner, crossOwner = crossOwner == true,
-    })
+    }
+    local plan = expandPlan(recipe, ctx)
     local row = {
       recipeID = recipe.id, outputID = recipe.output, name = recipe.name or Arb.ItemName(recipe.output),
       professionKey = recipe.professionKey, professionName = recipe.professionName,
       owner = recipe.owner, ownerName = recipe.ownerName, ownerSource = recipe.ownerSource,
-      ownCharacter = Arb.IsOwnCharacter(recipe.owner),
+      ownCharacter = recipe.owner == identity.key or Arb.IsOwnCharacter(recipe.owner, recipe.ownerName, recipe.ruleset),
       skillUp = recipe.difficulty, skill = recipe.skill, skillMax = recipe.skillMax,
-      yield = cost and cost.yield or 1, costTotal = cost and cost.total, costPerUnit = cost and cost.perUnit,
-      leaves = cost and cost.leaves or {}, craftLines = cost and cost.crafts or {},
-      missing = cost and cost.missing or {}, craftable = cost and cost.perUnit ~= nil,
-      stockShort = cost and cost.partial or false,
+      yield = plan and plan.yield or averageYield(recipe),
     }
+
+    local demand, leaves, leafIndex, crafts = {}, {}, {}, {}
+    if plan then
+      collectDemand(plan, 1, demand)
+      local prices, baseTotal, unpriced, short = priceDemand(demand)
+      describePlan(plan, 1, prices, leaves, leafIndex, crafts)
+      local cost = planCost(plan, 1, prices)
+      row.costTotal = cost
+      row.partialCost = (cost == nil) and baseTotal or nil
+      row.unpriced = unpriced
+      row.stockShort = short
+      row.craftable = cost ~= nil
+      for _, craft in ipairs(crafts) do
+        local direct = Arb.PriceFor(craft.itemID, craft.quantity)
+        if direct then craft.saved = direct * craft.quantity - (craft.batchCost or (craft.unit * craft.quantity)) end
+      end
+    else
+      row.craftable = false
+      row.unpriced = {}
+    end
+    row.leaves, row.craftLines = leaves, crafts
+
     if row.craftable then
       priced = priced + 1
       local price, record = Arb.SellQuote(recipe.output)
@@ -924,6 +1144,7 @@ local function buildRows(mode, crossOwner)
         if de then
           row.revenue = de.ev * row.yield
           row.evPerUnit = de.ev
+          row.disenchantIncomplete = de.incomplete
         end
       elseif row.sellRevenue then
         row.revenue = row.sellRevenue
@@ -934,16 +1155,27 @@ local function buildRows(mode, crossOwner)
         row.profitPerUnit = row.profit / row.yield
         row.roi = row.costTotal > 0 and row.profit / row.costTotal or 0
         row.margin = row.revenue > 0 and row.profit / row.revenue or 0
-        -- 分解收益与直接出售对照：给出「卖 vs 分」的最优选择
         if mode == "sell" then
+          -- 分解期望与直接出售对照：分解报价不完整时只能作为下界
           local de = Arb.Disenchant(recipe.output)
-          if de then row.disenchantEV, row.disenchantWins = de.ev, de.ev > (price or 0) end
+          if de then
+            row.disenchantEV = de.ev
+            row.disenchantIncomplete = de.incomplete
+            if de.incomplete then
+              row.disenchantWins = de.ev > (price or 0) and true or false
+              row.disenchantUnknown = de.ev <= (price or 0)
+            else
+              row.disenchantWins = de.ev > (price or 0)
+            end
+          end
         end
       else
         row.reason = (mode == "de") and "无法估算分解收益" or "产物暂无市场报价"
       end
-    else
+    elseif #(row.unpriced or {}) > 0 then
       row.reason = "部分材料暂无报价"
+    else
+      row.reason = "配方没有可用的材料数据"
     end
     tinsert(rows, row)
   end
@@ -951,7 +1183,8 @@ local function buildRows(mode, crossOwner)
 end
 
 ---执行一次完整分析
----@param options table { mode = "sell"|"de", profession = key|nil, onlyProfitable = bool, onlySkillUp = bool, sort = "profit"|"roi", query = string }
+---@param options table { mode = "sell"|"de", profession = key|nil, ownOnly = bool, onlyProfitable = bool,
+---                        onlySkillUp = bool, crossOwner = bool, sort = "profit"|"roi", query = string }
 ---@return table[] rows
 ---@return table meta
 function Arb.Analyse(options)
@@ -968,13 +1201,11 @@ function Arb.Analyse(options)
   end
   cut = rowCache.cut or DEFAULT_CUT
 
-  local rows, professionStats, profitable = {}, {}, 0
+  local rows, professionStats, profitable, hiddenByKeep = {}, {}, 0, 0
   for _, row in ipairs(cache) do
     local keep = true
     if options.profession and row.professionKey ~= options.profession then keep = false end
     -- 「当前可以制作」：默认只保留当前角色自己学会的配方
-    if keep and options.ownOnly ~= false and not row.ownCharacter then keep = false end
-    -- 「当前可以制作」：默认只看当前角色自己能做的配方
     if keep and options.ownOnly ~= false and not row.ownCharacter then keep = false end
     if keep and options.onlyProfitable and not (row.profit and row.profit > 0) then keep = false end
     if keep and options.onlySkillUp and (row.skillUp == "trivial" or row.skillUp == "unknown") then keep = false end
@@ -982,7 +1213,11 @@ function Arb.Analyse(options)
       local hay = lower((row.name or "") .. " " .. (row.professionName or "") .. " " .. (row.ownerName or ""))
       if not find(hay, lower(options.query), 1, true) then keep = false end
     end
-    if row.profit and row.profit > 0 then profitable = profitable + 1 end
+    if keep then
+      if row.profit and row.profit > 0 then profitable = profitable + 1 end
+    else
+      hiddenByKeep = hiddenByKeep + 1
+    end
     local stats = row.professionKey and professionStats[row.professionKey]
     if not stats and row.professionKey then
       stats = { key = row.professionKey, name = row.professionName, total = 0, profitable = 0, best = nil }
@@ -998,15 +1233,24 @@ function Arb.Analyse(options)
 
   local sorter
   if options.sort == "roi" then
-    sorter = function(left, right) return (left.roi or -huge) > (right.roi or -huge) end
+    sorter = function(left, right)
+      if (left.roi or -huge) ~= (right.roi or -huge) then return (left.roi or -huge) > (right.roi or -huge) end
+      return (left.profit or -huge) > (right.profit or -huge)
+    end
   else
-    sorter = function(left, right) return (left.profit or -huge) > (right.profit or -huge) end
+    sorter = function(left, right)
+      if (left.profit or -huge) ~= (right.profit or -huge) then return (left.profit or -huge) > (right.profit or -huge) end
+      return (left.roi or -huge) > (right.roi or -huge)
+    end
   end
-  tsort(rows, sorter)
+  sort(rows, sorter)
 
   local professions = {}
   for _, stats in pairs(professionStats) do tinsert(professions, stats) end
-  tsort(professions, function(left, right) return left.total > right.total end)
+  tsort(professions, function(left, right)
+    if left.total ~= right.total then return left.total > right.total end
+    return (left.name or "") < (right.name or "")
+  end)
 
   local api = Arb.Market()
   local marketInfo
@@ -1018,8 +1262,9 @@ function Arb.Analyse(options)
   return rows, {
     mode = mode, cut = cut, state = Arb.ApiState(), revision = revision(),
     market = marketInfo, professions = professions,
-    total = #cache, priced = rowCache.priced or 0, shown = #rows, profitable = profitable, best = rows[1],
-    players = #storedRecipeSets(), ownProfessions = Arb.Professions(),
+    total = #cache, priced = rowCache.priced or 0, shown = #rows, hidden = hiddenByKeep,
+    profitable = profitable, best = rows[1],
+    players = #storedRecipeSets(), ownProfessions = Arb.Professions(), identity = Arb.Identity(),
   }
 end
 
@@ -1031,7 +1276,8 @@ end
 ---@param row table Analyse 返回的利润行
 ---@param label string|nil 清单名后缀（一般是产出物品名）
 ---@return boolean ok
----@return string|number reasonOrListID
+---@return string|number listID 或失败原因
+---@return string|nil note 部分成功时的补充说明
 function Arb.AddToShoppingList(row, label)
   if type(row) ~= "table" or type(row.leaves) ~= "table" or #row.leaves == 0 then
     return false, "该配方没有需要采购的材料"
@@ -1044,7 +1290,7 @@ function Arb.AddToShoppingList(row, label)
   local title = "WoWF 制造套利"
   if type(label) == "string" and label ~= "" then
     title = title .. " · " .. label
-    if #title > 48 then title = format("%s…", title:sub(1, 46)) end
+    if #title > 48 then title = sub(title, 1, 46) .. "…" end
   end
   local created, listID = pcall(api.CreateShoppingList, title, true)
   if not created then return false, tostring(listID or "创建购物清单失败") end
@@ -1070,7 +1316,7 @@ function Arb.AddToShoppingList(row, label)
     return false, (failed[1] and ("写入购物清单失败: " .. failed[1])) or "写入购物清单失败"
   end
   if #failed > 0 then
-    return true, listID, string.format("%d/%d 条材料写入成功", accepted, #row.leaves)
+    return true, listID, format("%d/%d 条材料写入成功", accepted, #row.leaves)
   end
   return true, listID
 end

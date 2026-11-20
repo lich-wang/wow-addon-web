@@ -8438,8 +8438,13 @@ local function RenderTabCraftArb()
     if profession.key == "enchanting" then hasEnchanting = true end
   end
   local recipeCount = 0
-  if type(WoWFDB.recipeCache) == "table" then
-    for _ in pairs(WoWFDB.recipeCache) do recipeCount = recipeCount + 1 end
+  local cache = WoWFDB.recipeCache
+  if type(cache) == "table" then
+    -- 配方缓存按角色键隔离，这里只统计当前角色
+    local scoped = cache[meta.identity and meta.identity.key or ""]
+    if type(scoped) == "table" then
+      for _ in pairs(scoped) do recipeCount = recipeCount + 1 end
+    end
   end
   table.insert(infoLines, string.format(
     "|cff99e6ff配方来源:|r EasyAuction 专业库 |cffffd100%d|r 个角色  ·  本插件采集 |cffffd100%d|r 条%s",
@@ -8478,7 +8483,7 @@ local function RenderTabCraftArb()
   -- 2. 筛选与排序控制
   local filterLines = {
     string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s",
-      state.craftProfession and (WoWF_CraftArb.ProfessionNames[state.craftProfession] or state.craftProfession) or "全部专业",
+      state.craftProfession and (arb.ProfessionNames[state.craftProfession] or state.craftProfession) or "全部专业",
       onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100包含亏损配方|r",
       state.craftCrossOwner ~= false and "|cff99e6ff含同账号小号自产|r" or "|cffaaaaaa仅本角色自产|r",
       state.craftOnlySkillUp == true and "|cffffd100只看涨点|r" or "|cffaaaaaa含不涨点|r",
@@ -8570,7 +8575,11 @@ local function RenderTabCraftArb()
         string.format("%d/%d 盈利", stats.profitable or 0, stats.total or 0),
         isActive and "显示全部专业" or "只看这个专业",
         function()
-          state.craftProfession = isActive and nil or stats.key
+          if isActive then
+            state.craftProfession = nil
+          else
+            state.craftProfession = stats.key
+          end
           RefreshUI()
         end
       )
@@ -8584,26 +8593,38 @@ local function RenderTabCraftArb()
     shown = shown + 1
     local bodyLines = {}
     local qualityColor = WoWF_CraftArb.QualityColor(row.outputID)
+    local costText
+    if row.costTotal then
+      costText = FormatMoney(row.costTotal)
+      if row.stockShort then costText = costText .. "|cffff8800(含缺货估价)|r" end
+    elseif row.partialCost then
+      costText = "|cffff8800报价不完整|r"
+    else
+      costText = "|cffff8800成本未知|r"
+    end
     table.insert(bodyLines, string.format(
-      "|cff99e6ff单次制作:|r 产出 %s%s|r × |cffffd100%s|r  ·  材料成本 %s|r  ·  可制作 |cff00ff00是|r",
+      "|cff99e6ff单次制作:|r 产出 %s%s|r × |cffffd100%s|r  ·  材料成本 %s  ·  可制作 %s",
       qualityColor, WoWF_CraftArb.ItemName(row.outputID), string.format("%.1f", row.yield or 1),
-      FormatMoney(row.costTotal or 0)
+      costText,
+      row.craftable and "|cff00ff00是|r" or "|cffff5555否|r"
     ))
 
     local leafLines = {}
     for _, leaf in ipairs(row.leaves or {}) do
-      table.insert(leafLines, string.format("    · %s|r ×%d  @ %s", WoWF_CraftArb.QualityColor(leaf.itemID),
-        math.ceil(leaf.quantity or 0), FormatMoney(leaf.unit or 0)))
+      local unitText = leaf.unit and FormatMoney(leaf.unit) or "|cffff8800无报价|r"
+      table.insert(leafLines, string.format("    · %s%s|r ×%d  @ %s",
+        WoWF_CraftArb.QualityColor(leaf.itemID), WoWF_CraftArb.ItemName(leaf.itemID),
+        math.ceil(leaf.quantity or 0), unitText))
     end
     local craftNotes = {}
-    for _, line in ipairs(row.craftLines or {}) do
-      local detail = line.detail or {}
-      if detail.recipe then
-        local saved = detail.saved
-        table.insert(craftNotes, string.format("    · %s|r 用配方「%s」自产%s",
-          WoWF_CraftArb.QualityColor(line.itemID), detail.recipe.name or "中间产物",
-          (saved and saved > 0) and string.format("（比直购省 %s）", FormatMoney(saved)) or ""))
-      end
+    for _, craft in ipairs(row.craftLines or {}) do
+      local saved = craft.saved
+      table.insert(craftNotes, string.format("    · %s%s|r 用配方「%s」自产 ×%d 批%s%s",
+        WoWF_CraftArb.QualityColor(craft.itemID), WoWF_CraftArb.ItemName(craft.itemID),
+        (craft.recipe and craft.recipe.name) or "中间产物",
+        math.max(1, craft.batches or 1),
+        (saved and saved > 0) and string.format("（比直购省 %s）", FormatMoney(saved)) or "",
+        craft.crossOwner and " |cffff8800[小号]|r" or ""))
     end
     if #leafLines > 0 then
       table.insert(bodyLines, "|cffffd100采购清单 (拍卖行):|r\n" .. table.concat(leafLines, "\n"))
@@ -8624,7 +8645,7 @@ local function RenderTabCraftArb()
         "|cff99e6ff分解期望:|r %s%s|r%s",
         FormatMoney(row.disenchant.ev or 0),
         (#parts > 0) and ("（" .. table.concat(parts, " + ") .. "）") or "",
-        row.disenchant.incomplete and " |cffff8800部分材料无报价，期望值偏低|r" or ""
+        row.disenchant.incomplete and " |cffff8800部分材料无报价，期望值仅为下界|r" or ""
       ))
     end
     if row.price then
@@ -8632,10 +8653,18 @@ local function RenderTabCraftArb()
         FormatMoney(row.price)))
     end
     if row.disenchantEV then
-      table.insert(bodyLines, string.format("|cff99e6ff分解期望:|r %s|r / 件 %s",
+      local verdict
+      if row.disenchantUnknown then
+        verdict = "|cffff8800（分解报价不完整，暂无法判断）|r"
+      elseif row.disenchantWins then
+        verdict = "|cff44ff88（分解更赚，可切到「分解套利」看细节）|r"
+      else
+        verdict = "|cffaaaaaa（不如直接卖拍卖）|r"
+      end
+      table.insert(bodyLines, string.format("|cff99e6ff分解期望:|r %s|r / 件%s%s",
         FormatMoney(row.disenchantEV),
-        row.disenchantWins and "|cff44ff88（分解更赚，可切到「分解套利」看细节）|r"
-          or "|cffaaaaaa（不如直接卖店/卖拍卖）|r"))
+        row.disenchantIncomplete and "（下界）" or "",
+        verdict))
     end
 
     if row.profit then
