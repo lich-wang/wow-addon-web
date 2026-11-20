@@ -3795,7 +3795,7 @@ local function RenderTabSmartMatch()
       theme = "talent",
       action = {
         label = "查看完整10-60表 ->",
-        fn = function() state.activeTab = 3; RefreshUI() end,
+        fn = function() state.talentFilter = "ALL"; state.activeTab = 3; RefreshUI() end,
       },
     })
   end
@@ -3865,7 +3865,7 @@ local function RenderTabSmartMatch()
       theme = "milestone",
       action = {
         label = "查看全部任务 ->",
-        fn = function() state.activeTab = 3; RefreshUI() end,
+        fn = function() state.activeTab = 2; RefreshUI() end,
       },
     })
   end
@@ -3893,7 +3893,7 @@ local function RenderTabSmartMatch()
       theme = "dungeon",
       action = {
         label = "查看副本任务 ->",
-        fn = function() state.activeTab = 5; RefreshUI() end,
+        fn = function() state.dungeonFilter = "MATCH"; state.activeTab = 5; RefreshUI() end,
       },
     })
   end
