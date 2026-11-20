@@ -5016,14 +5016,14 @@ end
 -- ============================================================================
 
 local TAB_DEFS = {
-  { id = 1, label = "智能匹配",     render = RenderTabSmartMatch,      slash = { "", "home", "smart" } },
-  { id = 2, label = "升级路线",     render = RenderTabRoutes,          slash = { "route", "level" }, onSlash = function() state.routeFilter = "MATCH" end },
-  { id = 3, label = "职业与天赋",   render = RenderTabClassAndTalents, slash = { "class", "talent" }, onSlash = function() state.talentFilter = "MATCH" end },
-  { id = 4, label = "一键宏库",     render = RenderTabMacros,          slash = { "macro", "macros" } },
-  { id = 5, label = "地下城百科",   render = RenderTabDungeons,        slash = { "dungeon", "dungeons" } },
-  { id = 6, label = "专业&无限特色", render = RenderTabForeverAndNews, slash = { "news", "forever", "prof", "professions" }, onSlash = function() state.featureFilter = "MATCH" end },
-  { id = 7, label = "常用命令",     render = RenderTabCommands,        slash = { "cmd", "commands", "console" } },
-  { id = 8, label = "制造套利",     render = RenderTabCraftArb,        slash = { "arb", "craft", "crafting", "profit", "auction" } },
+  { id = 1, label = "智能匹配",     render = RenderTabSmartMatch,      slash = { "", "home", "smart" }, searchable = false },
+  { id = 2, label = "升级路线",     render = RenderTabRoutes,          slash = { "route", "level" }, onSlash = function() state.routeFilter = "MATCH" end, searchable = true },
+  { id = 3, label = "职业与天赋",   render = RenderTabClassAndTalents, slash = { "class", "talent" }, onSlash = function() state.talentFilter = "MATCH" end, searchable = true },
+  { id = 4, label = "一键宏库",     render = RenderTabMacros,          slash = { "macro", "macros" }, searchable = true },
+  { id = 5, label = "地下城百科",   render = RenderTabDungeons,        slash = { "dungeon", "dungeons" }, searchable = true },
+  { id = 6, label = "专业&无限特色", render = RenderTabForeverAndNews, slash = { "news", "forever", "prof", "professions" }, onSlash = function() state.featureFilter = "MATCH" end, searchable = true },
+  { id = 7, label = "常用命令",     render = RenderTabCommands,        slash = { "cmd", "commands", "console" }, searchable = true },
+  { id = 8, label = "制造套利",     render = RenderTabCraftArb,        slash = { "arb", "craft", "crafting", "profit", "auction" }, searchable = true },
 }
 local TAB_BY_ID = {}
 local SLASH_TO_TAB = {}
@@ -5099,11 +5099,23 @@ RefreshUI = function(preserveScroll)
   if headerControls.routeBtn then
     headerControls.routeBtn:SetText("路线: " .. (route and route.name or state.routeId))
   end
-  if headerControls.autoCheck then
-    headerControls.autoCheck:SetChecked(state.autoFollow)
+  if headerControls.followBtn then
+    headerControls.followBtn:SetText(state.autoFollow and "|cff00ffcc跟随角色: 开|r" or "|cffffa500跟随角色: 关|r")
   end
-  if headerControls.matchRoleBtn then
-    headerControls.matchRoleBtn:SetText(state.autoFollow and "|cff00ffcc匹配角色|r" or "|cffffa500匹配角色|r")
+
+  local tabDef = TAB_BY_ID[state.activeTab] or TAB_DEFS[1]
+  if headerControls.searchBox then
+    local canSearch = (tabDef.searchable ~= false)
+    headerControls.searchBox:EnableMouse(canSearch)
+    headerControls.searchBox:SetAlpha(canSearch and 1.0 or 0.45)
+    if not canSearch then
+      headerControls.searchBox:ClearFocus()
+    end
+    if headerControls.searchPlaceholder then
+      local txt = headerControls.searchBox:GetText() or ""
+      headerControls.searchPlaceholder:SetText(canSearch and "搜索当前页…" or "本页不支持搜索")
+      headerControls.searchPlaceholder:SetShown(txt == "")
+    end
   end
 
   for i, btn in ipairs(tabButtons) do
@@ -5116,7 +5128,6 @@ RefreshUI = function(preserveScroll)
 
   local savedScroll = (preserveScroll and scrollFrame) and (scrollFrame:GetVerticalScroll() or 0) or 0
 
-  local tabDef = TAB_BY_ID[state.activeTab] or TAB_DEFS[1]
   tabDef.render()
 
   if scrollFrame then
@@ -5126,6 +5137,44 @@ RefreshUI = function(preserveScroll)
     else
       scrollFrame:SetVerticalScroll(0)
     end
+  end
+end
+
+local function AttachTooltip(widget, title, bodyOrFn)
+  widget:SetScript("OnEnter", function(self)
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(title, 1, 0.82, 0)
+    local body = (type(bodyOrFn) == "function") and bodyOrFn() or bodyOrFn
+    if body and body ~= "" then
+      GameTooltip:AddLine(body, 0.85, 0.9, 0.95, true)
+    end
+    GameTooltip:Show()
+  end)
+  widget:SetScript("OnLeave", function()
+    if GameTooltip then GameTooltip:Hide() end
+  end)
+end
+
+local dropdownMenu
+local function OpenControlDropdown(anchorBtn, buildItemsFn, fallbackFn)
+  if UIDropDownMenu_Initialize and UIDropDownMenu_CreateInfo and UIDropDownMenu_AddButton and ToggleDropDownMenu then
+    if not dropdownMenu then
+      dropdownMenu = CreateFrame("Frame", "WoWFControlDropDown", UIParent, "UIDropDownMenuTemplate")
+    end
+    UIDropDownMenu_Initialize(dropdownMenu, function(_, level)
+      for _, item in ipairs(buildItemsFn() or {}) do
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = item.text
+        info.checked = item.checked and true or false
+        info.func = item.func
+        UIDropDownMenu_AddButton(info, level)
+      end
+    end, "MENU")
+    ToggleDropDownMenu(1, nil, dropdownMenu, anchorBtn, 0, 0)
+  elseif fallbackFn then
+    fallbackFn()
   end
 end
 
@@ -5184,38 +5233,35 @@ local function CreateMainWindow()
     ctrlBar:SetBackdropBorderColor(0.2, 0.35, 0.45, 0.8)
   end
 
-  local autoCheck = CreateFrame("CheckButton", nil, ctrlBar, "UICheckButtonTemplate")
-  autoCheck:SetSize(24, 24)
-  autoCheck:SetPoint("LEFT", 6, 0)
-  autoCheck:SetChecked(state.autoFollow)
-  autoCheck:SetScript("OnClick", function(self)
-    ResetToCharacter(self:GetChecked() and true or false)
+  -- 单一「跟随角色」开关：显式文本状态，点击切换跟随/重新同步当前角色
+  local followBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
+  followBtn:SetSize(104, 22)
+  followBtn:SetPoint("LEFT", 8, 0)
+  followBtn:SetText("|cff00ffcc跟随角色: 开|r")
+  followBtn:SetScript("OnClick", function()
+    ResetToCharacter(not state.autoFollow)
   end)
-  headerControls.autoCheck = autoCheck
-
-  -- 「匹配角色」按钮：一键恢复跟随当前角色（种族+职业+专精+等级）并聚焦当前等级路线
-  local matchRoleBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
-  matchRoleBtn:SetSize(88, 22)
-  matchRoleBtn:SetPoint("LEFT", autoCheck, "RIGHT", 2, 0)
-  matchRoleBtn:SetText("|cff00ffcc匹配角色|r")
-  matchRoleBtn:SetScript("OnClick", function()
-    ResetToCharacter(true)
+  AttachTooltip(followBtn, "跟随当前角色", function()
+    return state.autoFollow
+      and "当前已开启自动跟随：等级、职业、专精与路线会自动同步实时角色；点击可暂停自动跟随。"
+      or "当前处于手动预览模式；点击可重新对齐当前角色并重置各页筛选为 MATCH。"
   end)
-  headerControls.matchRoleBtn = matchRoleBtn
+  headerControls.followBtn = followBtn
 
   -- 等级 -1 / Lv.X / +1
   local lvlMinusBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
-  lvlMinusBtn:SetSize(26, 22)
-  lvlMinusBtn:SetPoint("LEFT", matchRoleBtn, "RIGHT", 6, 0)
+  lvlMinusBtn:SetSize(24, 22)
+  lvlMinusBtn:SetPoint("LEFT", followBtn, "RIGHT", 6, 0)
   lvlMinusBtn:SetText("-")
   lvlMinusBtn:SetScript("OnClick", function()
     state.autoFollow = false
     state.level = math.max(1, state.level - 1)
     RefreshUI()
   end)
+  AttachTooltip(lvlMinusBtn, "等级 -1", "手动降低预览等级（会自动暂停跟随角色）。")
 
   local levelBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
-  levelBtn:SetSize(56, 22)
+  levelBtn:SetSize(54, 22)
   levelBtn:SetPoint("LEFT", lvlMinusBtn, "RIGHT", 2, 0)
   levelBtn:SetScript("OnClick", function(_, button)
     state.autoFollow = false
@@ -5227,10 +5273,11 @@ local function CreateMainWindow()
     RefreshUI()
   end)
   levelBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  AttachTooltip(levelBtn, "快速调整等级", "左键点击 +5 级  ·  右键点击 -5 级（自动暂停跟随角色）。")
   headerControls.levelBtn = levelBtn
 
   local lvlPlusBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
-  lvlPlusBtn:SetSize(26, 22)
+  lvlPlusBtn:SetSize(24, 22)
   lvlPlusBtn:SetPoint("LEFT", levelBtn, "RIGHT", 2, 0)
   lvlPlusBtn:SetText("+")
   lvlPlusBtn:SetScript("OnClick", function()
@@ -5238,73 +5285,140 @@ local function CreateMainWindow()
     state.level = math.min(60, state.level + 1)
     RefreshUI()
   end)
+  AttachTooltip(lvlPlusBtn, "等级 +1", "手动提高预览等级（会自动暂停跟随角色）。")
 
-  -- 职业切换按钮
+  -- 职业下拉选择按钮
   local classBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
-  classBtn:SetSize(102, 22)
-  classBtn:SetPoint("LEFT", lvlPlusBtn, "RIGHT", 8, 0)
-  classBtn:SetScript("OnClick", function()
-    state.autoFollow = false
-    local idx = 1
-    for i, k in ipairs(CLASS_ORDER) do
-      if k == state.classKey then idx = i; break end
-    end
-    idx = (idx % #CLASS_ORDER) + 1
-    state.classKey = CLASS_ORDER[idx]
-    state.specIndex = 1
-    RefreshUI()
+  classBtn:SetSize(100, 22)
+  classBtn:SetPoint("LEFT", lvlPlusBtn, "RIGHT", 6, 0)
+  classBtn:SetScript("OnClick", function(self)
+    OpenControlDropdown(self, function()
+      local items = {}
+      local classes = Data.classes or {}
+      for _, k in ipairs(CLASS_ORDER) do
+        local c = classes[k]
+        if c then
+          table.insert(items, {
+            text = c.name or k,
+            checked = (state.classKey == k),
+            func = function()
+              state.autoFollow = false
+              state.classKey = k
+              state.specIndex = 1
+              RefreshUI()
+            end,
+          })
+        end
+      end
+      return items
+    end, function()
+      state.autoFollow = false
+      local idx = 1
+      for i, k in ipairs(CLASS_ORDER) do
+        if k == state.classKey then idx = i; break end
+      end
+      state.classKey = CLASS_ORDER[(idx % #CLASS_ORDER) + 1]
+      state.specIndex = 1
+      RefreshUI()
+    end)
   end)
+  AttachTooltip(classBtn, "选择职业", "点击打开职业下拉菜单，切换后会自动暂停跟随角色。")
   headerControls.classBtn = classBtn
 
-  -- 专精切换按钮
+  -- 专精下拉选择按钮
   local specBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
-  specBtn:SetSize(102, 22)
+  specBtn:SetSize(100, 22)
   specBtn:SetPoint("LEFT", classBtn, "RIGHT", 6, 0)
-  specBtn:SetScript("OnClick", function()
-    state.autoFollow = false
-    local cls = GetCurrentClassData()
-    local count = (cls and cls.specs and #cls.specs) or 1
-    if count > 0 then
-      state.specIndex = (state.specIndex % count) + 1
-    end
-    RefreshUI()
+  specBtn:SetScript("OnClick", function(self)
+    OpenControlDropdown(self, function()
+      local items = {}
+      local cls = GetCurrentClassData()
+      for idx, sp in ipairs((cls and cls.specs) or {}) do
+        table.insert(items, {
+          text = sp.name or ("专精 " .. idx),
+          checked = (state.specIndex == idx),
+          func = function()
+            state.autoFollow = false
+            state.specIndex = idx
+            RefreshUI()
+          end,
+        })
+      end
+      return items
+    end, function()
+      state.autoFollow = false
+      local cls = GetCurrentClassData()
+      local count = (cls and cls.specs and #cls.specs) or 1
+      if count > 0 then
+        state.specIndex = (state.specIndex % count) + 1
+      end
+      RefreshUI()
+    end)
   end)
+  AttachTooltip(specBtn, "选择专精", "点击打开当前职业的专精下拉菜单。")
   headerControls.specBtn = specBtn
 
-  -- 种族路线切换按钮
+  -- 种族路线下拉选择按钮
   local routeBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
   routeBtn:SetSize(124, 22)
   routeBtn:SetPoint("LEFT", specBtn, "RIGHT", 6, 0)
-  routeBtn:SetScript("OnClick", function()
-    state.autoFollow = false
-    local idx = 1
-    for i, r in ipairs(ROUTE_ORDER) do
-      if r == state.routeId then idx = i; break end
-    end
-    idx = (idx % #ROUTE_ORDER) + 1
-    state.routeId = ROUTE_ORDER[idx]
-    local route = GetCurrentRoute()
-    if route and route.faction then
-      state.faction = route.faction
-    end
-    RefreshUI()
+  routeBtn:SetScript("OnClick", function(self)
+    OpenControlDropdown(self, function()
+      local items = {}
+      local routes = Data.routes or {}
+      for _, rId in ipairs(ROUTE_ORDER) do
+        local r = routes[rId]
+        if r then
+          table.insert(items, {
+            text = string.format("%s (%s)", r.name or rId, FactionTag(r.faction)),
+            checked = (state.routeId == rId),
+            func = function()
+              state.autoFollow = false
+              state.routeId = rId
+              if r.faction then state.faction = r.faction end
+              RefreshUI()
+            end,
+          })
+        end
+      end
+      return items
+    end, function()
+      state.autoFollow = false
+      local idx = 1
+      for i, r in ipairs(ROUTE_ORDER) do
+        if r == state.routeId then idx = i; break end
+      end
+      state.routeId = ROUTE_ORDER[(idx % #ROUTE_ORDER) + 1]
+      local route = GetCurrentRoute()
+      if route and route.faction then state.faction = route.faction end
+      RefreshUI()
+    end)
   end)
+  AttachTooltip(routeBtn, "选择种族升级路线", "点击打开种族路线下拉菜单（会同步切换对应阵营）。")
   headerControls.routeBtn = routeBtn
 
-  -- 搜索输入框
+  -- 搜索输入框（含占位提示，仅在支持搜索的标签页启用）
   local searchBox = CreateFrame("EditBox", nil, ctrlBar, "InputBoxTemplate")
   searchBox:SetSize(128, 20)
   searchBox:SetPoint("RIGHT", ctrlBar, "RIGHT", -10, 0)
   searchBox:SetAutoFocus(false)
   searchBox:SetTextInsets(6, 6, 0, 0)
+  local searchPlaceholder = searchBox:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+  searchPlaceholder:SetPoint("LEFT", 8, 0)
+  searchPlaceholder:SetText("搜索当前页…")
+  headerControls.searchBox = searchBox
+  headerControls.searchPlaceholder = searchPlaceholder
   searchBox:SetScript("OnTextChanged", function(self)
-    state.searchQuery = self:GetText() or ""
+    local txt = self:GetText() or ""
+    state.searchQuery = txt
+    searchPlaceholder:SetShown(txt == "")
     ScheduleRefresh(false, 0.2)
   end)
   searchBox:SetScript("OnEscapePressed", function(self)
     self:SetText("")
     self:ClearFocus()
   end)
+  AttachTooltip(searchBox, "关键词搜索", "对当前标签页内容进行关键词过滤（按 Esc 清空；「智能匹配」总览页不支持搜索）。")
 
   -- 八大功能标签栏（由 TAB_DEFS 统一驱动）
   local tabX = 12
