@@ -3707,78 +3707,60 @@ local function RenderTabSmartMatch()
   local overviewLines = {}
   local zoneTag = (state.zone and state.zone ~= "") and ("  ·  |cff00ff96当前所在:|r " .. state.zone) or ""
   table.insert(overviewLines, string.format(
-    "|cff00ffcc当前匹配角色:|r |cffffd100Lv.%d %s · %s (%s)|r  ·  |cff99e6ff阵营路线:|r %s (%s)%s",
-    lvl,
-    route and route.name or state.routeId,
-    cls and cls.name or state.classKey,
-    spec and spec.name or "默认专精",
-    route and route.name or state.routeId,
+    "|cff00ffcc阵营:|r %s%s",
     FactionTag(state.faction),
     zoneTag
   ))
   if recProfs ~= "" then
-    table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs .. "   |cffaaaaaa(上方控制栏可自由切换等级、职业、专精与种族路线)|r")
+    table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs)
   end
-  table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿坐标|r 直接打开世界地图标记点 (Shift+点击发到聊天)；|cffffff00点击黄色任务链接|r 直接插入聊天框发送 (右键标记接取点)。")
+  table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿坐标|r 打开世界地图标点；|cffffff00点击黄色任务|r 发送到聊天框 (右键标点)。")
   local playerProfs = GetPlayerProfessions()
   if lvl >= 14 and lvl < 60 and not IsQuestCompletedById(79975) then
     if HasPlayerProfession(playerProfs, "制皮", "Leatherworking") then
-      table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r，并在野外利用制皮【营地帐篷】快速攒双倍经验！")
+      table.insert(overviewLines, "|cffffd100★ 经验加速提醒:|r 14级起记得完成【舒适的睡袋】常驻 |cff00ff00+8% 经验|r，并利用制皮【营地帐篷】攒双倍经验！")
     else
-      table.insert(overviewLines, "|cffffd100★ 无限服经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验值|r（详见证件/任务指引见[专业&无限特色]页）！")
+      table.insert(overviewLines, "|cffffd100★ 经验加速提醒:|r 14级起记得完成【舒适的睡袋】四步任务常驻 |cff00ff00+8% 经验|r（详情见「专业&无限特色」页）！")
     end
   end
 
   list:Add({
-    title = string.format("|cff00ffcc>> Lv.%d %s·%s·%s 智能匹配总览|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
+    title = string.format("|cff00ffcc>> Lv.%d %s·%s·%s 智能匹配仪表盘|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
     body = table.concat(overviewLines, "\n"),
     theme = "header",
     badge = "|cff00ffccwowf.io 实时引擎|r",
   })
 
-  -- 2. 当前等级推荐区域与营地导航（按当前种族+职业+专精精准匹配）
+  -- 2. 当前等级推荐区域与营地导航摘要（完整阶段与区域任务链见「升级路线」页）
   if band then
-    local bandLines = BuildBandLines(band, {
-      level = lvl,
-      cls = cls,
-      spec = spec,
-      isSmartMatch = true,
-      zonesHeader = "当前适龄练级区域 (平级推荐，可自由切换)",
-      markActiveHub = true,
-      subHubLabel = "|cff99e6ff本区分阶段据点:|r ",
-      flightSep = "  /  ",
-      groupBandQuests = true,
-      questIndent = "      ",
-      questPrefix = "  - ",
-      profLabel = "|cff00ff96本区专业训练师:|r ",
-      profSep = "  /  ",
-    })
-
-    if band.dungeonQuests and #band.dungeonQuests > 0 then
-      local dqList = {}
-      for _, dq in ipairs(band.dungeonQuests) do
-        if not IsQuestCompleted(dq) then
-          local dqZone = PickZone(dq, dq.place, band.zone)
-          local dqc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
-          local dqLink = FormatQuestLink(dq, dq.level or lvl, dqZone)
-          local acceptTag = (not IsQuestLineStarted(dq)) and string.format(" (可接 Lv.%d)", dq.level or lvl) or ""
-          table.insert(dqList, string.format("  - |cffff8000[%s]|r %s%s — 接取: %s %s%s", dq.dungeon, dqLink, acceptTag, dq.place or "", dq.npc or "", dqc))
-        end
-      end
-      if #dqList > 0 then
-        table.insert(bandLines, "|cffffa500本阶段顺路必接副本任务:|r\n" .. table.concat(dqList, "\n"))
-      end
+    local bandLines = {}
+    local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
+    local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
+    local zonesBlock = FormatBandZonesBlock(band, "当前适龄练级区域")
+    if zonesBlock then
+      table.insert(bandLines, zonesBlock)
+    else
+      table.insert(bandLines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r  ·  |cffffd100核心据点:|r %s%s", band.zone or "未知", hubName or "", coordStr))
+    end
+    local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
+    if matchedTrainer and matchedTrainer.name ~= "" then
+      local tZone = PickZone(matchedTrainer, matchedTrainer.place, band.zone)
+      local tCoord = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
+      table.insert(bandLines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.place or band.zone or "", tCoord))
+    end
+    local bandQuests = GetBandQuests(band, state.classKey)
+    if bandQuests and #bandQuests > 0 then
+      table.insert(bandLines, string.format("|cff00ffcc本阶段关键/职业任务:|r 共 %d 条（完整任务链与区域指引请点击右上角查看详情）", #bandQuests))
     end
 
     list:Add({
-      title = string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · |r%s|cffffd100 · %s)|r", band.from, band.to, FormatBandZonesTitle(band), route and route.name or ""),
+      title = string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · |r%s|cffffd100)|r", band.from, band.to, FormatBandZonesTitle(band)),
       body = table.concat(bandLines, "\n"),
       theme = "route",
-      badge = string.format("Lv.%d-%d", band.from, band.to),
-      action = (band.hub and band.hub.x) and {
-        label = "标记营地坐标",
-        fn = function() SetWaypointOrPrint(band.zone, band.hub.name, band.hub.x, band.hub.y) end,
-      } or nil,
+      action = {
+        label = "查看路线详情 ->",
+        fn = function() state.activeTab = 2; RefreshUI() end,
+      },
     })
   end
 
@@ -3789,21 +3771,21 @@ local function RenderTabSmartMatch()
       table.insert(tLines, string.format("当前 |cffffd100Lv.%d|r 尚未解锁天赋树（10 级解锁第 1 点天赋）。", lvl))
       if spec.steps and spec.steps[1] then
         local firstStep = spec.steps[1]
-        table.insert(tLines, string.format("达到 |cff00ff00Lv.10|r 时首点推荐投入: |cffffd100[%s] %s (%d/%d)|r", firstStep.tree, firstStep.name, firstStep.rank, firstStep.max))
+        table.insert(tLines, string.format("Lv.10 首点推荐: |cffffd100[%s] %s (%d/%d)|r", firstStep.tree, firstStep.name, firstStep.rank, firstStep.max))
       end
     else
       if talentStep then
         table.insert(tLines, string.format(">> |cff00ff00Lv.%d 本级必点天赋:|r |cffffd100[%s] %s (第 %d/%d 点)|r", lvl, talentStep.tree, talentStep.name, talentStep.rank, talentStep.max))
       end
       local nextPreview = {}
-      for nextLvl = lvl + 1, math.min(60, lvl + 4) do
+      for nextLvl = lvl + 1, math.min(60, lvl + 3) do
         local ns = GetMatchedTalentStep(spec, nextLvl)
         if ns then
           table.insert(nextPreview, string.format("Lv.%d: [%s] %s (%d/%d)", nextLvl, ns.tree, ns.name, ns.rank, ns.max))
         end
       end
       if #nextPreview > 0 then
-        table.insert(tLines, "|cff99e6ff后续等级加点预告:|r " .. table.concat(nextPreview, "  ->  "))
+        table.insert(tLines, "|cff99e6ff后续预告:|r " .. table.concat(nextPreview, "  ->  "))
       end
     end
 
@@ -3811,7 +3793,10 @@ local function RenderTabSmartMatch()
       title = string.format("|cffffd100★ Lv.%d 天赋加点指引 (%s·%s)|r", lvl, cls and cls.name or "", spec.name),
       body = table.concat(tLines, "\n"),
       theme = "talent",
-      badge = "点击[职业与天赋]看完整10-60表",
+      action = {
+        label = "查看完整10-60表 ->",
+        fn = function() state.talentFilter = "ALL"; state.activeTab = 3; RefreshUI() end,
+      },
     })
   end
 
@@ -3822,48 +3807,46 @@ local function RenderTabSmartMatch()
       title = string.format("|cff00ffcc★ Lv.%d 传承点数(经典旧世树)加点推荐 (单角色上限 16 点)|r", lvl),
       body = table.concat(legacyCompactLines, "\n"),
       theme = "legacy",
-      badge = "点击[专业&无限特色]看1-16点详表",
+      action = {
+        label = "查看1-16点详表 ->",
+        fn = function() state.activeTab = 6; RefreshUI() end,
+      },
     })
   end
 
-  -- 4. 当前等级专精输出循环与副本手法
+  -- 4. 当前等级专精输出循环摘要
   if phase then
     local rotLines = {
       "|cff00ff96【常驻保持】|r " .. (phase.keep or "无"),
       "|cffffa500【起手技能】|r " .. (phase.open or "普通攻击"),
       "|cff71d5ff【核心优先级】|r " .. (phase.cycle or "普通攻击"),
     }
-    if phase.note and phase.note ~= "" then
-      table.insert(rotLines, "\n|cffffd100【野外实战细节】|r\n" .. LinkifyInlineCoords(phase.note, band and band.zone or "", "实战点"))
-    end
-    local dTip = GetMatchedDungeonTip(spec, lvl)
-    if dTip and dTip.text ~= "" then
-      table.insert(rotLines, "\n|cffff8000【当前等级地下城战斗指南 (Lv." .. dTip.from .. "-" .. dTip.to .. ")】|r\n" .. LinkifyInlineCoords(dTip.text, band and band.zone or "", "副本点"))
-    end
-
     list:Add({
       title = string.format("|cff71d5ff[战斗] 当前等级输出手法与循环 (Lv.%d-%d)|r", phase.from, phase.to),
       body = table.concat(rotLines, "\n"),
       theme = "combat",
-      badge = string.format("Lv.%d-%d 阶段", phase.from, phase.to),
+      action = {
+        label = "查看战斗详情 ->",
+        fn = function() state.activeTab = 3; RefreshUI() end,
+      },
     })
   end
 
-  -- 5. 当前等级种族+职业专属任务链与关键里程碑
+  -- 5. 当前等级种族+职业专属任务链与关键里程碑摘要
   local milestoneLines = {}
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
       local mLvl = m.level or 1
-      if mLvl >= lvl - 2 and mLvl <= lvl + 10 then
-        local tag = (mLvl == lvl) and "|cff00ff00[当前等级必做]|r " or string.format("|cffffd100[Lv.%d 专精要点]|r ", mLvl)
+      if mLvl >= lvl - 2 and mLvl <= lvl + 10 and #milestoneLines < 3 then
+        local tag = (mLvl == lvl) and "|cff00ff00[当前必做]|r " or string.format("|cffffd100[Lv.%d 要点]|r ", mLvl)
         table.insert(milestoneLines, "  - " .. tag .. LinkifyInlineCoords(m.text or "", band and band.zone or "", spec.name or "要点"))
       end
     end
   end
   for _, cr in ipairs(matchedClassRuns) do
     local crTo = cr.to or cr.level or 60
-    if lvl >= (cr.level - 4) and crTo >= lvl - 2 then
-      local crLine, crTree = FormatClassRunLine(cr, {
+    if lvl >= (cr.level - 4) and crTo >= lvl - 2 and #milestoneLines < 5 then
+      local crLine = FormatClassRunLine(cr, {
         prefix = "  - ",
         routeName = route and route.name or "",
         clsName = cls and cls.name or "",
@@ -3873,7 +3856,6 @@ local function RenderTabSmartMatch()
         indent = "      ",
       })
       table.insert(milestoneLines, crLine)
-      if crTree then table.insert(milestoneLines, crTree) end
     end
   end
   if #milestoneLines > 0 then
@@ -3881,38 +3863,38 @@ local function RenderTabSmartMatch()
       title = string.format("|cff00ff96★ 当前阶段 %s·%s 关键里程碑与专属职业任务|r", route and route.name or "", cls and cls.name or ""),
       body = table.concat(milestoneLines, "\n"),
       theme = "milestone",
+      action = {
+        label = "查看全部任务 ->",
+        fn = function() state.activeTab = 2; RefreshUI() end,
+      },
     })
   end
 
-  -- 6. 当前等级推荐地下城与必接任务
+  -- 6. 当前等级推荐地下城摘要（详细任务树见「地下城百科」页）
   if #matchedDungeons > 0 then
     local dLines = {}
     for _, d in ipairs(matchedDungeons) do
-      local newTag = d.isNew and " |cff00ffcc[★无限服新增副本]|r" or ""
+      local newTag = d.isNew and " |cff00ffcc[★无限服新增]|r" or ""
       local entCoord = (d.entranceX and d.entranceY) and FormatCoordLink(d.entranceZone or d.zone, d.name .. "入口", d.entranceX, d.entranceY) or ""
-      table.insert(dLines, string.format(
-        "|cffff8000[%s]|r (Lv.%d-%d · 推荐 %d 级进本 · %s%s)%s",
-        d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", entCoord, newTag
-      ))
-      local matchedDunQuests = {}
+      local pendingCount = 0
       for _, q in ipairs(DedupeQuestieQuests(d.quests or {})) do
         if (q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q) and (not IsQuestCompleted(q)) then
-          table.insert(matchedDunQuests, q)
+          pendingCount = pendingCount + 1
         end
       end
-      RenderQuestGroups(dLines, GroupQuestsBySharedPrefix(matchedDunQuests), {
-        maxQuests = 8,
-        fallbackLevel = d.minLevel,
-        fallbackZone = d.entranceZone or d.zone or "",
-        indent = "        ",
-        prefix = "    └ 任务: ",
-        insideLabel = "(副本内接取)",
-      })
+      table.insert(dLines, string.format(
+        "|cffff8000[%s]|r (Lv.%d-%d · 推荐 %d 级 · %s%s) — 未完成任务 |cffffd100%d|r 个%s",
+        d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", entCoord, pendingCount, newTag
+      ))
     end
     list:Add({
-      title = string.format("|cffff8000[副本] 适合当前等级 (Lv.%d) 的地下城与任务 (%d个)|r", lvl, #matchedDungeons),
+      title = string.format("|cffff8000[副本] 适合当前等级 (Lv.%d) 的地下城 (%d个)|r", lvl, #matchedDungeons),
       body = table.concat(dLines, "\n"),
       theme = "dungeon",
+      action = {
+        label = "查看副本任务 ->",
+        fn = function() state.dungeonFilter = "MATCH"; state.activeTab = 5; RefreshUI() end,
+      },
     })
   end
 
@@ -4384,15 +4366,28 @@ end
 
 local function RenderTabDungeons()
   local list = CreateCardList(6)
+  local allDungeons = Data.dungeons or {}
+  local newDungeonNames = {}
+  for _, d in ipairs(allDungeons) do
+    if d.isNew then
+      table.insert(newDungeonNames, d.name)
+    end
+  end
+  local newCount = #newDungeonNames
   local toggle = FilterToggle("dungeonFilter", {
     { value = "MATCH", btnLabel = "看无限服新本", desc = string.format("当前筛选: 适合 Lv.%d 的地下城", state.level) },
-    { value = "NEW", btnLabel = "显示全部副本", desc = "当前筛选: ★ 无限服新增地下城与团本 (11个)" },
-    { value = "ALL", btnLabel = "看当前等级", desc = "当前筛选: 全部地下城与团本" },
+    { value = "NEW", btnLabel = "显示全部副本", desc = string.format("当前筛选: ★ 无限服新增地下城与团本 (%d个)", newCount) },
+    { value = "ALL", btnLabel = "看当前等级", desc = string.format("当前筛选: 全部 %d 个地下城与团本", #allDungeons) },
   })
 
   list:Add({
     title = "|cffff8000[副本] 艾泽拉斯地下城与无限服新副本百科 (" .. toggle.desc .. ")|r",
-    body = "包含《魔兽世界：无限服》全部 |cff00ffcc9 大全新五人副本|r（领主大厅、洛丹伦废墟、挖掘场：湿地、达拉然城、沉没之城、克罗多克要塞、奥卡兹监狱、黑喉要塞、塑造者之台）与新增团本（深穴、海加尔峰）及所有必接副本任务坐标。点击蓝色坐标可直接在世界地图标点，点击黄色任务链接可发送至聊天框。",
+    body = string.format(
+      "包含共 |cffffd100%d|r 个地下城与团本（含《魔兽世界：无限服》|cff00ffcc%d 个新增副本|r：%s）及必接副本任务坐标。点击蓝色坐标可直接在世界地图标点，点击黄色任务链接可发送至聊天框。",
+      #allDungeons,
+      newCount,
+      #newDungeonNames > 0 and table.concat(newDungeonNames, "、") or "暂无"
+    ),
     theme = { border = { 0.95, 0.55, 0.15, 0.9 }, bg = { 0.13, 0.08, 0.05, 0.92 } },
     action = toggle.action,
   })
@@ -4636,7 +4631,7 @@ local function RenderTabCraftArb()
   list:Add({
     title = "|cff00ccff中间产物来源|r",
     body = state.craftCrossOwner ~= false
-      and "当前允许借用同账号其他角色已学的中间产物配方（如小号会做布卷）。\n若只想按本角色自己能做的链计算，请点击右下按钮切换。"
+      and "当前允许借用同账号其他角色已学的中间产物配方（如小号会做布卷）。\n若只想按本角色自己能做的链计算，请点击右上角按钮切换。"
       or "当前只按本角色自己会的配方折算中间产物，借不到小号的半成品配方。",
     theme = "command",
     action = {
@@ -4684,7 +4679,7 @@ local function RenderTabCraftArb()
         "配方 |cffffd100%d|r 条  ·  可盈利 |cff44ff88%d|r 条  ·  最高单次净利润 %s%s|r\n%s",
         stats.total or 0, stats.profitable or 0,
         CraftSignColor(stats.best), FormatMoney(stats.best or 0),
-        isActive and "|cff00ff00[已筛选该专业]|r 再次点击可取消" or "点击右下按钮只看该专业"
+        isActive and "|cff00ff00[已筛选该专业]|r 再次点击可取消" or "点击右上角按钮只看该专业"
       )
       list:Add({
         title = string.format("%s %s", isActive and "|cff00ff00►|r" or "|cffffd100•|r", WoWF_CraftArb.ProfessionNames[stats.key] or stats.key),
@@ -4866,6 +4861,7 @@ local function RenderTabForeverAndNews()
   local recProfs = (spec and spec.recommendedProfs) or ""
   local playerProfs = GetPlayerProfessions()
   local isMatchMode = (state.featureFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
+  local profCount = #(Data.professions or {})
   local toggle = FilterToggle("featureFilter", {
     {
       value = "MATCH",
@@ -4875,13 +4871,13 @@ local function RenderTabForeverAndNews()
     {
       value = "ALL",
       btnLabel = "仅看当前角色匹配",
-      desc = "当前筛选: 全部无限服特色玩法与 12 大专业",
+      desc = string.format("当前筛选: 全部无限服特色玩法与 %d 大专业", profCount),
     },
   })
 
   list:Add({
     title = "|cff00ffcc[特色&专业] 无限服专属玩法与 1-300 专业指南 (" .. toggle.desc .. ")|r",
-    body = "包含《魔兽世界：无限服》专属玩法（舒适睡袋、制皮营地帐篷、经典旧世传承点数推荐、遭劫的板条箱等）、12 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营/专业且未完成的特色玩法（已完成睡袋或非制皮帐篷将自动隐藏），以及当前专精推荐专业。",
+    body = string.format("包含《魔兽世界：无限服》专属玩法（舒适睡袋、制皮营地帐篷、经典旧世传承点数推荐、遭劫的板条箱等）、%d 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营/专业且未完成的特色玩法（已完成睡袋或非制皮帐篷将自动隐藏），以及当前专精推荐专业。", profCount),
     theme = "legacy",
     action = toggle.action,
   })
@@ -5568,7 +5564,7 @@ local function CreateMinimapButton()
     end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("|cff00ff00左键点击:|r 打开/关闭百科主窗口")
-    GameTooltip:AddLine("|cff00ff00右键点击:|r 立即刷新当前角色智能匹配")
+    GameTooltip:AddLine("|cff00ff00右键点击:|r 打开主窗口并切换到[智能匹配]")
     GameTooltip:AddLine("|cffaaaaaa按住左键拖拽可移动小地图图标位置|r")
     GameTooltip:Show()
   end)
@@ -5677,6 +5673,13 @@ SLASH_WOWF1 = "/wowf"
 SLASH_WOWF2 = "/wowfio"
 SlashCmdList["WOWF"] = function(msg)
   local cmd = string.lower(string.gsub(msg or "", "^%s*(.-)%s*$", "%1"))
+  if cmd == "help" or cmd == "?" then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 可用斜杠子命令:")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf|r — 打开智能匹配仪表盘")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf route|r — 升级路线   |cffffd100/wowf class|r — 职业与天赋   |cffffd100/wowf macro|r — 一键宏库")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf dungeon|r — 地下城百科   |cffffd100/wowf news|r — 专业&无限特色   |cffffd100/wowf cmd|r — 常用命令   |cffffd100/wowf arb|r — 制造套利")
+    return
+  end
   state.autoFollow = true
   local def = SLASH_TO_TAB[cmd] or TAB_DEFS[1]
   if def.onSlash then def.onSlash() end
