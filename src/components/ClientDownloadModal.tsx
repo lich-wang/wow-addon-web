@@ -94,7 +94,7 @@ export const ClientDownloadModal: React.FC<ClientDownloadModalProps> = ({ isOpen
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>下载魔兽插件管理器客户端</span>
+                <span>下载巫妖王的无限精选插件客户端</span>
                 <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-1">
                   {isLoading ? (
                     <>

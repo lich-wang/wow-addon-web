@@ -2,7 +2,7 @@
 name = "wow-agent"
 version = "1.0.0"
 edition = "2021"
-description = "High-performance native bridge agent for WoW Web Addon Manager"
+description = "High-performance native bridge agent for 巫妖王的无限精选插件"
 authors = ["lich-wang"]
 
 [dependencies]

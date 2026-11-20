@@ -277,47 +277,170 @@ async function processSBF() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. EasyAuction (无限服拍卖行助手，上游自带简体中文)
+// 2. Blackthornes Tradeskills (BT)
 // ---------------------------------------------------------------------------
-async function processEasyAuction() {
-  // 兜底地址仅在「CurseForge 查询失败 + 本地无上游缓存」的首次运行时使用；
-  // 有缓存时优先复用缓存，避免旧兜底地址把较新的缓存覆盖成旧版
-  const fallbackUrl = 'https://edge.forgecdn.net/files/9695/475/EasyAuction-V20261119.3.zip';
-  // 该项目同时发布 3.80.2 (Titan Reforged, 81212) 与 1.60.1 (无限服 Forever, 88568) 两套包，
-  // 必须限定包含无限服 Flavor 的文件，避免把不兼容的 Titan Reforged 包分发给无限服玩家
-  const latest = await getLatestCurseForgeFile(
-    1595608,
-    (name, file) =>
-      /^EasyAuction-V?[\d.]+\.zip$/i.test(name) && (file?.gameVersionTypeIds ?? []).includes(FOREVER_GAME_VERSION_TYPE_ID)
-  );
-
-  const cacheName = 'easyauction.zip';
-  const cachePath = path.join(UPSTREAM_CACHE_DIR, cacheName);
-  const sourcePath = `${cachePath}.source`;
-
-  const outPath = path.join(OUTPUT_DIR, 'easyauction.zip');
-  // 上游为专有许可协议，因此这里只做原样分发（不重建 ZIP、不改写 TOC / Lua）
-  const writeOutput = buf => fs.writeFileSync(outPath, buf);
-
-  let sourceUrl;
+async function processBlackthornes() {
+  let url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.21.0/Blackthornes_TS-v1.21.0-forever.zip';
+  let tag = 'v1.21.0';
+  const latest = await getLatestGitHubRelease('Blackthornes/Blackthornes_Tradeskills', name => name.endsWith('-forever.zip') || name.endsWith('.zip'));
   if (latest?.url) {
-    const buf = await downloadBuffer(latest.url, cacheName);
-    writeOutput(buf);
-    sourceUrl = buf.sourceUrl || latest.url;
-  } else if (fs.existsSync(cachePath)) {
-    console.log(`[Cache Fallback] CurseForge query failed, using cached upstream: ${cachePath}`);
-    const buf = fs.readFileSync(cachePath);
-    writeOutput(buf);
-    sourceUrl = fs.existsSync(sourcePath) ? fs.readFileSync(sourcePath, 'utf-8').trim() : 'cache://unknown';
-  } else {
-    const buf = await downloadBuffer(fallbackUrl, cacheName);
-    writeOutput(buf);
-    sourceUrl = buf.sourceUrl || fallbackUrl;
+    url = latest.url;
+    tag = latest.tag;
   }
-  console.log(`[✓] easyauction.zip saved (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(2)} MB)`);
 
-  const zip = await JSZip.loadAsync(fs.readFileSync(outPath));
-  recordBundledVersion('easyauction', await readTocVersion(zip, 'EasyAuction/EasyAuction.toc'), sourceUrl);
+  const outPath = path.join(OUTPUT_DIR, 'blackthornes-tradeskills.zip');
+  const buf = await downloadBuffer(url, 'blackthornes-tradeskills.zip');
+  const zip = await JSZip.loadAsync(buf);
+
+  console.log(`Injecting clean 100% complete zhCN for Blackthornes Tradeskills ${tag}...`);
+
+  // Targeted fixes dictionary (ensuring PR changes are always applied even if upstream has new version)
+  const BT_TARGETED_FIXES = {
+    "Made for": "制造成本",
+    "Train Artisan %s": "学习大师级%s",
+    "Learn Artisan %s": "学习大师级%s",
+    "Start with %s in %s. Catch the four rare fish he asks for. Then he teaches you Artisan %s.": "先去%2$s找%1$s。钓到他要的四条稀有鱼。然后他会教你大师级%3$s。",
+    "%s %s: %s%s. %s.": "%s %s：%s%s。%s。",
+    "Deals: Craftsman's Writs": "划算货：工匠文书",
+    "Craftsman's Writ: %s": "工匠文书：%s",
+    "Craftsman's Writs": "工匠文书",
+    "Deals: Merchant's Favor": "划算货：商人的青睐",
+    "Merchant's Favor": "商人的青睐",
+    "Waylaid Crate: %s": "遭劫的货物：%s",
+    "WAYLAID CRATE": "遭劫的货物",
+    "All bought. Fill the crates and take them to the Supply Officer.": "都买好了。装满箱子，交给军需官。",
+    // Enchanting material fallback names
+    "Strange Dust": "奇异之尘",
+    "Soul Dust": "灵魂之尘",
+    "Vision Dust": "幻象之尘",
+    "Dream Dust": "梦境之尘",
+    "Illusion Dust": "幻影之尘",
+    "Lesser Magic Essence": "次级魔法精华",
+    "Greater Magic Essence": "强效魔法精华",
+    "Lesser Astral Essence": "次级星界精华",
+    "Greater Astral Essence": "强效星界精华",
+    "Lesser Mystic Essence": "次级秘法精华",
+    "Greater Mystic Essence": "强效秘法精华",
+    "Lesser Nether Essence": "次级虚空精华",
+    "Greater Nether Essence": "强效虚空精华",
+    "Lesser Eternal Essence": "次级不灭精华",
+    "Greater Eternal Essence": "强效不灭精华",
+    "Small Glimmering Shard": "小块微光碎片",
+    "Large Glimmering Shard": "大块微光碎片",
+    "Small Glowing Shard": "小块闪光碎片",
+    "Large Glowing Shard": "大块闪光碎片",
+    "Small Radiant Shard": "小块强光碎片",
+    "Large Radiant Shard": "大块强光碎片",
+    "Small Brilliant Shard": "小块魔光碎片",
+    "Large Brilliant Shard": "大块魔光碎片",
+    "Nexus Crystal": "连结水晶",
+  };
+
+  const zhFile = zip.file('Blackthornes_TS/Locale/zhCN.lua');
+  if (zhFile) {
+    let zh = await zhFile.async('string');
+    for (const [enKey, zhVal] of Object.entries(BT_TARGETED_FIXES)) {
+      const pattern = new RegExp(`L\\["${enKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\]\\s*=\\s*"([^"\\\\]|\\\\.)*"`);
+      if (pattern.test(zh)) {
+        zh = zh.replace(pattern, `L[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`);
+      } else {
+        zh += `\nL[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`;
+      }
+    }
+    zip.file('Blackthornes_TS/Locale/zhCN.lua', zh);
+    // Keep scripts/locales/bt_zhCN.lua in sync
+    fs.writeFileSync(path.resolve('scripts/locales/bt_zhCN.lua'), zh, 'utf-8');
+  }
+
+  // Localize enchanting material names in Logic/Disenchant.lua
+  const deFile = zip.file('Blackthornes_TS/Logic/Disenchant.lua');
+  if (deFile) {
+    let deText = await deFile.async('string');
+    deText = deText
+      .replace(
+        /for _, material in ipairs\(Disenchant\.MATERIALS\) do\r?\n\s*MATERIAL_NAME\[material\.itemID\] = material\.name\r?\nend/,
+        'for _, material in ipairs(Disenchant.MATERIALS) do\n    material.name = L[material.name]\n    MATERIAL_NAME[material.itemID] = material.name\nend'
+      )
+      .replace(
+        /function Disenchant:MaterialName\(itemID\)\r?\n\s*return MATERIAL_NAME\[itemID\]\r?\nend/,
+        'function Disenchant:MaterialName(itemID)\n    return MATERIAL_NAME[itemID] and self:ItemName(itemID) or nil\nend'
+      );
+    zip.file('Blackthornes_TS/Logic/Disenchant.lua', deText);
+  }
+
+  // Patch money unit symbols to 金/银/铜
+  const utilFile = zip.file('Blackthornes_TS/Core/Util.lua');
+  if (utilFile) {
+    let utilText = await utilFile.async('string');
+    utilText = utilText
+      .replace('local GOLD_SUFFIX   = "|cffffd700g|r"', 'local GOLD_SUFFIX   = "|cffffd700金|r"')
+      .replace('local SILVER_SUFFIX = "|cffc7c7cfs|r"', 'local SILVER_SUFFIX = "|cffc7c7cf银|r"')
+      .replace('local COPPER_SUFFIX = "|cffeda55fc|r"', 'local COPPER_SUFFIX = "|cffeda55f铜|r"')
+      .replace('g, s, c = "g", "s", "c"', 'g, s, c = "金", "银", "铜"');
+    zip.file('Blackthornes_TS/Core/Util.lua', utilText);
+  }
+
+  const peFile = zip.file('Blackthornes_TS/UI/PriceEditor.lua');
+  if (peFile) {
+    let peText = await peFile.async('string');
+    peText = peText
+      .replace('Coin(48, 214748, "|cffffd700g|r")', 'Coin(48, 214748, "|cffffd700金|r")')
+      .replace('Coin(30, 99, "|cffc7c7cfs|r")', 'Coin(30, 99, "|cffc7c7cf银|r")')
+      .replace('Coin(30, 99, "|cffeda55fc|r")', 'Coin(30, 99, "|cffeda55f铜|r")');
+    zip.file('Blackthornes_TS/UI/PriceEditor.lua', peText);
+  }
+
+  const tpFile = zip.file('Blackthornes_TS/UI/Tab_Prices.lua');
+  if (tpFile) {
+    let tpText = await tpFile.async('string');
+    tpText = tpText
+      .replace('Coin("gold", 44, 214748, "|cffffd700g|r")', 'Coin("gold", 44, 214748, "|cffffd700金|r")')
+      .replace('Coin("silver", 28, 99, "|cffc7c7cfs|r")', 'Coin("silver", 28, 99, "|cffc7c7cf银|r")')
+      .replace('Coin("copper", 28, 99, "|cffeda55fc|r")', 'Coin("copper", 28, 99, "|cffeda55f铜|r")');
+    zip.file('Blackthornes_TS/UI/Tab_Prices.lua', tpText);
+  }
+
+  const ggFile = zip.file('Blackthornes_TS/UI/GoldGoal.lua');
+  if (ggFile) {
+    let ggText = await ggFile.async('string');
+    ggText = ggText.replace('unit:SetText("g")', 'unit:SetText("金")');
+    zip.file('Blackthornes_TS/UI/GoldGoal.lua', ggText);
+  }
+
+  const tsFile = zip.file('Blackthornes_TS/UI/Tab_Settings.lua');
+  if (tsFile) {
+    let tsText = await tsFile.async('string');
+    tsText = tsText.replace('AddUnit(goalRow, widgets.goldGoal, "g")', 'AddUnit(goalRow, widgets.goldGoal, "金")');
+    zip.file('Blackthornes_TS/UI/Tab_Settings.lua', tsText);
+  }
+
+  const themeFile = zip.file('Blackthornes_TS/UI/Theme.lua');
+  if (themeFile) {
+    let themeText = await themeFile.async('string');
+    if (themeText.includes('[[Fonts\\FRIZQT__.TTF]]')) {
+      themeText = themeText.replace('[[Fonts\\FRIZQT__.TTF]]', '(STANDARD_TEXT_FONT or [[Fonts\\ARKai_T.TTF]])');
+      zip.file('Blackthornes_TS/UI/Theme.lua', themeText);
+    }
+  }
+
+  const tocFile = zip.file('Blackthornes_TS/Blackthornes_TS.toc');
+  if (tocFile) {
+    let toc = await tocFile.async('string');
+    if (!toc.includes('Title-zhCN:')) {
+      toc = toc
+        .replace(/## Title: (.*)/, '## Title: $1\n## Title-zhCN: |cff00ff00[商业]|r Blackthornes Tradeskills (黑石交易技能)')
+        .replace(/## Notes: (.*)/, '## Notes: $1\n## Notes-zhCN: 专为无限服打造的专业制造与拍卖行全能管理插件，实时计算配方利润、排队制造与防亏损上架。');
+      if (!toc.includes('Locale\\zhCN.lua')) {
+        toc = toc.replace('Locale\\deDE.lua', 'Locale\\deDE.lua\nLocale\\zhCN.lua');
+      }
+      zip.file('Blackthornes_TS/Blackthornes_TS.toc', toc);
+    }
+  }
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  fs.writeFileSync(outPath, outBuf);
+  recordBundledVersion('blackthornes-tradeskills', await readTocVersion(zip, 'Blackthornes_TS/Blackthornes_TS.toc') || tag, url);
+  console.log(`[✓] blackthornes-tradeskills.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -737,7 +860,7 @@ async function processSpellActivationOverlay() {
 }
 
 // ---------------------------------------------------------------------------
-// 11. WoWF Companion (wowf.io In-Game Dynamic Guide for WoW Forever)
+// 11. 巫妖王的无限百科 (wowf.io In-Game Dynamic Guide for WoW Forever)
 // ---------------------------------------------------------------------------
 async function processWoWF(questieDbBuf = null) {
   const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl, questieDbBuf);
@@ -801,8 +924,8 @@ async function main() {
     writeBundledVersions();
     return;
   }
-  if (onlyArg === 'easyauction') {
-    await processEasyAuction();
+  if (onlyArg === 'blackthornes' || onlyArg === 'blackthornes-tradeskills') {
+    await processBlackthornes();
     writeBundledVersions();
     return;
   }
@@ -810,7 +933,7 @@ async function main() {
   console.log('=== Fetching & Bundling Curated Addons for wow.lich.tech ===');
   await ensureClientBinaries();
   await processSBF();
-  await processEasyAuction();
+  await processBlackthornes();
   await processIceHUD();
   await processDungeonsForever();
   await processBagnon();

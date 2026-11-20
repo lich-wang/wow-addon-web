@@ -60,7 +60,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
               <div>
                 <span className="text-lg font-bold tracking-tight bg-gradient-to-r from-amber-300 via-amber-200 to-yellow-400 bg-clip-text text-transparent">
-                  WoW Addon Web
+                  巫妖王的无限精选插件
                 </span>
                 <span className="hidden sm:inline-block ml-2 text-xs text-amber-500/80 font-mono px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
                   纯网页端

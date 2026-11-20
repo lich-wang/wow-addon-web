@@ -34,17 +34,18 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     isForeverRecommended: true,
   },
   {
-    id: 'easyauction',
-    name: 'EasyAuction (拍卖行助手)',
-    description: '《魔兽世界》拍卖行一体化助手，适配无限服与正式服！支持全服价格扫描与历史最低价记录、按日/时走势分析，购物清单一键闪卖，背包侧生成「可售清单」并给出定价建议，还能做附魔分解/研磨/选矿收益比价、低价扫货与购买风险提醒，内置专业规划与装备助手。',
-    author: 'JovenCalme（黑科研）',
+    id: 'blackthornes-tradeskills',
+    name: 'Blackthornes Tradeskills (黑石交易技能)',
+    description: '《魔兽世界：无限服》专属商业利器！实时扫描拍卖行计算最高利润配方、排队批量制造、智能购物清单与防亏损一口价上架，内置 3200+ 条精校简体中文。',
+    author: 'Blackthornes',
     category: 'Trade',
     icon: 'Coins',
-    defaultFolderName: 'EasyAuction',
-    latestVersion: bundledVersion('easyauction', '无限服/正式服通用版'),
-    downloadUrl: '/addons/easyauction.zip',
-    homeUrl: 'https://www.curseforge.com/wow/addons/easyauction',
-    gameFlavors: ['forever', 'retail'],
+    defaultFolderName: 'Blackthornes_TS',
+    latestVersion: bundledVersion('blackthornes-tradeskills', 'Forever 中文版'),
+    downloadUrl: '/addons/blackthornes-tradeskills.zip',
+    githubRepo: 'Blackthornes/Blackthornes_Tradeskills',
+    homeUrl: 'https://www.curseforge.com/wow/addons/blackthornes-tradeskills',
+    gameFlavors: ['forever', 'classic', 'vanilla'],
     isForeverRecommended: true,
   },
   {
@@ -166,7 +167,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
   },
   {
     id: 'wowf',
-    name: 'WoWF Companion (wowf.io 无限服智能百科)',
+    name: '巫妖王的无限百科',
     description: '《魔兽世界：无限服》专属游戏内动态百科！实时同步 wowf.io 网站最新数据，根据当前角色的等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键生成职业宏、35大副本（含9大无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱全攻略与最新热修公告。新增「制造套利」页：读取 EasyAuction 行情与角色专业等级，递归折算中间产物（布→布卷→装备）后筛选当前可制作且能盈利的配方，附魔角色还可比价装备分解收益。',
     author: 'lich.tech & wowf.io',
     category: 'QoL',
@@ -204,7 +205,7 @@ function withVersionQuery(url: string, version: string): string {
 }
 
 /**
- * 下载精选插件压缩包并在安装前执行必要的动态同步（如 WoWF Companion 实时同步 wowf.io 数据）
+ * 下载精选插件压缩包并在安装前执行必要的动态同步（如 巫妖王的无限百科 实时同步 wowf.io 数据）
  */
 export async function fetchCuratedAddonZip(
   addon: CuratedAddon,
@@ -285,7 +286,7 @@ export function generateShareManifest(
   installedAddons: { name: string; folderName: string; version: string; interfaceVersion: string }[]
 ): string {
   const data = {
-    app: 'WoW Web Addon Manager',
+    app: '巫妖王的无限精选插件',
     createdAt: new Date().toISOString(),
     total: installedAddons.length,
     addons: installedAddons.map((a) => ({
