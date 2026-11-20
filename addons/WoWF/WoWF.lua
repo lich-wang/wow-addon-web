@@ -5826,7 +5826,7 @@ end
 
 local hasPrintedWelcome = false
 
-eventFrame:SetScript("OnEvent", function(_, event, arg1)
+eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
     LoadPersistedState()
     CreateMinimapButton()
@@ -5885,9 +5885,10 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
       ScheduleRefresh(true, 0.2)
     end
   elseif event == "GET_ITEM_INFO_RECEIVED" or event == "ITEM_DATA_LOAD_RESULT" then
-    if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+    if arg2 == true and mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
       local itemID = tonumber(arg1)
       if itemID and WoWF_CraftArb and WoWF_CraftArb.HasPendingItem and WoWF_CraftArb.HasPendingItem(itemID) then
+        if WoWF_CraftArb.Reset then WoWF_CraftArb.Reset() end
         ScheduleRefresh(true, 0.25)
       end
     end
