@@ -1354,7 +1354,7 @@ local function buildRows(mode, crossOwner)
 end
 
 ---执行一次完整分析
----@param options table { mode = "sell"|"de", profession = key|nil, ownOnly = bool, onlyProfitable = bool,
+---@param options table { mode = "sell"|"de", profession = key|table|nil, ownOnly = bool, onlyProfitable = bool,
 ---                        onlySkillUp = bool, crossOwner = bool, sort = "profit"|"roi", query = string }
 ---@return table[] rows
 ---@return table meta
@@ -1372,10 +1372,30 @@ function Arb.Analyse(options)
   end
   cut = rowCache.cut or DEFAULT_CUT
 
+  local professionFilter
+  if type(options.profession) == "string" and options.profession ~= "" then
+    professionFilter = { [options.profession] = true }
+  elseif type(options.profession) == "table" then
+    local set = {}
+    for _, key in ipairs(options.profession) do
+      if type(key) == "string" and key ~= "" then
+        set[key] = true
+      end
+    end
+    for key, enabled in pairs(options.profession) do
+      if type(key) == "string" and key ~= "" and enabled then
+        set[key] = true
+      end
+    end
+    if next(set) ~= nil then
+      professionFilter = set
+    end
+  end
+
   local rows, professionStats, profitable, hiddenByKeep = {}, {}, 0, 0
   for _, row in ipairs(cache) do
     local keep = true
-    if options.profession and row.professionKey ~= options.profession then keep = false end
+    if professionFilter and not (row.professionKey and professionFilter[row.professionKey]) then keep = false end
     -- 「当前可以制作」：默认只保留当前角色自己学会的配方
     if keep and options.ownOnly ~= false and not row.ownCharacter then keep = false end
     if keep and options.onlyProfitable and not (row.profit and row.profit > 0) then keep = false end
