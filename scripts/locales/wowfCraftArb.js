@@ -336,17 +336,6 @@ local function blackthornesPriceTable()
     local t = db.prices[realm .. "-" .. faction]
     if type(t) == "table" and next(t) ~= nil then return t end
   end
-  if realm ~= "" then
-    local prefix = realm .. "-"
-    for k, t in pairs(db.prices) do
-      if type(k) == "string" and sub(k, 1, #prefix) == prefix and type(t) == "table" and next(t) ~= nil then
-        return t
-      end
-    end
-  end
-  for _, t in pairs(db.prices) do
-    if type(t) == "table" and next(t) ~= nil then return t end
-  end
   return nil
 end
 
@@ -511,8 +500,10 @@ function Arb.SellQuote(itemID)
   local record = btPrices and btPrices[id]
   if type(record) == "table" then
     local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
-    sellCache[id] = { price = price, record = record }
-    return price, record
+    if price and price > 0 then
+      sellCache[id] = { price = price, record = record }
+      return price, record
+    end
   end
   local btApi = blackthornesApi()
   if btApi then
