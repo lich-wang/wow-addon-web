@@ -4936,33 +4936,7 @@ local function RenderTabCraftArb()
     },
   })
 
-  -- 3. 分专业汇总
-  if #(meta.professions or {}) > 0 then
-    for _, stats in ipairs(meta.professions) do
-      local isActive = IsCraftProfessionSelected(stats.key)
-      local body = string.format(
-        "配方 |cffffd100%d|r 条  ·  可盈利 |cff44ff88%d|r 条  ·  最高单次净利润 %s%s|r\n%s",
-        stats.total or 0, stats.profitable or 0,
-        CraftSignColor(stats.best), FormatMoney(stats.best or 0),
-        isActive and "|cff00ff00[已筛选该专业]|r 再次点击可取消" or "点击右上角按钮加入筛选（支持上方下拉框多选）"
-      )
-      list:Add({
-        title = string.format("%s %s", isActive and "|cff00ff00►|r" or "|cffffd100•|r", WoWF_CraftArb.ProfessionNames[stats.key] or stats.key),
-        body = body,
-        theme = isActive and "routeCur" or "info",
-        badge = string.format("%d/%d 盈利", stats.profitable or 0, stats.total or 0),
-        action = {
-          label = isActive and "取消筛选" or "筛选该专业",
-          fn = function()
-            ToggleCraftProfession(stats.key)
-            RefreshUI()
-          end,
-        },
-      })
-    end
-  end
-
-  -- 4. 利润明细（最多 40 条，避免一次创建过多卡片）
+  -- 3. 利润明细（最多 40 条，避免一次创建过多卡片）
   local shown = 0
   for _, row in ipairs(rows) do
     if shown >= 40 then break end
