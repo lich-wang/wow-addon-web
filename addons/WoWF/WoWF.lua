@@ -751,6 +751,11 @@ local function OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
   local displayLabel = (name and name ~= "") and name or displayZone
 
   if not numX or not numY then
+    activePinState = nil
+    if C_Map and C_Map.ClearUserWaypoint then
+      pcall(C_Map.ClearUserWaypoint)
+    end
+    UpdateWorldMapHighlightPin()
     if mapID then
       if C_Map and C_Map.OpenWorldMap then
         pcall(C_Map.OpenWorldMap, mapID)
@@ -916,16 +921,17 @@ local function FormatNpcMapLink(zone, npc, x, y, opts)
     locPrefix = pText
   end
 
+  local navZone = (zText ~= "") and zText or ((locPrefix ~= "") and locPrefix or pText)
   local linkPart
   if numX and numY and mapID then
-    local safeZone = SanitizeLinkField(locPrefix ~= "" and locPrefix or ((zText ~= "") and zText or nText))
+    local safeZone = SanitizeLinkField((locPrefix ~= "" and not opts.omitZone) and locPrefix or (navZone ~= "" and navZone or nText))
     local safeLabel = SanitizeLinkField((nText ~= "") and nText or ((locPrefix ~= "") and locPrefix or zText))
     linkPart = string.format(
       "|cff00ffcc|Hwowfmap:%d:%.1f:%.1f:%s:%s|h[%s]|h|r",
       mapID, numX, numY, safeZone, safeLabel, displayName
     )
   elseif nText ~= "" then
-    local safeZone = SanitizeLinkField(locPrefix ~= "" and locPrefix or zText)
+    local safeZone = SanitizeLinkField(navZone)
     local safeLabel = SanitizeLinkField(nText)
     linkPart = string.format(
       "|cff00ffcc|Hwowfnpc:%s:%s|h[%s]|h|r",
@@ -990,6 +996,16 @@ local function DetectZoneInPrefix(prefixText, fallbackZone)
   return fallbackZone or "", nil
 end
 
+local ZH_NPC_DELIMITERS = { "：", "、", "，", "（", "）", "。", "；" }
+
+local function HasNpcDelimiter(s)
+  if string.find(s, "[:/|,%()%.;\n]") then return true end
+  for _, delim in ipairs(ZH_NPC_DELIMITERS) do
+    if string.find(s, delim, 1, true) then return true end
+  end
+  return false
+end
+
 local function LinkifyInlineCoords(text, defaultZone, defaultLabel, opts)
   if not text or text == "" then return "" end
   local linkifyNpc = opts and opts.linkifyNpc == true
@@ -1017,7 +1033,7 @@ local function LinkifyInlineCoords(text, defaultZone, defaultLabel, opts)
         if zEndAbs >= lastPos and zEndAbs < s then
           local npcSeg = string.sub(out, zEndAbs + 1, s - 1)
           local npcTrimmed = string.gsub(npcSeg, "^%s*(.-)%s*$", "%1")
-          if npcTrimmed ~= "" and #npcTrimmed <= 48 and not string.find(npcTrimmed, "[：:/|、，,（）%(%)。；;\n]") then
+          if npcTrimmed ~= "" and #npcTrimmed <= 48 and not HasNpcDelimiter(npcTrimmed) then
             local prefixBeforeNpc = string.sub(out, lastPos, zEndAbs)
             local npcLink = FormatNpcMapLink(inferredZone, npcTrimmed, nx, ny, { omitZone = true })
             table.insert(result, prefixBeforeNpc)
@@ -1509,12 +1525,23 @@ local function ResolveQuestChainFromQuestieDB(q)
     if q.hasPrereq and firstSt then
       local firstInfo = GetQuestieQuestInfo(firstSt.id)
       if firstInfo and firstInfo.minLevel then q.minLevel = firstInfo.minLevel end
-      q.npc = firstSt.npc ~= "" and firstSt.npc or q.npc
-      q.startItemId = firstSt.startItemId or q.startItemId
-      q.startItemName = firstSt.startItemName or q.startItemName
-      q.zone = firstSt.zone ~= "" and firstSt.zone or q.zone
-      q.x = firstSt.x or q.x
-      q.y = firstSt.y or q.y
+      if firstSt.startItemId and (not firstSt.npc or firstSt.npc == "") then
+        q.startItemId = firstSt.startItemId
+        q.startItemName = firstSt.startItemName
+        q.npc = ""
+        q.x = nil
+        q.y = nil
+        q.zone = firstSt.zone ~= "" and firstSt.zone or q.zone
+      else
+        q.npc = firstSt.npc ~= "" and firstSt.npc or q.npc
+        if firstSt.npc and firstSt.npc ~= "" then
+          q.startItemId = nil
+          q.startItemName = nil
+        end
+        q.zone = firstSt.zone ~= "" and firstSt.zone or q.zone
+        q.x = firstSt.x or q.x
+        q.y = firstSt.y or q.y
+      end
     else
       q.npc = mainInfo.npc ~= "" and mainInfo.npc or q.npc
       q.startItemId = mainInfo.startItemId or q.startItemId
