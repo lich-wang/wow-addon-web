@@ -5036,11 +5036,13 @@ end
 
 local headerControls = {}
 local refreshTimerPending = false
-local pendingPreserveScroll = false
+local pendingPreserveScroll = nil
 
 local function ScheduleRefresh(preserveScroll, delay)
   if not mainFrame or not mainFrame:IsShown() then return end
-  if preserveScroll then
+  if preserveScroll == false then
+    pendingPreserveScroll = false
+  elseif preserveScroll == true and pendingPreserveScroll == nil then
     pendingPreserveScroll = true
   end
   if refreshTimerPending then return end
@@ -5048,13 +5050,13 @@ local function ScheduleRefresh(preserveScroll, delay)
     refreshTimerPending = true
     C_Timer.After(delay or 0.2, function()
       refreshTimerPending = false
-      local ps = pendingPreserveScroll
-      pendingPreserveScroll = false
+      local ps = (pendingPreserveScroll == true)
+      pendingPreserveScroll = nil
       RefreshUI(ps)
     end)
   else
-    local ps = pendingPreserveScroll
-    pendingPreserveScroll = false
+    local ps = (pendingPreserveScroll == true)
+    pendingPreserveScroll = nil
     RefreshUI(ps)
   end
 end
@@ -5551,6 +5553,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
   else
     if mainFrame and mainFrame:IsShown() then
+      SyncPlayerCharacter()
       ScheduleRefresh(false, 0.2)
     end
   end
