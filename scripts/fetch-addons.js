@@ -282,7 +282,7 @@ async function processSBF() {
 async function processBlackthornes() {
   let url = 'https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.21.0/Blackthornes_TS-v1.21.0-forever.zip';
   let tag = 'v1.21.0';
-  const latest = await getLatestGitHubRelease('Blackthornes/Blackthornes_Tradeskills', name => name.endsWith('-forever.zip') || name.endsWith('.zip'));
+  const latest = await getLatestGitHubRelease('Blackthornes/Blackthornes_Tradeskills', name => name.endsWith('-forever.zip'));
   if (latest?.url) {
     url = latest.url;
     tag = latest.tag;
@@ -336,21 +336,39 @@ async function processBlackthornes() {
     "Nexus Crystal": "连结水晶",
   };
 
-  const zhFile = zip.file('Blackthornes_TS/Locale/zhCN.lua');
-  if (zhFile) {
-    let zh = await zhFile.async('string');
-    for (const [enKey, zhVal] of Object.entries(BT_TARGETED_FIXES)) {
-      const pattern = new RegExp(`L\\["${enKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\]\\s*=\\s*"([^"\\\\]|\\\\.)*"`);
-      if (pattern.test(zh)) {
-        zh = zh.replace(pattern, `L[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`);
-      } else {
-        zh += `\nL[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`;
+  const localZhPath = path.resolve('scripts/locales/bt_zhCN.lua');
+  const localZhContent = fs.existsSync(localZhPath) ? fs.readFileSync(localZhPath, 'utf-8') : '';
+  const localOverrides = {};
+  if (localZhContent) {
+    const entryRe = /^L\["((?:[^"\\]|\\.)*)"\]\s*=\s*"((?:[^"\\]|\\.)*)"/gm;
+    let m;
+    while ((m = entryRe.exec(localZhContent)) !== null) {
+      try {
+        const k = JSON.parse(`"${m[1]}"`);
+        const v = JSON.parse(`"${m[2]}"`);
+        localOverrides[k] = v;
+      } catch {
+        // Ignore malformed Lua escape sequences
       }
     }
-    zip.file('Blackthornes_TS/Locale/zhCN.lua', zh);
-    // Keep scripts/locales/bt_zhCN.lua in sync
-    fs.writeFileSync(path.resolve('scripts/locales/bt_zhCN.lua'), zh, 'utf-8');
   }
+
+  const mergedFixes = { ...localOverrides, ...BT_TARGETED_FIXES };
+  const zhFile = zip.file('Blackthornes_TS/Locale/zhCN.lua');
+  let zh = zhFile ? await zhFile.async('string') : localZhContent;
+  if (!zh) {
+    zh = 'local _, ns = ...\nlocal L = ns.L\n\nlocal ok, locale = pcall(function() return GetLocale() end)\nif not (ok and locale == "zhCN") then return end\n';
+  }
+  for (const [enKey, zhVal] of Object.entries(mergedFixes)) {
+    const pattern = new RegExp(`L\\["${enKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\]\\s*=\\s*"(?:[^"\\\\]|\\\\.)*"`);
+    const replacementLine = `L[${JSON.stringify(enKey)}] = ${JSON.stringify(zhVal)}`;
+    if (pattern.test(zh)) {
+      zh = zh.replace(pattern, () => replacementLine);
+    } else {
+      zh += `\n${replacementLine}`;
+    }
+  }
+  zip.file('Blackthornes_TS/Locale/zhCN.lua', zh);
 
   // Localize enchanting material names in Logic/Disenchant.lua
   const deFile = zip.file('Blackthornes_TS/Logic/Disenchant.lua');
