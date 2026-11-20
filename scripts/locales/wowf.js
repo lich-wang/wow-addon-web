@@ -3852,12 +3852,15 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
 /**
  * 生成 WoWF/WoWF.toc 文件内容（仅兼容无限服 Interface: 16001）
  */
-function generateWoWFToc(version, updatedAt) {
+function generateWoWFToc(version, updatedAt, dataset) {
+  const dungeons = Array.isArray(dataset?.dungeons) ? dataset.dungeons : [];
+  const totalDungeons = dungeons.length;
+  const newDungeons = dungeons.filter(d => d?.isNew).length;
   return `## Interface: 16001
 ## Title: WoWF Companion (wowf.io 无限服智能百科)
 ## Title-zhCN: |cff00ffcc[无限百科]|r WoWF Companion (wowf.io 动态指南)
 ## Notes: In-game smart companion for wowf.io on WoW Forever (16001). Dynamically matches leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
-## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、35大副本（含9大无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告，并用 EasyAuction 行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
+## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
 ## OptionalDeps: EasyAuction
 ## Author: lich.tech & wowf.io
 ## Version: ${version}
@@ -3906,7 +3909,7 @@ export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbB
   const fullVersion = dataset.meta.version || `${WOWF_VERSION} + DB v2026.11.15`;
 
   const zip = new JSZip();
-  const tocContent = generateWoWFToc(fullVersion, dataset.meta.updatedAt);
+  const tocContent = generateWoWFToc(fullVersion, dataset.meta.updatedAt, dataset);
   const dataLuaContent = generateWoWFDataLua(dataset);
 
   zip.file('WoWF/WoWF.toc', tocContent);
