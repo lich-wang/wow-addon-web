@@ -7,16 +7,21 @@ globals = {
   "WoWF_CraftArb",
   "SLASH_WOWF1",
   "SLASH_WOWF2",
+  "SlashCmdList",
+  "BlackthornesTSDB",
+  _G = {
+    fields = {
+      BlackthornesTSDB = { other_fields = true },
+    },
+  },
 }
 
 read_globals = {
-  "_G",
   "UIParent",
   "Minimap",
   "WorldMapFrame",
   "GameTooltip",
   "DEFAULT_CHAT_FRAME",
-  "SlashCmdList",
   "CreateFrame",
   "C_Timer",
   "C_TradeSkillUI",
@@ -26,7 +31,6 @@ read_globals = {
   "QuestieDB",
   "EasyAuctionAPI",
   "EasyAuctionDB12",
-  "BlackthornesTSDB",
 }
 
 ignore = {
@@ -34,6 +38,7 @@ ignore = {
   "211", -- unused local variable
   "212", -- unused argument
   "213", -- unused loop variable
+  "231", -- variable is never accessed
   "311", -- value assigned to local variable is unused
   "411", -- shadowing local variable
   "412", -- shadowing argument
