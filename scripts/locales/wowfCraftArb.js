@@ -951,7 +951,7 @@ local function priceDemand(demand)
   local prices, total, unpriced, short = {}, 0, {}, false
   for itemID, qty in pairs(demand) do
     local unit, source, detail = Arb.PriceFor(itemID, qty)
-    prices[itemID] = { unit = unit, source = source, amount = qty, shortfall = detail and detail.shortfall == true }
+    prices[itemID] = { unit = unit, source = source, amount = qty, shortfall = (detail and detail.shortfall) ~= nil }
     if unit then
       total = total + unit * qty
       if detail and detail.shortfall then short = true end
@@ -991,9 +991,10 @@ local function quotePlan(plan, batches)
   return cost, #unpriced == 0 and cost ~= nil, short
 end
 
----按结构决策展开一条配方：产出 yield 件，递归把可自产的原料替换成子配方
+---按结构决策展开一条配方：产出 yield 件，递归把可自产的原料替换成子配方（按实际批次数 factor 比较直购与自产）
 local function expandPlan(recipe, ctx)
-  local key = "p:" .. tostring(recipe.id) .. ":" .. tostring(ctx.depth) .. ":" .. pathKey(ctx.path)
+  local factor = max(1, ctx.factor or 1)
+  local key = "p:" .. tostring(recipe.id) .. ":" .. tostring(factor) .. ":" .. tostring(ctx.depth) .. ":" .. pathKey(ctx.path)
   local cached = ctx.expanded[key]
   if cached ~= nil then return cached or nil end
   ctx.expanded[key] = false
@@ -1014,10 +1015,11 @@ local function expandPlan(recipe, ctx)
     return candCost < bestCost
   end
 
-  local function resolve(itemID, qty)
+  local function resolve(itemID, baseQty)
+    local qty = baseQty * factor
     local buy, _, buyDetail = Arb.PriceFor(itemID, qty)
     local buyComplete = buy ~= nil
-    local buyShort = buyDetail and buyDetail.shortfall == true or false
+    local buyShort = (buyDetail and buyDetail.shortfall) ~= nil
     local buyTotal = buy and (buy * qty) or nil
     local buyRank, buyCost = optionRank(buyComplete, buyShort, buyTotal)
 
@@ -1027,12 +1029,13 @@ local function expandPlan(recipe, ctx)
       if producers then
         childCtx.path[itemID] = true
         for _, producer in ipairs(producers) do
+          local subMinYield = max(1, tonumber(producer.qMin) or 1)
+          local batches = ceil(qty / subMinYield)
           local sub = expandPlan(producer, {
-            depth = childCtx.depth - 1, path = childCtx.path, est = ctx.est, expanded = ctx.expanded,
+            depth = childCtx.depth - 1, factor = batches, path = childCtx.path, est = ctx.est, expanded = ctx.expanded,
             index = ctx.index, owner = ctx.owner, crossOwner = ctx.crossOwner,
           })
           if sub then
-            local batches = ceil(qty / sub.minYield)
             local batchTotal, complete, short = quotePlan(sub, batches)
             local rank, cost = optionRank(complete, short, batchTotal)
             if not made or betterOption(rank, cost, made.rank, made.cost) then
@@ -1045,19 +1048,20 @@ local function expandPlan(recipe, ctx)
     end
     -- 优先可买齐且完整报价的方案；同等级时比较实际所需批次总成本与直购总成本
     if made and betterOption(made.rank, made.cost, buyRank, buyCost) then
-      return { itemID = itemID, qty = qty, craft = made.plan, crossOwner = made.plan.recipe.owner ~= ctx.owner }
+      return { itemID = itemID, qty = baseQty, craft = made.plan, crossOwner = made.plan.recipe.owner ~= ctx.owner }
     end
-    return { itemID = itemID, qty = qty }
+    return { itemID = itemID, qty = baseQty }
   end
 
   for _, reagent in ipairs(recipe.reagents or {}) do
     plan.ingredients[#plan.ingredients + 1] = resolve(reagent.id, reagent.qty)
   end
   for _, slot in ipairs(recipe.slots or {}) do
-    local quantity = max(1, tonumber(slot.qty) or 1)
+    local baseQuantity = max(1, tonumber(slot.qty) or 1)
+    local quantity = baseQuantity * factor
     local best
     for _, candidate in ipairs(slot.candidates or {}) do
-      local option = resolve(candidate, quantity)
+      local option = resolve(candidate, baseQuantity)
       local rank, cost
       if option.craft then
         local batches = ceil(quantity / option.craft.minYield)
@@ -1065,7 +1069,7 @@ local function expandPlan(recipe, ctx)
         rank, cost = optionRank(complete, short, batchTotal)
       else
         local unit, _, detail = Arb.PriceFor(candidate, quantity)
-        rank, cost = optionRank(unit ~= nil, detail and detail.shortfall == true, unit and (unit * quantity) or nil)
+        rank, cost = optionRank(unit ~= nil, (detail and detail.shortfall) ~= nil, unit and (unit * quantity) or nil)
       end
       if not best or betterOption(rank, cost, best.rank, best.cost) then
         best = { option = option, rank = rank, cost = cost }
@@ -1111,8 +1115,8 @@ local function describePlan(plan, factor, prices, leaves, leafIndex, crafts)
     if ingredient.craft then
       local minYield = ingredient.craft.minYield or ingredient.craft.yield or 1
       local batches = ceil(qty / minYield)
-      local batchCost = ingredient.craft.total and (ingredient.craft.total * batches) or nil
-      local unit = ingredient.craft.total and (ingredient.craft.total / ingredient.craft.yield) or nil
+      local batchCost = planCost(ingredient.craft, batches, prices)
+      local unit = batchCost and (batchCost / (batches * ingredient.craft.yield)) or nil
       tinsert(crafts, {
         itemID = ingredient.itemID, quantity = qty, batches = batches,
         recipe = ingredient.craft.recipe, crossOwner = ingredient.crossOwner == true,
