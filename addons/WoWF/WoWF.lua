@@ -847,7 +847,8 @@ local function LinkifyInlineCoords(text, defaultZone, defaultLabel)
       local contextStart = math.max(1, s - 60)
       local recentText = string.sub(out, contextStart, s - 1)
       local inferredZone = DetectZoneInPrefix(recentText, defaultZone)
-      table.insert(result, FormatCoordLink(inferredZone, defaultLabel or inferredZone, nx, ny, false))
+      local link = FormatCoordLink(inferredZone, defaultLabel or inferredZone, nx, ny, false)
+      table.insert(result, (link ~= "") and link or string.sub(out, s, e))
     else
       table.insert(result, string.sub(out, s, e))
     end
@@ -1703,12 +1704,14 @@ local function RecomputeVisibleStepDepths(orderedEntries, firstVisibleIdx, hasPr
       if type(st.reqAll) == "table" then
         for _, pid in ipairs(st.reqAll) do
           local npid = tonumber(pid)
-          if npid and visibleById[npid] then table.insert(parentIds, npid) end
+          local absPid = npid and math.abs(npid) or nil
+          if absPid and absPid > 0 and visibleById[absPid] then table.insert(parentIds, absPid) end
         end
       end
       if #parentIds == 0 then
         local npid = tonumber(st.preId)
-        if npid and visibleById[npid] then table.insert(parentIds, npid) end
+        local absPid = npid and math.abs(npid) or nil
+        if absPid and absPid > 0 and visibleById[absPid] then table.insert(parentIds, absPid) end
       end
       for _, pid in ipairs(parentIds) do
         local pd = depths[pid]
@@ -1951,15 +1954,17 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, 
         if type(st.reqAll) == "table" and #st.reqAll > 1 then
           for _, pid in ipairs(st.reqAll) do
             local npid = tonumber(pid)
-            if npid and stepById[npid] then
-              local pd = emitStep(npid)
+            local absPid = npid and math.abs(npid) or nil
+            if absPid and absPid > 0 and stepById[absPid] then
+              local pd = emitStep(absPid)
               if pd > maxParentDepth then maxParentDepth = pd end
             end
           end
         else
           local npid = tonumber(st.preId)
-          if npid and stepById[npid] then
-            maxParentDepth = emitStep(npid)
+          local absPid = npid and math.abs(npid) or nil
+          if absPid and absPid > 0 and stepById[absPid] then
+            maxParentDepth = emitStep(absPid)
           end
         end
         visiting[sid] = nil
