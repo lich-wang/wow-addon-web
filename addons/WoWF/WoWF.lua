@@ -3430,12 +3430,267 @@ local function LayoutCard(card, yOffset, titleText, bodyText, borderColor, bgCol
 end
 
 -- ============================================================================
--- 5. 六大核心标签页渲染器
+-- 5. 核心标签页共享渲染工具 (CardList / Band / ClassRun / QuestGroup / Filter)
 -- ============================================================================
 
+local function PickZone(obj, fb1, fb2, fb3)
+  if type(obj) == "table" and obj.zone and obj.zone ~= "" then
+    return obj.zone
+  end
+  if fb1 and fb1 ~= "" then return fb1 end
+  if fb2 and fb2 ~= "" then return fb2 end
+  if fb3 and fb3 ~= "" then return fb3 end
+  return ""
+end
+
+local function FactionTag(f, bracketed)
+  if f == "horde" then
+    return bracketed and "|cffff5555[部落]|r" or "|cffff5555部落|r"
+  elseif f == "alliance" then
+    return bracketed and "|cff44aaff[联盟]|r" or "|cff44aaff联盟|r"
+  end
+  return bracketed and "|cff00ffcc[通用]|r" or "|cffffd100双阵营|r"
+end
+
+local CARD_THEMES = {
+  header    = { border = { 0.0, 0.85, 0.7, 0.95 },  bg = { 0.05, 0.14, 0.16, 0.95 } },
+  route     = { border = { 0.9, 0.75, 0.2, 0.9 },   bg = { 0.11, 0.10, 0.06, 0.92 } },
+  routeCur  = { border = { 0.1, 0.95, 0.4, 0.95 },  bg = { 0.06, 0.16, 0.10, 0.95 } },
+  routeIdle = { border = { 0.25, 0.35, 0.45, 0.85 }, bg = { 0.08, 0.10, 0.14, 0.92 } },
+  zone      = { border = { 0.0, 0.75, 0.65, 0.90 }, bg = { 0.05, 0.12, 0.14, 0.93 } },
+  talent    = { border = { 0.35, 0.65, 0.95, 0.9 }, bg = { 0.07, 0.11, 0.17, 0.92 } },
+  legacy    = { border = { 0.0, 0.85, 0.7, 0.9 },   bg = { 0.05, 0.12, 0.14, 0.92 } },
+  combat    = { border = { 0.3, 0.75, 0.95, 0.9 },  bg = { 0.06, 0.10, 0.15, 0.92 } },
+  combatCur = { border = { 0.1, 0.9, 0.5, 0.95 },   bg = { 0.06, 0.15, 0.12, 0.95 } },
+  combatSub = { border = { 0.25, 0.45, 0.65, 0.85 }, bg = { 0.07, 0.10, 0.14, 0.92 } },
+  milestone = { border = { 0.2, 0.8, 0.5, 0.85 },   bg = { 0.06, 0.12, 0.09, 0.92 } },
+  dungeon   = { border = { 0.95, 0.5, 0.15, 0.85 }, bg = { 0.12, 0.08, 0.05, 0.92 } },
+  dunNew    = { border = { 0.0, 0.85, 0.7, 0.9 },   bg = { 0.05, 0.13, 0.14, 0.94 } },
+  dunMatch  = { border = { 0.2, 0.85, 0.4, 0.9 },   bg = { 0.08, 0.10, 0.14, 0.92 } },
+  macroNew  = { border = { 0.0, 0.85, 0.7, 0.9 },   bg = { 0.07, 0.09, 0.13, 0.94 } },
+  macro     = { border = { 0.3, 0.45, 0.6, 0.85 },  bg = { 0.07, 0.09, 0.13, 0.94 } },
+  command   = { border = { 0.2, 0.55, 0.8, 0.85 },  bg = { 0.06, 0.09, 0.14, 0.94 } },
+  cmdHeader = { border = { 0.0, 0.75, 0.95, 0.9 },  bg = { 0.05, 0.10, 0.16, 0.92 } },
+  arbGood   = { border = { 0.2, 0.85, 0.45, 0.9 },  bg = { 0.05, 0.12, 0.08, 0.92 } },
+  arbBad    = { border = { 0.8, 0.3, 0.3, 0.9 },    bg = { 0.14, 0.06, 0.06, 0.94 } },
+  profRec   = { border = { 0.1, 0.9, 0.5, 0.95 },   bg = { 0.05, 0.15, 0.10, 0.94 } },
+  prof      = { border = { 0.25, 0.55, 0.45, 0.85 }, bg = { 0.06, 0.11, 0.10, 0.92 } },
+  news      = { border = { 0.9, 0.6, 0.2, 0.9 },    bg = { 0.12, 0.09, 0.05, 0.94 } },
+  info      = { border = { 0.3, 0.35, 0.45, 0.85 }, bg = { 0.08, 0.10, 0.14, 0.92 } },
+}
+
+local function CreateCardList(startY)
+  local list = { idx = 1, y = startY or 6 }
+  function list:Add(opts)
+    local card = AcquireCard(self.idx)
+    self.idx = self.idx + 1
+    local theme = (type(opts.theme) == "table") and opts.theme or (CARD_THEMES[opts.theme] or CARD_THEMES.info)
+    local act = opts.action
+    self.y = LayoutCard(
+      card, self.y,
+      opts.title,
+      opts.body,
+      opts.borderColor or theme.border,
+      opts.bgColor or theme.bg,
+      opts.badge,
+      act and act.label or opts.actionLabel,
+      act and act.fn or opts.actionFn
+    )
+    return self.y
+  end
+  function list:Finish(minHeight)
+    HideUnusedCards(self.idx)
+    contentChild:SetHeight(math.max(self.y + 20, minHeight or 480))
+  end
+  return list
+end
+
+local function FilterToggle(stateKey, modes)
+  local cur = state[stateKey]
+  local curIdx = 1
+  for i, m in ipairs(modes) do
+    if m.value == cur then
+      curIdx = i
+      break
+    end
+  end
+  local curMode = modes[curIdx]
+  local nextMode = modes[(curIdx % #modes) + 1]
+  return {
+    value = curMode.value,
+    label = curMode.btnLabel or nextMode.enterLabel or "",
+    desc = curMode.desc or "",
+    action = {
+      label = curMode.btnLabel or nextMode.enterLabel or "",
+      fn = function()
+        state[stateKey] = nextMode.value
+        RefreshUI()
+      end,
+    },
+  }
+end
+
+local function FormatClassRunLine(cr, opts)
+  opts = opts or {}
+  local firstStep = cr.steps and cr.steps[1]
+  local stepZone = PickZone(firstStep, opts.fallbackZone)
+  local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
+  local npcInfo = firstStep and string.format(" — %s%s %s |cff99e6ff%s|r%s", opts.npcPrefix or "", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
+  local teachStr = (cr.teaches and cr.teaches ~= "") and ((opts.teachArrow or " -> 学会 ") .. "|cff71d5ff[" .. cr.teaches .. "]|r") or ""
+  local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, opts.indent or "      ", opts.foldCompleted)
+  local tag = opts.tag or string.format("|cff00ffcc[Lv.%d %s·%s专属任务链]|r", cr.level or 1, opts.routeName or "", opts.clsName or "")
+  return string.format("%s%s %s%s%s", opts.prefix or "", tag, crLink, teachStr, npcInfo), crTree
+end
+
+local function RenderQuestGroups(lines, groups, opts)
+  opts = opts or {}
+  local qCount = 0
+  local maxQuests = opts.maxQuests
+  local indent = opts.indent or "      "
+  local linePrefix = opts.prefix or "  - "
+  local insideLabel = opts.insideLabel or "(副本内接取)"
+  for _, grp in ipairs(groups or {}) do
+    if maxQuests and qCount >= maxQuests then break end
+    qCount = qCount + #grp.quests
+    local q = grp.quests[1]
+    local matched = opts.useMatched and (q._matchedStarter or q._matchedStep or q) or q
+    local qZone = PickZone(matched, PickZone(q, opts.fallbackZone))
+    local acceptLv = q._acceptLv or q.minLevel or q.min or opts.fallbackLevel or 1
+    local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", acceptLv) or ""
+    local npcInfo = FormatStepNpcInfo(matched, qZone)
+    if q.inside and not ((matched.npc and matched.npc ~= "") or (matched.x and matched.y)) then
+      npcInfo = (npcInfo ~= "") and (npcInfo .. " " .. insideLabel) or insideLabel
+    end
+    local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
+    local fTag = opts.showFaction and (q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")) or ""
+    local cTag = opts.showClass and FormatQuestClassTag(q) or ""
+    if #grp.quests > 1 and grp.prefixLen >= 1 then
+      local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, opts.fallbackLevel, qZone, indent, opts.foldCompleted ~= false, opts.foldZone)
+      local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
+      table.insert(lines, string.format("%s%s%s%s%s%s%s", linePrefix, fTag, cTag, headerPrefix, branchTag, acceptTag, npcSuffix))
+      table.insert(lines, treeBody)
+    else
+      local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or (" [共%d步" .. (opts.singleChainWord or "") .. "]"), q.stepCount) or ""
+      local foldKey = opts.foldZone and GetQuestChainFoldKey(q, opts.foldZone) or nil
+      local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or q.level or opts.fallbackLevel, qZone, indent, opts.foldCompleted ~= false, foldKey)
+      table.insert(lines, string.format("%s%s%s%s%s%s%s", linePrefix, fTag, cTag, qLink, acceptTag, chainTag, npcSuffix))
+      if qTree then table.insert(lines, qTree) end
+    end
+  end
+  return qCount
+end
+
+local function BuildBandLines(band, opts)
+  opts = opts or {}
+  local lvl = opts.level or state.level
+  local cls = opts.cls
+  local spec = opts.spec
+  local recProfs = (spec and spec.recommendedProfs) or ""
+  local lines = {}
+
+  local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
+  local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
+  local zonesBlock = FormatBandZonesBlock(band, opts.zonesHeader or "本阶段适龄练级区域 (平级推荐，可自由切换)")
+  if zonesBlock then
+    table.insert(lines, zonesBlock)
+  elseif opts.isSmartMatch then
+    table.insert(lines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
+  else
+    table.insert(lines, string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordStr))
+  end
+
+  if not zonesBlock and band.hubs and #band.hubs > 1 then
+    local subHubs = {}
+    for _, h in ipairs(band.hubs) do
+      local hc = (h.x and h.y) and FormatCoordLink(band.zone, h.name, h.x, h.y) or ""
+      local activeMark = (opts.markActiveHub and lvl >= (h.from or 1) and lvl <= (h.to or 60)) and "|cff00ff00★|r" or ""
+      table.insert(subHubs, string.format("%s%s[Lv.%d-%d]%s", activeMark, h.name or "", h.from or band.from, h.to or band.to, hc))
+    end
+    table.insert(lines, (opts.subHubLabel or "|cff99e6ff分阶段据点:|r ") .. table.concat(subHubs, " -> "))
+  end
+
+  if band.flights and #band.flights > 0 then
+    local fList = {}
+    for _, fl in ipairs(band.flights) do
+      local flZone = PickZone(fl, band.zone)
+      local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
+      table.insert(fList, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
+    end
+    table.insert(lines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(fList, opts.flightSep or " · "))
+  end
+
+  local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
+  if matchedTrainer and matchedTrainer.name ~= "" then
+    local tZone = PickZone(matchedTrainer, matchedTrainer.place, band.zone)
+    local tCoord = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
+    table.insert(lines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or band.zone or "", tCoord))
+  end
+
+  local matchedQuests = GetBandQuests(band, state.classKey)
+  if matchedQuests and #matchedQuests > 0 then
+    local qLines = opts.groupBandQuests and {} or lines
+    for _, q in ipairs(matchedQuests) do
+      if not (opts.skipCompletedQuests and IsQuestCompleted(q)) then
+        local qZone = PickZone(q, q.place, band.zone)
+        local qTag = (q.kind == "class")
+          and (opts.groupBandQuests and "|cff00ffcc[★职业专属]|r " or string.format("|cff00ffcc[★%s职业任务]|r ", cls and cls.name or ""))
+          or (opts.groupBandQuests and "|cffffd100[关键任务]|r " or "|cffffd100[区域关键任务]|r ")
+        local qLink, qTree = FormatQuestWithSteps(q, q.level or band.from, qZone, opts.questIndent or "    ", opts.foldQuestSteps)
+        qZone = PickZone(q, q.place, band.zone)
+        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
+        table.insert(qLines, string.format("%s%s%s (Lv.%d) — %s %s%s", opts.questPrefix or "", qTag, qLink, q.level or band.from, q.place or "", q.npc or "", qc))
+        if qTree then table.insert(qLines, qTree) end
+      end
+    end
+    if opts.groupBandQuests and #qLines > 0 then
+      table.insert(lines, "|cff00ffcc本阶段关键/职业任务:|r\n" .. table.concat(qLines, "\n"))
+    end
+  end
+
+  if opts.includeClassRuns and opts.matchedClassRuns then
+    for _, cr in ipairs(opts.matchedClassRuns) do
+      local crTo = cr.to or cr.level or 60
+      if cr.level >= band.from and cr.level <= band.to and (not opts.isMatchMode or crTo >= lvl - 2) then
+        local crLine, crTree = FormatClassRunLine(cr, {
+          fallbackZone = band.zone,
+          clsName = cls and cls.name or "",
+          tag = string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r", cr.level, cls and cls.name or ""),
+          indent = "    ",
+          foldCompleted = true,
+        })
+        table.insert(lines, crLine)
+        if crTree then table.insert(lines, crTree) end
+      end
+    end
+  end
+
+  if opts.includeSpecMusts and spec and spec.musts then
+    for _, m in ipairs(spec.musts) do
+      local mLvl = m.level or 1
+      if mLvl >= band.from and mLvl <= band.to and (not opts.isMatchMode or mLvl >= lvl - 2) then
+        table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", mLvl, spec.name or "", LinkifyInlineCoords(m.text or "", band.zone, spec.name or "要点")))
+      end
+    end
+  end
+
+  if band.professions and #band.professions > 0 then
+    local pList = {}
+    for _, p in ipairs(band.professions) do
+      local pZone = PickZone(p, band.zone)
+      local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
+      local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
+      local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
+      local recMark = isRec and "|cff00ff00★推荐|r" or ""
+      table.insert(pList, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recMark, p.trainer or "", pc))
+    end
+    table.insert(lines, (opts.profLabel or "|cff00ff96顺路学专业:|r ") .. table.concat(pList, opts.profSep or " · "))
+  end
+
+  return lines
+end
+
 local function RenderTabSmartMatch()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
   local lvl = state.level
   local route = GetCurrentRoute()
   local cls = GetCurrentClassData()
@@ -3458,7 +3713,7 @@ local function RenderTabSmartMatch()
     cls and cls.name or state.classKey,
     spec and spec.name or "默认专精",
     route and route.name or state.routeId,
-    state.faction == "horde" and "|cffff5555部落|r" or "|cff44aaff联盟|r",
+    FactionTag(state.faction),
     zoneTag
   ))
   if recProfs ~= "" then
@@ -3474,88 +3729,36 @@ local function RenderTabSmartMatch()
     end
   end
 
-  local c1 = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    c1, y,
-    string.format("|cff00ffcc>> Lv.%d %s·%s·%s 智能匹配总览|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
-    table.concat(overviewLines, "\n"),
-    { 0.0, 0.85, 0.7, 0.95 },
-    { 0.05, 0.14, 0.16, 0.95 },
-    "|cff00ffccwowf.io 实时引擎|r"
-  )
+  list:Add({
+    title = string.format("|cff00ffcc>> Lv.%d %s·%s·%s 智能匹配总览|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
+    body = table.concat(overviewLines, "\n"),
+    theme = "header",
+    badge = "|cff00ffccwowf.io 实时引擎|r",
+  })
 
   -- 2. 当前等级推荐区域与营地导航（按当前种族+职业+专精精准匹配）
   if band then
-    local bandLines = {}
-    local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
-    local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
-    local zonesBlock = FormatBandZonesBlock(band, "当前适龄练级区域 (平级推荐，可自由切换)")
-    if zonesBlock then
-      table.insert(bandLines, zonesBlock)
-    else
-      table.insert(bandLines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
-    end
-
-    if not zonesBlock and band.hubs and #band.hubs > 1 then
-      local subHubs = {}
-      for _, h in ipairs(band.hubs) do
-        local hc = (h.x and h.y) and FormatCoordLink(band.zone, h.name, h.x, h.y) or ""
-        local activeMark = (lvl >= (h.from or 1) and lvl <= (h.to or 60)) and "|cff00ff00★|r" or ""
-        table.insert(subHubs, string.format("%s%s[Lv.%d-%d]%s", activeMark, h.name or "", h.from or band.from, h.to or band.to, hc))
-      end
-      table.insert(bandLines, "|cff99e6ff本区分阶段据点:|r " .. table.concat(subHubs, " -> "))
-    end
-
-    if band.flights and #band.flights > 0 then
-      local fList = {}
-      for _, fl in ipairs(band.flights) do
-        local flZone = (fl.zone and fl.zone ~= "") and fl.zone or band.zone
-        local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
-        table.insert(fList, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
-      end
-      table.insert(bandLines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(fList, "  /  "))
-    end
-
-    local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
-    if matchedTrainer and matchedTrainer.name ~= "" then
-      local tZone = (matchedTrainer.zone and matchedTrainer.zone ~= "") and matchedTrainer.zone or (matchedTrainer.place or band.zone)
-      local tCoord = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
-      table.insert(bandLines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or band.zone or "", tCoord))
-    end
-
-    local matchedQuests = GetBandQuests(band, state.classKey)
-    if matchedQuests and #matchedQuests > 0 then
-      local qLines = {}
-      for _, q in ipairs(matchedQuests) do
-        local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or band.zone)
-        local qTag = (q.kind == "class") and "|cff00ffcc[★职业专属]|r " or "|cffffd100[关键任务]|r "
-        local qLink, qTree = FormatQuestWithSteps(q, q.level or band.from, qZone, "      ")
-        qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or band.zone)
-        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
-        table.insert(qLines, string.format("  - %s%s (Lv.%d) — %s %s%s", qTag, qLink, q.level or band.from, q.place or "", q.npc or "", qc))
-        if qTree then table.insert(qLines, qTree) end
-      end
-      table.insert(bandLines, "|cff00ffcc本阶段关键/职业任务:|r\n" .. table.concat(qLines, "\n"))
-    end
-
-    if band.professions and #band.professions > 0 then
-      local pList = {}
-      for _, p in ipairs(band.professions) do
-        local pZone = (p.zone and p.zone ~= "") and p.zone or band.zone
-        local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
-        local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
-        local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
-        local recMark = isRec and "|cff00ff00★推荐|r" or ""
-        table.insert(pList, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recMark, p.trainer or "", pc))
-      end
-      table.insert(bandLines, "|cff00ff96本区专业训练师:|r " .. table.concat(pList, "  /  "))
-    end
+    local bandLines = BuildBandLines(band, {
+      level = lvl,
+      cls = cls,
+      spec = spec,
+      isSmartMatch = true,
+      zonesHeader = "当前适龄练级区域 (平级推荐，可自由切换)",
+      markActiveHub = true,
+      subHubLabel = "|cff99e6ff本区分阶段据点:|r ",
+      flightSep = "  /  ",
+      groupBandQuests = true,
+      questIndent = "      ",
+      questPrefix = "  - ",
+      profLabel = "|cff00ff96本区专业训练师:|r ",
+      profSep = "  /  ",
+    })
 
     if band.dungeonQuests and #band.dungeonQuests > 0 then
       local dqList = {}
       for _, dq in ipairs(band.dungeonQuests) do
         if not IsQuestCompleted(dq) then
-          local dqZone = (dq.zone and dq.zone ~= "") and dq.zone or (dq.place or band.zone)
+          local dqZone = PickZone(dq, dq.place, band.zone)
           local dqc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
           local dqLink = FormatQuestLink(dq, dq.level or lvl, dqZone)
           local acceptTag = (not IsQuestLineStarted(dq)) and string.format(" (可接 Lv.%d)", dq.level or lvl) or ""
@@ -3567,19 +3770,16 @@ local function RenderTabSmartMatch()
       end
     end
 
-    local cBand = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cBand, y,
-      string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · |r%s|cffffd100 · %s)|r", band.from, band.to, FormatBandZonesTitle(band), route and route.name or ""),
-      table.concat(bandLines, "\n"),
-      { 0.9, 0.75, 0.2, 0.9 },
-      { 0.11, 0.10, 0.06, 0.92 },
-      string.format("Lv.%d-%d", band.from, band.to),
-      (band.hub and band.hub.x) and "标记营地坐标" or nil,
-      (band.hub and band.hub.x) and function()
-        SetWaypointOrPrint(band.zone, band.hub.name, band.hub.x, band.hub.y)
-      end or nil
-    )
+    list:Add({
+      title = string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · |r%s|cffffd100 · %s)|r", band.from, band.to, FormatBandZonesTitle(band), route and route.name or ""),
+      body = table.concat(bandLines, "\n"),
+      theme = "route",
+      badge = string.format("Lv.%d-%d", band.from, band.to),
+      action = (band.hub and band.hub.x) and {
+        label = "标记营地坐标",
+        fn = function() SetWaypointOrPrint(band.zone, band.hub.name, band.hub.x, band.hub.y) end,
+      } or nil,
+    })
   end
 
   -- 3. 当前等级天赋加点指引 (Lv.10-60)
@@ -3607,29 +3807,23 @@ local function RenderTabSmartMatch()
       end
     end
 
-    local cTalent = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cTalent, y,
-      string.format("|cffffd100★ Lv.%d 天赋加点指引 (%s·%s)|r", lvl, cls and cls.name or "", spec.name),
-      table.concat(tLines, "\n"),
-      { 0.35, 0.65, 0.95, 0.9 },
-      { 0.07, 0.11, 0.17, 0.92 },
-      "点击[职业与天赋]看完整10-60表"
-    )
+    list:Add({
+      title = string.format("|cffffd100★ Lv.%d 天赋加点指引 (%s·%s)|r", lvl, cls and cls.name or "", spec.name),
+      body = table.concat(tLines, "\n"),
+      theme = "talent",
+      badge = "点击[职业与天赋]看完整10-60表",
+    })
   end
 
   -- 3.5 经典旧世(传承)点数推荐 (单角色上限 16 点)
   do
     local legacyCompactLines = BuildLegacyRecommendationLines(lvl, playerProfs, true)
-    local cLegacy = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cLegacy, y,
-      string.format("|cff00ffcc★ Lv.%d 传承点数(经典旧世树)加点推荐 (单角色上限 16 点)|r", lvl),
-      table.concat(legacyCompactLines, "\n"),
-      { 0.0, 0.85, 0.7, 0.9 },
-      { 0.05, 0.12, 0.14, 0.92 },
-      "点击[专业&无限特色]看1-16点详表"
-    )
+    list:Add({
+      title = string.format("|cff00ffcc★ Lv.%d 传承点数(经典旧世树)加点推荐 (单角色上限 16 点)|r", lvl),
+      body = table.concat(legacyCompactLines, "\n"),
+      theme = "legacy",
+      badge = "点击[专业&无限特色]看1-16点详表",
+    })
   end
 
   -- 4. 当前等级专精输出循环与副本手法
@@ -3647,15 +3841,12 @@ local function RenderTabSmartMatch()
       table.insert(rotLines, "\n|cffff8000【当前等级地下城战斗指南 (Lv." .. dTip.from .. "-" .. dTip.to .. ")】|r\n" .. LinkifyInlineCoords(dTip.text, band and band.zone or "", "副本点"))
     end
 
-    local cRot = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cRot, y,
-      string.format("|cff71d5ff[战斗] 当前等级输出手法与循环 (Lv.%d-%d)|r", phase.from, phase.to),
-      table.concat(rotLines, "\n"),
-      { 0.3, 0.75, 0.95, 0.9 },
-      { 0.06, 0.10, 0.15, 0.92 },
-      string.format("Lv.%d-%d 阶段", phase.from, phase.to)
-    )
+    list:Add({
+      title = string.format("|cff71d5ff[战斗] 当前等级输出手法与循环 (Lv.%d-%d)|r", phase.from, phase.to),
+      body = table.concat(rotLines, "\n"),
+      theme = "combat",
+      badge = string.format("Lv.%d-%d 阶段", phase.from, phase.to),
+    })
   end
 
   -- 5. 当前等级种族+职业专属任务链与关键里程碑
@@ -3672,25 +3863,25 @@ local function RenderTabSmartMatch()
   for _, cr in ipairs(matchedClassRuns) do
     local crTo = cr.to or cr.level or 60
     if lvl >= (cr.level - 4) and crTo >= lvl - 2 then
-      local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 奖励技能: |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-      local firstStep = cr.steps and cr.steps[1]
-      local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or (band and band.zone or "")
-      local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
-      local npcInfo = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-      local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "      ")
-      table.insert(milestoneLines, string.format("  - |cff00ffcc[Lv.%d %s·%s专属任务链]|r %s%s%s", cr.level, route and route.name or "", cls and cls.name or "", crLink, teachStr, npcInfo))
+      local crLine, crTree = FormatClassRunLine(cr, {
+        prefix = "  - ",
+        routeName = route and route.name or "",
+        clsName = cls and cls.name or "",
+        fallbackZone = band and band.zone or "",
+        npcPrefix = "起始: ",
+        teachArrow = " -> 奖励技能: ",
+        indent = "      ",
+      })
+      table.insert(milestoneLines, crLine)
       if crTree then table.insert(milestoneLines, crTree) end
     end
   end
   if #milestoneLines > 0 then
-    local cMile = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cMile, y,
-      string.format("|cff00ff96★ 当前阶段 %s·%s 关键里程碑与专属职业任务|r", route and route.name or "", cls and cls.name or ""),
-      table.concat(milestoneLines, "\n"),
-      { 0.2, 0.8, 0.5, 0.85 },
-      { 0.06, 0.12, 0.09, 0.92 }
-    )
+    list:Add({
+      title = string.format("|cff00ff96★ 当前阶段 %s·%s 关键里程碑与专属职业任务|r", route and route.name or "", cls and cls.name or ""),
+      body = table.concat(milestoneLines, "\n"),
+      theme = "milestone",
+    })
   end
 
   -- 6. 当前等级推荐地下城与必接任务
@@ -3709,55 +3900,33 @@ local function RenderTabSmartMatch()
           table.insert(matchedDunQuests, q)
         end
       end
-      local qCount = 0
-      for _, grp in ipairs(GroupQuestsBySharedPrefix(matchedDunQuests)) do
-        if qCount >= 8 then break end
-        qCount = qCount + #grp.quests
-        local q = grp.quests[1]
-        local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
-        local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
-        local npcInfo = FormatStepNpcInfo(q, qZone)
-        local hasStarterPos = (q.npc and q.npc ~= "") or (q.x and q.y)
-        if q.inside and not hasStarterPos then
-          npcInfo = (npcInfo ~= "") and (npcInfo .. " (副本内接取)") or "(副本内接取)"
-        end
-        local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
-        if #grp.quests > 1 and grp.prefixLen >= 1 then
-          local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "        ", true)
-          local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
-          table.insert(dLines, string.format("    └ 任务: %s%s%s%s", headerPrefix, branchTag, acceptTag, npcSuffix))
-          table.insert(dLines, treeBody)
-        else
-          local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步]", q.stepCount) or ""
-          local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "        ", true)
-          table.insert(dLines, string.format("    └ 任务: %s%s%s%s", qLink, acceptTag, chainTag, npcSuffix))
-          if qTree then table.insert(dLines, qTree) end
-        end
-      end
+      RenderQuestGroups(dLines, GroupQuestsBySharedPrefix(matchedDunQuests), {
+        maxQuests = 8,
+        fallbackLevel = d.minLevel,
+        fallbackZone = d.entranceZone or d.zone or "",
+        indent = "        ",
+        prefix = "    └ 任务: ",
+        insideLabel = "(副本内接取)",
+      })
     end
-    local cDun = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cDun, y,
-      string.format("|cffff8000[副本] 适合当前等级 (Lv.%d) 的地下城与任务 (%d个)|r", lvl, #matchedDungeons),
-      table.concat(dLines, "\n"),
-      { 0.95, 0.55, 0.15, 0.9 },
-      { 0.13, 0.08, 0.05, 0.92 }
-    )
+    list:Add({
+      title = string.format("|cffff8000[副本] 适合当前等级 (Lv.%d) 的地下城与任务 (%d个)|r", lvl, #matchedDungeons),
+      body = table.concat(dLines, "\n"),
+      theme = "dungeon",
+    })
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 local function RenderTabRoutes()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
   local lvl = state.level
   local route = GetCurrentRoute()
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
   if not route or not route.bands then
-    HideUnusedCards(1)
+    list:Finish()
     return
   end
 
@@ -3765,10 +3934,18 @@ local function RenderTabRoutes()
   local matchedClassRuns = GetCurrentClassRuns(route, cls, state.faction)
   local phase = GetMatchedPhase(spec, lvl)
   local isMatchMode = (state.routeFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
-  local toggleBtnLabel = state.routeFilter == "MATCH" and "查看 1-60 全程" or "仅看当前匹配"
-  local modeDesc = state.routeFilter == "MATCH"
-    and string.format("已按您的角色自动聚焦 |cffffd100Lv.%d|r 当前阶段及后续衔接路线（点击右上角按钮可展开 1–60 全部 %d 个阶段）", lvl, #route.bands)
-    or string.format("当前显示 1–60 级完整全部 %d 个阶段（点击右上角按钮可聚焦回当前角色等级阶段）", #route.bands)
+  local toggle = FilterToggle("routeFilter", {
+    {
+      value = "MATCH",
+      btnLabel = "查看 1-60 全程",
+      desc = string.format("已按您的角色自动聚焦 |cffffd100Lv.%d|r 当前阶段及后续衔接路线（点击右上角按钮可展开 1–60 全部 %d 个阶段）", lvl, #route.bands),
+    },
+    {
+      value = "ALL",
+      btnLabel = "仅看当前匹配",
+      desc = string.format("当前显示 1–60 级完整全部 %d 个阶段（点击右上角按钮可聚焦回当前角色等级阶段）", #route.bands),
+    },
+  })
 
   local headerLines = {
     string.format(
@@ -3777,33 +3954,21 @@ local function RenderTabRoutes()
       route.name or state.routeId,
       cls and cls.name or state.classKey,
       spec and spec.name or "默认专精",
-      route.faction == "horde" and "|cffff5555部落|r" or "|cff44aaff联盟|r",
+      FactionTag(route.faction),
       (state.zone and state.zone ~= "") and ("  ·  |cff00ff96当前区域:|r " .. state.zone) or ""
     ),
-    modeDesc,
+    toggle.desc,
   }
   if recProfs ~= "" then
     table.insert(headerLines, "|cff00ff96专精推荐练级专业:|r " .. recProfs .. "   |cffaaaaaa(路线中带 ★ 标记的专业训练师可顺路学习)|r")
   end
 
-  local headerCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    headerCard, y,
-    string.format("|cff00ffcc[路线] %s · %s (%s) 专属升级路线 (当前 Lv.%d)|r", route.name, cls and cls.name or "", spec and spec.name or "", lvl),
-    table.concat(headerLines, "\n"),
-    { 0.0, 0.85, 0.7, 0.95 },
-    { 0.05, 0.14, 0.16, 0.95 },
-    nil,
-    toggleBtnLabel,
-    function()
-      if state.routeFilter == "MATCH" then
-        state.routeFilter = "ALL"
-      else
-        state.routeFilter = "MATCH"
-      end
-      RefreshUI()
-    end
-  )
+  list:Add({
+    title = string.format("|cff00ffcc[路线] %s · %s (%s) 专属升级路线 (当前 Lv.%d)|r", route.name, cls and cls.name or "", spec and spec.name or "", lvl),
+    body = table.concat(headerLines, "\n"),
+    theme = "header",
+    action = toggle.action,
+  })
 
   -- 角色专属职业任务链与当前阶段手法/专精里程碑摘要卡
   local charGuideLines = {}
@@ -3817,14 +3982,14 @@ local function RenderTabRoutes()
     for _, cr in ipairs(matchedClassRuns) do
       local crTo = cr.to or cr.level or 60
       if not isMatchMode or (cr.level <= lvl + 15 and crTo >= lvl - 2) then
-        local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-        local firstStep = cr.steps and cr.steps[1]
-        local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or ""
-        local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
-        local stepSummary = firstStep and string.format(" — 起始: %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
         local activeTag = (lvl >= cr.level and lvl <= crTo + 2) and "|cff00ff00★[当前可做]|r " or ""
-        local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "      ")
-        table.insert(charGuideLines, string.format("  - %s|cff00ffcc[Lv.%d %s·%s职业任务]|r %s%s%s", activeTag, cr.level, route.name, cls and cls.name or "", crLink, teachStr, stepSummary))
+        local crLine, crTree = FormatClassRunLine(cr, {
+          prefix = "  - " .. activeTag,
+          tag = string.format("|cff00ffcc[Lv.%d %s·%s职业任务]|r", cr.level, route.name, cls and cls.name or ""),
+          npcPrefix = "起始: ",
+          indent = "      ",
+        })
+        table.insert(charGuideLines, crLine)
         if crTree then table.insert(charGuideLines, crTree) end
       end
     end
@@ -3839,15 +4004,12 @@ local function RenderTabRoutes()
     end
   end
   if #charGuideLines > 0 then
-    local charCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      charCard, y,
-      string.format("|cff00ff96★ %s · %s (%s) 升级路线核心职业任务与专精里程碑|r", route.name, cls and cls.name or "", spec and spec.name or ""),
-      table.concat(charGuideLines, "\n"),
-      { 0.2, 0.82, 0.52, 0.9 },
-      { 0.06, 0.13, 0.10, 0.93 },
-      "角色专属匹配"
-    )
+    list:Add({
+      title = string.format("|cff00ff96★ %s · %s (%s) 升级路线核心职业任务与专精里程碑|r", route.name, cls and cls.name or "", spec and spec.name or ""),
+      body = table.concat(charGuideLines, "\n"),
+      theme = "milestone",
+      badge = "角色专属匹配",
+    })
   end
 
   -- 整理要渲染的阶段列表：在 MATCH 模式下将当前等级所在阶段置顶，并展示后续衔接阶段（过滤已过时的低级阶段）
@@ -3882,9 +4044,7 @@ local function RenderTabRoutes()
     local stepIdx = entry.idx
     local isCurrent = (lvl >= b.from and lvl <= b.to)
     local hubName = (b.hub and b.hub.name ~= "") and b.hub.name or b.zone
-    local coordText = (b.hub and b.hub.x and b.hub.y) and FormatCoordLink(b.zone, hubName, b.hub.x, b.hub.y) or ""
     local matchedTrainer = GetBandTrainer(b, state.classKey, state.faction)
-    local matchedQuests = GetBandQuests(b, state.classKey)
     local searchBlob = (b.zone or "") .. " " .. (hubName or "") .. " " .. ((matchedTrainer and matchedTrainer.name) or "")
     if b.altZones then
       for _, az in ipairs(b.altZones) do
@@ -3893,89 +4053,18 @@ local function RenderTabRoutes()
     end
 
     if MatchesSearch(searchBlob) then
-      local lines = {}
-      local zonesBlock = FormatBandZonesBlock(b, "本阶段适龄练级区域 (平级推荐，可自由切换)")
-      if zonesBlock then
-        table.insert(lines, zonesBlock)
-      else
-        table.insert(lines, string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordText))
-      end
-
-      if not zonesBlock and b.hubs and #b.hubs > 1 then
-        local subHubs = {}
-        for _, h in ipairs(b.hubs) do
-          local hc = (h.x and h.y) and FormatCoordLink(b.zone, h.name, h.x, h.y) or ""
-          table.insert(subHubs, string.format("%s[Lv.%d-%d]%s", h.name or "", h.from or b.from, h.to or b.to, hc))
-        end
-        table.insert(lines, "|cff99e6ff分阶段据点:|r " .. table.concat(subHubs, " -> "))
-      end
-
-      if b.flights and #b.flights > 0 then
-        local flNames = {}
-        for _, fl in ipairs(b.flights) do
-          local flZone = (fl.zone and fl.zone ~= "") and fl.zone or b.zone
-          local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
-          table.insert(flNames, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
-        end
-        table.insert(lines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(flNames, " · "))
-      end
-
-      if matchedTrainer and matchedTrainer.name ~= "" then
-        local tZone = (matchedTrainer.zone and matchedTrainer.zone ~= "") and matchedTrainer.zone or (matchedTrainer.place or b.zone)
-        local tc = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
-        table.insert(lines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or b.zone or "", tc))
-      end
-
-      if matchedQuests and #matchedQuests > 0 then
-        for _, q in ipairs(matchedQuests) do
-          if not (isMatchMode and IsQuestCompleted(q)) then
-            local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or b.zone)
-            local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
-            local qTag = (q.kind == "class") and string.format("|cff00ffcc[★%s职业任务]|r", cls and cls.name or "") or "|cffffd100[区域关键任务]|r"
-            local qLink, qTree = FormatQuestWithSteps(q, q.level or b.from, qZone, "    ", true)
-            table.insert(lines, string.format("%s %s (Lv.%d) — %s %s%s", qTag, qLink, q.level or b.from, q.place or "", q.npc or "", qc))
-            if qTree then table.insert(lines, qTree) end
-          end
-        end
-      end
-
-      -- 穿插属于本阶段等级区间的种族+职业专属任务链
-      for _, cr in ipairs(matchedClassRuns) do
-        local crTo = cr.to or cr.level or 60
-        if cr.level >= b.from and cr.level <= b.to and (not isMatchMode or crTo >= lvl - 2) then
-          local teachStr = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-          local firstStep = cr.steps and cr.steps[1]
-          local stepZone = (firstStep and firstStep.zone ~= "") and firstStep.zone or b.zone
-          local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
-          local npcInfo = firstStep and string.format(" — %s %s |cff99e6ff%s|r%s", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
-          local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, "    ", true)
-          table.insert(lines, string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r %s%s%s", cr.level, cls and cls.name or "", crLink, teachStr, npcInfo))
-          if crTree then table.insert(lines, crTree) end
-        end
-      end
-
-      -- 穿插属于本阶段等级区间的专精关键里程碑
-      if spec and spec.musts then
-        for _, m in ipairs(spec.musts) do
-          local mLvl = m.level or 1
-          if mLvl >= b.from and mLvl <= b.to and (not isMatchMode or mLvl >= lvl - 2) then
-            table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", mLvl, spec.name or "", LinkifyInlineCoords(m.text or "", b.zone, spec.name or "要点")))
-          end
-        end
-      end
-
-      if b.professions and #b.professions > 0 then
-        local pNames = {}
-        for _, p in ipairs(b.professions) do
-          local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
-          local recTag = isRec and "|cff00ff00★推荐|r" or ""
-          local pZone = (p.zone and p.zone ~= "") and p.zone or b.zone
-          local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
-          local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
-          table.insert(pNames, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recTag, p.trainer or "", pc))
-        end
-        table.insert(lines, "|cff00ff96顺路学专业:|r " .. table.concat(pNames, " · "))
-      end
+      local lines = BuildBandLines(b, {
+        level = lvl,
+        cls = cls,
+        spec = spec,
+        isMatchMode = isMatchMode,
+        skipCompletedQuests = isMatchMode,
+        foldQuestSteps = true,
+        questIndent = "    ",
+        includeClassRuns = true,
+        matchedClassRuns = matchedClassRuns,
+        includeSpecMusts = true,
+      })
 
       -- 穿插本阶段主城副本任务备战、跨区交通航线与推荐进本节点 (timelineSteps)
       local tlSteps = GetBandTimelineSteps(route, b.from, b.to)
@@ -3996,7 +4085,7 @@ local function RenderTabRoutes()
             seenCityVisit[cKey] = true
             local qNames = {}
             for _, cq in ipairs(tl.quests) do
-              local cqZone = (cq.zone and cq.zone ~= "") and cq.zone or tl.city
+              local cqZone = PickZone(cq, tl.city)
               local cqc = (cq.x and cq.y) and FormatCoordLink(cqZone, (cq.npc and cq.npc ~= "") and cq.npc or cq.name, cq.x, cq.y) or ""
               local cqLink = FormatQuestLink(cq, tl.level or b.from, cqZone)
               table.insert(qNames, string.format("%s (%s %s%s)", cqLink, cq.dungeon or "", cq.npc or "", cqc))
@@ -4025,27 +4114,24 @@ local function RenderTabRoutes()
 
       if b.dungeonQuests and #b.dungeonQuests > 0 then
         for _, dq in ipairs(b.dungeonQuests) do
-          local dqZone = (dq.zone and dq.zone ~= "") and dq.zone or (dq.place or b.zone)
+          local dqZone = PickZone(dq, dq.place, b.zone)
           local dc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
           local dqLink = FormatQuestLink(dq, dq.level or b.from, dqZone)
           table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r %s — %s %s%s", dq.dungeon, dqLink, dq.place or "", dq.npc or "", dc))
         end
       end
 
-      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
       local titlePrefix = isCurrent and "|cff00ff00▶ [当前角色所在阶段]|r " or string.format("|cff8899aa[第%d步]|r ", stepIdx)
-      y = LayoutCard(
-        card, y,
-        string.format("%s|cffffd100Lv.%d – %d|r  ·  %s", titlePrefix, b.from, b.to, FormatBandZonesTitle(b)),
-        table.concat(lines, "\n"),
-        isCurrent and { 0.1, 0.95, 0.4, 0.95 } or { 0.25, 0.35, 0.45, 0.85 },
-        isCurrent and { 0.06, 0.16, 0.10, 0.95 } or { 0.08, 0.10, 0.14, 0.92 },
-        string.format("Lv.%d-%d", b.from, b.to),
-        (b.hub and b.hub.x) and "标记营地坐标" or nil,
-        (b.hub and b.hub.x) and function()
-          SetWaypointOrPrint(b.zone, b.hub.name, b.hub.x, b.hub.y)
-        end or nil
-      )
+      list:Add({
+        title = string.format("%s|cffffd100Lv.%d – %d|r  ·  %s", titlePrefix, b.from, b.to, FormatBandZonesTitle(b)),
+        body = table.concat(lines, "\n"),
+        theme = isCurrent and "routeCur" or "routeIdle",
+        badge = string.format("Lv.%d-%d", b.from, b.to),
+        action = (b.hub and b.hub.x) and {
+          label = "标记营地坐标",
+          fn = function() SetWaypointOrPrint(b.zone, b.hub.name, b.hub.x, b.hub.y) end,
+        } or nil,
+      })
     end
 
     -- 为当前等级所在阶段的多个适龄区域分别展示任务链形式的适合可接任务（已全部完成过滤，部分完成自动折叠前置）
@@ -4073,41 +4159,26 @@ local function RenderTabRoutes()
               if zInfo.note and zInfo.note ~= "" then
                 table.insert(zLines, "|cff99e6ff区域指引:|r " .. zInfo.note)
               end
-              for _, grp in ipairs(groups) do
-                local q = grp.quests[1]
-                local matched = q._matchedStarter or q._matchedStep or q
-                local qZone = (matched.zone and matched.zone ~= "") and matched.zone or ((q.zone and q.zone ~= "") and q.zone or zInfo.zone)
-                local acceptLv = q._acceptLv or q.minLevel or q.min or zInfo.from
-                local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", acceptLv) or ""
-                local npcInfo = FormatStepNpcInfo(matched, qZone)
-                local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
-                if #grp.quests > 1 and grp.prefixLen >= 1 then
-                  local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, zInfo.from, qZone, "      ", true, zInfo.zone)
-                  local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
-                  table.insert(zLines, string.format("  - %s%s%s%s", headerPrefix, branchTag, acceptTag, npcSuffix))
-                  table.insert(zLines, treeBody)
-                else
-                  local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
-                  local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or q.level or zInfo.from, qZone, "      ", true, GetQuestChainFoldKey(q, zInfo.zone))
-                  table.insert(zLines, string.format("  - %s%s%s%s", qLink, acceptTag, chainTag, npcSuffix))
-                  if qTree then table.insert(zLines, qTree) end
-                end
-              end
-
+              RenderQuestGroups(zLines, groups, {
+                useMatched = true,
+                fallbackLevel = zInfo.from,
+                fallbackZone = zInfo.zone,
+                foldZone = zInfo.zone,
+                singleChainWord = "任务链",
+              })
               local hubPart = (zInfo.hub and zInfo.hub ~= "") and (" · " .. zInfo.hub) or ""
-              local zCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-              y = LayoutCard(
-                zCard, y,
-                string.format("|cff00ffcc▶ [区域任务链] %s|r%s  |cffffd100(Lv.%d-%d)|r", zInfo.zone, hubPart, zInfo.from, zInfo.to),
-                table.concat(zLines, "\n"),
-                { 0.0, 0.75, 0.65, 0.90 },
-                { 0.05, 0.12, 0.14, 0.93 },
-                string.format("可接 %d 条任务链", #groups),
-                (zInfo.x and zInfo.y) and "标记营地坐标" or nil,
-                (zInfo.x and zInfo.y) and function()
-                  SetWaypointOrPrint(zInfo.hubZone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone), zInfo.x, zInfo.y)
-                end or nil
-              )
+              list:Add({
+                title = string.format("|cff00ffcc▶ [区域任务链] %s|r%s  |cffffd100(Lv.%d-%d)|r", zInfo.zone, hubPart, zInfo.from, zInfo.to),
+                body = table.concat(zLines, "\n"),
+                theme = "zone",
+                badge = string.format("可接 %d 条任务链", #groups),
+                action = (zInfo.x and zInfo.y) and {
+                  label = "标记营地坐标",
+                  fn = function()
+                    SetWaypointOrPrint(zInfo.hubZone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone), zInfo.x, zInfo.y)
+                  end,
+                } or nil,
+              })
             end
           end
         end
@@ -4115,46 +4186,40 @@ local function RenderTabRoutes()
     end
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 local function RenderTabClassAndTalents()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
   local lvl = state.level
   local route = GetCurrentRoute()
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
   if not cls or not spec then
-    HideUnusedCards(1)
+    list:Finish()
     return
   end
 
   local isMatchMode = (state.talentFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
-  local toggleBtnLabel = state.talentFilter == "MATCH" and "查看 1-60 全程" or "仅看当前匹配"
-  local modeDesc = isMatchMode
-    and string.format("已自动过滤 |cffffd100Lv.%d|r 以下已过时的循环阶段、已点天赋及低级职业任务（点击右上角按钮可展开 1–60 全部）", lvl)
-    or "当前显示 1–60 级完整循环阶段、逐级天赋加点表与全部职业任务链（点击右上角按钮可聚焦当前等级）"
+  local toggle = FilterToggle("talentFilter", {
+    {
+      value = "MATCH",
+      btnLabel = "查看 1-60 全程",
+      desc = string.format("已自动过滤 |cffffd100Lv.%d|r 以下已过时的循环阶段、已点天赋及低级职业任务（点击右上角按钮可展开 1–60 全部）", lvl),
+    },
+    {
+      value = "ALL",
+      btnLabel = "仅看当前匹配",
+      desc = "当前显示 1–60 级完整循环阶段、逐级天赋加点表与全部职业任务链（点击右上角按钮可聚焦当前等级）",
+    },
+  })
 
-  local headerCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    headerCard, y,
-    string.format("|cff00ffcc[职业] %s · %s 战斗循环、天赋与职业任务 (当前 Lv.%d)|r", cls.name, spec.name, lvl),
-    modeDesc,
-    { 0.0, 0.85, 0.7, 0.95 },
-    { 0.05, 0.14, 0.16, 0.95 },
-    nil,
-    toggleBtnLabel,
-    function()
-      if state.talentFilter == "MATCH" then
-        state.talentFilter = "ALL"
-      else
-        state.talentFilter = "MATCH"
-      end
-      RefreshUI()
-    end
-  )
+  list:Add({
+    title = string.format("|cff00ffcc[职业] %s · %s 战斗循环、天赋与职业任务 (当前 Lv.%d)|r", cls.name, spec.name, lvl),
+    body = toggle.desc,
+    theme = "header",
+    action = toggle.action,
+  })
 
   -- 1. 专精循环各阶段
   for _, p in ipairs(spec.phases or {}) do
@@ -4170,15 +4235,12 @@ local function RenderTabClassAndTalents()
       if p.note and p.note ~= "" then
         table.insert(lines, "\n" .. LinkifyInlineCoords(p.note, "", spec.name or "要点"))
       end
-      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      y = LayoutCard(
-        card, y,
-        string.format("%s|cff71d5ff[战斗] %s·%s 野外循环 (Lv.%d - %d)|r", isCurrent and "|cff00ff00▶ [当前阶段]|r " or "", cls.name, spec.name, p.from, p.to),
-        table.concat(lines, "\n"),
-        isCurrent and { 0.1, 0.9, 0.5, 0.95 } or { 0.25, 0.45, 0.65, 0.85 },
-        isCurrent and { 0.06, 0.15, 0.12, 0.95 } or { 0.07, 0.10, 0.14, 0.92 },
-        string.format("Lv.%d-%d", p.from, p.to)
-      )
+      list:Add({
+        title = string.format("%s|cff71d5ff[战斗] %s·%s 野外循环 (Lv.%d - %d)|r", isCurrent and "|cff00ff00▶ [当前阶段]|r " or "", cls.name, spec.name, p.from, p.to),
+        body = table.concat(lines, "\n"),
+        theme = isCurrent and "combatCur" or "combatSub",
+        badge = string.format("Lv.%d-%d", p.from, p.to),
+      })
     end
   end
 
@@ -4192,18 +4254,15 @@ local function RenderTabClassAndTalents()
       end
     end
     if #stepLines > 0 then
-      local cSteps = AcquireCard(cardIdx); cardIdx = cardIdx + 1
       local titleStr = isMatchMode
         and string.format("|cffffd100★ %s·%s Lv.%d–60 后续天赋加点顺序 (剩余 %d 点)|r", cls.name, spec.name, math.max(10, lvl), #stepLines)
         or string.format("|cffffd100★ %s·%s 10–60 级逐级天赋加点顺序 (共 %d 点)|r", cls.name, spec.name, #spec.steps)
-      y = LayoutCard(
-        cSteps, y,
-        titleStr,
-        table.concat(stepLines, "\n"),
-        { 0.9, 0.75, 0.2, 0.9 },
-        { 0.11, 0.10, 0.06, 0.92 },
-        isMatchMode and string.format("Lv.%d-60", math.max(10, lvl)) or "Lv.10-60 完整路径"
-      )
+      list:Add({
+        title = titleStr,
+        body = table.concat(stepLines, "\n"),
+        theme = "route",
+        badge = isMatchMode and string.format("Lv.%d-60", math.max(10, lvl)) or "Lv.10-60 完整路径",
+      })
     end
   end
 
@@ -4215,14 +4274,14 @@ local function RenderTabClassAndTalents()
     for _, cr in ipairs(runsToRender) do
       local crTo = cr.to or cr.level or 60
       if not isMatchMode or crTo >= lvl - 2 then
-        local fTag = cr.faction == "horde" and "|cffff5555[部落]|r" or (cr.faction == "alliance" and "|cff44aaff[联盟]|r" or "|cff00ffcc[通用]|r")
+        local fTag = FactionTag(cr.faction, true)
         local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
         local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
         local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
         local crLink = FormatQuestLink(cr, cr.level, firstZone, nil, IsQuestCompleted(cr))
         table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
         for idx, st in ipairs(cr.steps or {}) do
-          local stZone = (st.zone and st.zone ~= "") and st.zone or st.place
+          local stZone = PickZone(st, st.place)
           local sc = (st.x and st.y) and FormatCoordLink(stZone, st.npc or st.name, st.x, st.y) or ""
           local stLink = FormatQuestLink(st, cr.level, stZone)
           table.insert(crLines, string.format("    %d. %s — %s %s |cff99e6ff%s|r%s", idx, stLink, st.zone or "", st.place or "", st.npc or "", sc))
@@ -4230,24 +4289,19 @@ local function RenderTabClassAndTalents()
       end
     end
     if #crLines > 0 then
-      local cRuns = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      y = LayoutCard(
-        cRuns, y,
-        string.format("|cff00ffcc[任务链] %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
-        table.concat(crLines, "\n"),
-        { 0.0, 0.8, 0.7, 0.9 },
-        { 0.05, 0.12, 0.13, 0.92 }
-      )
+      list:Add({
+        title = string.format("|cff00ffcc[任务链] %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
+        body = table.concat(crLines, "\n"),
+        theme = "legacy",
+      })
     end
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 local function RenderTabMacros()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
   local cls = GetCurrentClassData()
   local rawMacros = (cls and cls.macros) or {}
 
@@ -4264,15 +4318,12 @@ local function RenderTabMacros()
     return tostring(a and a.title or "") < tostring(b and b.title or "")
   end)
 
-  local introCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    introCard, y,
-    string.format("|cff00ffcc[宏库] %s 实用一键宏命令库 (共 %d 个)|r", cls and cls.name or "", #macros),
-    "同步自 |cffffd100wowf.io/zh/macros|r。点击每个宏卡片右上角的 |cff00ff00[一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击将弹出 Ctrl+C 复制窗口。",
-    { 0.0, 0.85, 0.7, 0.9 },
-    { 0.05, 0.13, 0.15, 0.92 },
-    "支持一键生成"
-  )
+  list:Add({
+    title = string.format("|cff00ffcc[宏库] %s 实用一键宏命令库 (共 %d 个)|r", cls and cls.name or "", #macros),
+    body = "同步自 |cffffd100wowf.io/zh/macros|r。点击每个宏卡片右上角的 |cff00ff00[一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击将弹出 Ctrl+C 复制窗口。",
+    theme = "header",
+    badge = "支持一键生成",
+  })
 
   for _, m in ipairs(macros) do
     if MatchesSearch((m.title or "") .. " " .. (m.desc or "") .. " " .. (m.code or "")) then
@@ -4282,40 +4333,31 @@ local function RenderTabMacros()
         "|cff99e6ff说明:|r " .. (m.desc or ""),
         "\n|cffffd100宏代码:|r\n|cffaaffaa" .. (m.code or "") .. "|r",
       }
-      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      y = LayoutCard(
-        card, y,
-        string.format("%sLv.%d|r  ·  |cffffd100%s|r%s", lvlColor, m.level or 1, m.title or "宏", newBadge),
-        table.concat(bodyLines, "\n"),
-        m.isForeverNew and { 0.0, 0.85, 0.7, 0.9 } or { 0.3, 0.45, 0.6, 0.85 },
-        { 0.07, 0.09, 0.13, 0.94 },
-        nil,
-        "一键写入宏",
-        function()
-          CreateOrUpdateGameMacro(m.title, m.code)
-        end
-      )
+      list:Add({
+        title = string.format("%sLv.%d|r  ·  |cffffd100%s|r%s", lvlColor, m.level or 1, m.title or "宏", newBadge),
+        body = table.concat(bodyLines, "\n"),
+        theme = m.isForeverNew and "macroNew" or "macro",
+        action = {
+          label = "一键写入宏",
+          fn = function() CreateOrUpdateGameMacro(m.title, m.code) end,
+        },
+      })
     end
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 -- 常用命令速查：分类整理 /console 控制台变量与斜杠命令，支持搜索与一键复制
 local function RenderTabCommands()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
 
-  local introCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    introCard, y,
-    "|cff00ffcc[常用命令] 魔兽世界通用命令 / 控制台变量速查|r",
-    "面向《魔兽世界：无限服》整理、均可在无限服客户端使用的常用命令。每条命令都可点击右上角 |cff00ff00[复制命令]|r 按钮，或直接把命令粘贴到聊天框回车执行。|cffff8800注意：/console 属于客户端设置，请在非战斗中执行。|r",
-    { 0.0, 0.75, 0.95, 0.9 },
-    { 0.05, 0.10, 0.16, 0.92 },
-    "共 " .. tostring(#COMMON_COMMANDS) .. " 条"
-  )
+  list:Add({
+    title = "|cff00ffcc[常用命令] 魔兽世界通用命令 / 控制台变量速查|r",
+    body = "面向《魔兽世界：无限服》整理、均可在无限服客户端使用的常用命令。每条命令都可点击右上角 |cff00ff00[复制命令]|r 按钮，或直接把命令粘贴到聊天框回车执行。|cffff8800注意：/console 属于客户端设置，请在非战斗中执行。|r",
+    theme = "cmdHeader",
+    badge = "共 " .. tostring(#COMMON_COMMANDS) .. " 条",
+  })
 
   for _, c in ipairs(COMMON_COMMANDS) do
     if MatchesSearch((c.title or "") .. " " .. (c.category or "") .. " " .. (c.code or "") .. " " .. (c.desc or "") .. " " .. (c.note or "")) then
@@ -4325,54 +4367,35 @@ local function RenderTabCommands()
         "\n|cffffd100命令:|r\n|cffaaffaa" .. (c.code or "") .. "|r",
         "\n|cff888888注意:|r |cffbbbbbb" .. (c.note or "") .. "|r",
       }
-      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      y = LayoutCard(
-        card, y,
-        "|cff00ccff" .. (c.title or "命令") .. "|r",
-        table.concat(bodyLines, "\n"),
-        { 0.2, 0.55, 0.8, 0.85 },
-        { 0.06, 0.09, 0.14, 0.94 },
-        nil,
-        "复制命令",
-        function()
-          ShowCopyMacroDialog(c.title or "命令", c.code or "")
-        end
-      )
+      list:Add({
+        title = "|cff00ccff" .. (c.title or "命令") .. "|r",
+        body = table.concat(bodyLines, "\n"),
+        theme = "command",
+        action = {
+          label = "复制命令",
+          fn = function() ShowCopyMacroDialog(c.title or "命令", c.code or "") end,
+        },
+      })
     end
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 local function RenderTabDungeons()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
+  local toggle = FilterToggle("dungeonFilter", {
+    { value = "MATCH", btnLabel = "看无限服新本", desc = string.format("当前筛选: 适合 Lv.%d 的地下城", state.level) },
+    { value = "NEW", btnLabel = "显示全部副本", desc = "当前筛选: ★ 无限服新增地下城与团本 (11个)" },
+    { value = "ALL", btnLabel = "看当前等级", desc = "当前筛选: 全部地下城与团本" },
+  })
 
-  local nextModeLabel = state.dungeonFilter == "MATCH" and "看无限服新本" or (state.dungeonFilter == "NEW" and "显示全部副本" or "看当前等级")
-  local modeTitle = state.dungeonFilter == "MATCH" and string.format("当前筛选: 适合 Lv.%d 的地下城", state.level)
-    or (state.dungeonFilter == "NEW" and "当前筛选: ★ 无限服新增地下城与团本 (11个)" or "当前筛选: 全部地下城与团本")
-
-  local filterCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    filterCard, y,
-    "|cffff8000[副本] 艾泽拉斯地下城与无限服新副本百科 (" .. modeTitle .. ")|r",
-    "包含《魔兽世界：无限服》全部 |cff00ffcc9 大全新五人副本|r（领主大厅、洛丹伦废墟、挖掘场：湿地、达拉然城、沉没之城、克罗多克要塞、奥卡兹监狱、黑喉要塞、塑造者之台）与新增团本（深穴、海加尔峰）及所有必接副本任务坐标。点击蓝色坐标可直接在世界地图标点，点击黄色任务链接可发送至聊天框。",
-    { 0.95, 0.55, 0.15, 0.9 },
-    { 0.13, 0.08, 0.05, 0.92 },
-    nil,
-    nextModeLabel,
-    function()
-      if state.dungeonFilter == "MATCH" then
-        state.dungeonFilter = "NEW"
-      elseif state.dungeonFilter == "NEW" then
-        state.dungeonFilter = "ALL"
-      else
-        state.dungeonFilter = "MATCH"
-      end
-      RefreshUI()
-    end
-  )
+  list:Add({
+    title = "|cffff8000[副本] 艾泽拉斯地下城与无限服新副本百科 (" .. toggle.desc .. ")|r",
+    body = "包含《魔兽世界：无限服》全部 |cff00ffcc9 大全新五人副本|r（领主大厅、洛丹伦废墟、挖掘场：湿地、达拉然城、沉没之城、克罗多克要塞、奥卡兹监狱、黑喉要塞、塑造者之台）与新增团本（深穴、海加尔峰）及所有必接副本任务坐标。点击蓝色坐标可直接在世界地图标点，点击黄色任务链接可发送至聊天框。",
+    theme = { border = { 0.95, 0.55, 0.15, 0.9 }, bg = { 0.13, 0.08, 0.05, 0.92 } },
+    action = toggle.action,
+  })
 
   local shownCount = 0
   local levelMatchedCount = 0
@@ -4415,27 +4438,14 @@ local function RenderTabDungeons()
         end
         if #filteredQuests > 0 then
           table.insert(lines, "|cffffd100必接副本任务 (" .. #filteredQuests .. "个):|r")
-          for _, grp in ipairs(GroupQuestsBySharedPrefix(filteredQuests)) do
-            local q = grp.quests[1]
-            local fTag = q.faction == "horde" and "|cffff5555[部落]|r " or (q.faction == "alliance" and "|cff44aaff[联盟]|r " or "")
-            local cTag = state.dungeonFilter ~= "MATCH" and FormatQuestClassTag(q) or ""
-            local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
-            local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
-            local npcInfo = FormatStepNpcInfo(q, qZone)
-            if npcInfo == "" and q.inside then npcInfo = "(副本内触发)" end
-            local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
-            if #grp.quests > 1 and grp.prefixLen >= 1 then
-              local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "      ", true)
-              local branchTag = string.format("[共%d条分支任务链]", #grp.quests)
-              table.insert(lines, string.format("  - %s%s%s%s%s%s", fTag, cTag, headerPrefix, branchTag, acceptTag, npcSuffix))
-              table.insert(lines, treeBody)
-            else
-              local chainTag = (q.stepCount and q.stepCount > 1) and string.format(q.hasPrereq and " [共%d步·含前置]" or " [共%d步任务链]", q.stepCount) or ""
-              local qLink, qTree = FormatQuestWithSteps(q, q.minLevel or d.minLevel, qZone, "      ", true)
-              table.insert(lines, string.format("  - %s%s%s%s%s%s", fTag, cTag, qLink, acceptTag, chainTag, npcSuffix))
-              if qTree then table.insert(lines, qTree) end
-            end
-          end
+          RenderQuestGroups(lines, GroupQuestsBySharedPrefix(filteredQuests), {
+            fallbackLevel = d.minLevel,
+            fallbackZone = d.entranceZone or d.zone or "",
+            showFaction = true,
+            showClass = (state.dungeonFilter ~= "MATCH"),
+            insideLabel = "(副本内触发)",
+            singleChainWord = "任务链",
+          })
         end
       end
 
@@ -4444,15 +4454,12 @@ local function RenderTabDungeons()
       local matchBadge = isLevelMatch and " |cff00ff00[当前适龄]|r" or ""
       local doneBadge = allDone and " |cff00ff00[任务已全部完成]|r" or ""
 
-      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      y = LayoutCard(
-        card, y,
-        string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge, doneBadge),
-        table.concat(lines, "\n"),
-        d.isNew and { 0.0, 0.85, 0.7, 0.9 } or (isLevelMatch and { 0.2, 0.85, 0.4, 0.9 } or { 0.3, 0.35, 0.45, 0.85 }),
-        d.isNew and { 0.05, 0.13, 0.14, 0.94 } or { 0.08, 0.10, 0.14, 0.92 },
-        string.format("Lv.%d-%d", d.minLevel, d.maxLevel)
-      )
+      list:Add({
+        title = string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge, doneBadge),
+        body = table.concat(lines, "\n"),
+        theme = d.isNew and "dunNew" or (isLevelMatch and "dunMatch" or "info"),
+        badge = string.format("Lv.%d-%d", d.minLevel, d.maxLevel),
+      })
     end
   end
 
@@ -4468,18 +4475,10 @@ local function RenderTabDungeons()
       emptyTitle = "|cffffd100[提示] 未找到符合搜索条件的适龄副本|r"
       emptyBody = string.format("当前搜索条件下没有匹配的未完成 Lv.%d 适龄副本，请清空或调整搜索关键词。", state.level)
     end
-    local emptyCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      emptyCard, y,
-      emptyTitle,
-      emptyBody,
-      { 0.2, 0.85, 0.4, 0.85 },
-      { 0.06, 0.12, 0.09, 0.92 }
-    )
+    list:Add({ title = emptyTitle, body = emptyBody, theme = "milestone" })
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 -- ============================================================================
@@ -4511,24 +4510,19 @@ local function CraftSignColor(value)
 end
 
 local function RenderTabCraftArb()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
   local arb = WoWF_CraftArb
   local mode = state.craftMode == "de" and "de" or "sell"
   local sortKey = state.craftSort == "roi" and "roi" or "profit"
   local onlyProfitable = state.craftOnlyProfit ~= false
 
   if not arb then
-    local brokenCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    LayoutCard(
-      brokenCard, y,
-      "|cffff5555[制造套利] 引擎未加载|r",
-      "未检测到 WoWF_CraftArb，请确认 CraftArb.lua 已在 WoWF.toc 中且加载顺序位于 WoWF.lua 之前。",
-      { 0.8, 0.3, 0.3, 0.9 },
-      { 0.14, 0.06, 0.06, 0.94 }
-    )
-    HideUnusedCards(cardIdx)
-    contentChild:SetHeight(480)
+    list:Add({
+      title = "|cffff5555[制造套利] 引擎未加载|r",
+      body = "未检测到 WoWF_CraftArb，请确认 CraftArb.lua 已在 WoWF.toc 中且加载顺序位于 WoWF.lua 之前。",
+      theme = "arbBad",
+    })
+    list:Finish()
     return
   end
 
@@ -4602,20 +4596,18 @@ local function RenderTabCraftArb()
   end
   table.insert(infoLines, "|cffaaaaaa口径:|r 材料按拍卖行可购深度逐档计价（兼容 EasyAuction / 黑石交易技能），中间产物自动比较「拍卖行直购 / 自己制作」取更便宜的一侧，成品售价取对手最低价（不含押金）。")
 
-  local infoCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    infoCard, y,
-    "|cff00ffcc[制造套利] 用拍卖行行情筛选「当前可制作且能盈利」的配方|r",
-    table.concat(infoLines, "\n"),
-    { 0.0, 0.85, 0.7, 0.95 },
-    { 0.05, 0.14, 0.16, 0.95 },
-    nil,
-    mode == "de" and "切回成品出售" or "切到分解套利",
-    function()
-      state.craftMode = (state.craftMode == "de") and "sell" or "de"
-      RefreshUI()
-    end
-  )
+  list:Add({
+    title = "|cff00ffcc[制造套利] 用拍卖行行情筛选「当前可制作且能盈利」的配方|r",
+    body = table.concat(infoLines, "\n"),
+    theme = "header",
+    action = {
+      label = mode == "de" and "切回成品出售" or "切到分解套利",
+      fn = function()
+        state.craftMode = (state.craftMode == "de") and "sell" or "de"
+        RefreshUI()
+      end,
+    },
+  })
 
   -- 2. 筛选与排序控制
   local filterLines = {
@@ -4628,69 +4620,61 @@ local function RenderTabCraftArb()
     "|cffaaaaaa提示:|r 点击下方专业汇总卡片可只看该专业；在顶部搜索框输入物品名可进一步过滤。",
     "|cffaaaaaa「中间产物」|r 指布卷、锭、皮等半成品：材料会先比较「拍卖行直购」与「自己制作」哪个更便宜，链式展开到最底层的原料（布、矿石、皮）。",
   }
-  local filterCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    filterCard, y,
-    "|cff00ccff筛选与排序|r",
-    table.concat(filterLines, "\n"),
-    { 0.2, 0.55, 0.8, 0.85 },
-    { 0.06, 0.09, 0.14, 0.94 },
-    nil,
-    onlyProfitable and "显示全部配方" or "只看盈利配方",
-    function()
-      state.craftOnlyProfit = not onlyProfitable
-      RefreshUI()
-    end
-  )
+  list:Add({
+    title = "|cff00ccff筛选与排序|r",
+    body = table.concat(filterLines, "\n"),
+    theme = "command",
+    action = {
+      label = onlyProfitable and "显示全部配方" or "只看盈利配方",
+      fn = function()
+        state.craftOnlyProfit = not onlyProfitable
+        RefreshUI()
+      end,
+    },
+  })
 
-  local crossCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    crossCard, y,
-    "|cff00ccff中间产物来源|r",
-    state.craftCrossOwner ~= false
+  list:Add({
+    title = "|cff00ccff中间产物来源|r",
+    body = state.craftCrossOwner ~= false
       and "当前允许借用同账号其他角色已学的中间产物配方（如小号会做布卷）。\n若只想按本角色自己能做的链计算，请点击右下按钮切换。"
       or "当前只按本角色自己会的配方折算中间产物，借不到小号的半成品配方。",
-    { 0.2, 0.55, 0.8, 0.85 },
-    { 0.06, 0.09, 0.14, 0.94 },
-    nil,
-    state.craftCrossOwner ~= false and "只算本角色" or "允许小号自产",
-    function()
-      state.craftCrossOwner = (state.craftCrossOwner == false)
-      RefreshUI()
-    end
-  )
+    theme = "command",
+    action = {
+      label = state.craftCrossOwner ~= false and "只算本角色" or "允许小号自产",
+      fn = function()
+        state.craftCrossOwner = (state.craftCrossOwner == false)
+        RefreshUI()
+      end,
+    },
+  })
 
-  local sortCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    sortCard, y,
-    "|cff00ccff盈利排序|r",
-    string.format("按 |cffffd100%s|r 从高到低排列。ROI = 净利润 ÷ 材料成本，更适合小号资金周转；净利润更适合大批量出货。", sortKey == "roi" and "投资回报率" or "单次净利润"),
-    { 0.2, 0.55, 0.8, 0.85 },
-    { 0.06, 0.09, 0.14, 0.94 },
-    nil,
-    sortKey == "roi" and "改为按净利润" or "改为按 ROI",
-    function()
-      state.craftSort = (state.craftSort == "roi") and "profit" or "roi"
-      RefreshUI()
-    end
-  )
+  list:Add({
+    title = "|cff00ccff盈利排序|r",
+    body = string.format("按 |cffffd100%s|r 从高到低排列。ROI = 净利润 ÷ 材料成本，更适合小号资金周转；净利润更适合大批量出货。", sortKey == "roi" and "投资回报率" or "单次净利润"),
+    theme = "command",
+    action = {
+      label = sortKey == "roi" and "改为按净利润" or "改为按 ROI",
+      fn = function()
+        state.craftSort = (state.craftSort == "roi") and "profit" or "roi"
+        RefreshUI()
+      end,
+    },
+  })
 
-  local skillCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    skillCard, y,
-    "|cff00ccff涨点过滤|r",
-    state.craftOnlySkillUp == true
+  list:Add({
+    title = "|cff00ccff涨点过滤|r",
+    body = state.craftOnlySkillUp == true
       and "当前只显示还能涨点的配方（已灰「不涨点」的配方被隐藏）。适合一边冲专业等级一边回本。"
       or "当前显示全部配方，包含已经不涨点的（可以纯为赚钱批量制作）。",
-    { 0.2, 0.55, 0.8, 0.85 },
-    { 0.06, 0.09, 0.14, 0.94 },
-    nil,
-    state.craftOnlySkillUp == true and "显示全部配方" or "只看还能涨点",
-    function()
-      state.craftOnlySkillUp = state.craftOnlySkillUp ~= true
-      RefreshUI()
-    end
-  )
+    theme = "command",
+    action = {
+      label = state.craftOnlySkillUp == true and "显示全部配方" or "只看还能涨点",
+      fn = function()
+        state.craftOnlySkillUp = state.craftOnlySkillUp ~= true
+        RefreshUI()
+      end,
+    },
+  })
 
   -- 3. 分专业汇总
   if #(meta.professions or {}) > 0 then
@@ -4702,24 +4686,23 @@ local function RenderTabCraftArb()
         CraftSignColor(stats.best), FormatMoney(stats.best or 0),
         isActive and "|cff00ff00[已筛选该专业]|r 再次点击可取消" or "点击右下按钮只看该专业"
       )
-      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      y = LayoutCard(
-        card, y,
-        string.format("%s %s", isActive and "|cff00ff00►|r" or "|cffffd100•|r", WoWF_CraftArb.ProfessionNames[stats.key] or stats.key),
-        body,
-        isActive and { 0.0, 0.9, 0.5, 0.9 } or { 0.25, 0.35, 0.45, 0.8 },
-        isActive and { 0.06, 0.16, 0.10, 0.94 } or { 0.08, 0.10, 0.14, 0.92 },
-        string.format("%d/%d 盈利", stats.profitable or 0, stats.total or 0),
-        isActive and "显示全部专业" or "只看这个专业",
-        function()
-          if isActive then
-            state.craftProfession = nil
-          else
-            state.craftProfession = stats.key
-          end
-          RefreshUI()
-        end
-      )
+      list:Add({
+        title = string.format("%s %s", isActive and "|cff00ff00►|r" or "|cffffd100•|r", WoWF_CraftArb.ProfessionNames[stats.key] or stats.key),
+        body = body,
+        theme = isActive and "routeCur" or "info",
+        badge = string.format("%d/%d 盈利", stats.profitable or 0, stats.total or 0),
+        action = {
+          label = isActive and "显示全部专业" or "只看这个专业",
+          fn = function()
+            if isActive then
+              state.craftProfession = nil
+            else
+              state.craftProfession = stats.key
+            end
+            RefreshUI()
+          end,
+        },
+      })
     end
   end
 
@@ -4824,29 +4807,28 @@ local function RenderTabCraftArb()
       row.ownCharacter and "" or " |cffff8800[同账号小号]|r"
     ))
 
-    local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
     local profitable = (row.profit or 0) > 0
-    y = LayoutCard(
-      card, y,
-      string.format("%s%s|r  |cffffd100[%s]|r", qualityColor, WoWF_CraftArb.ItemName(row.outputID), row.professionName or "专业"),
-      table.concat(bodyLines, "\n"),
-      profitable and { 0.2, 0.9, 0.5, 0.9 } or { 0.5, 0.3, 0.3, 0.85 },
-      profitable and { 0.05, 0.14, 0.10, 0.94 } or { 0.12, 0.08, 0.08, 0.92 },
-      row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
-      "加入购物清单",
-      function()
-        local ok, listIDOrReason, note = WoWF_CraftArb.AddToShoppingList(row, row.name or WoWF_CraftArb.ItemName(row.outputID))
-        if ok then
-          DEFAULT_CHAT_FRAME:AddMessage(string.format(
-            "|cff00ffcc[WoWF 制造套利]|r 已把「%s」的材料写入购物清单（清单 ID: %s）%s",
-            WoWF_CraftArb.ItemName(row.outputID), tostring(listIDOrReason),
-            note and ("，" .. note) or ""))
-        else
-          DEFAULT_CHAT_FRAME:AddMessage(string.format(
-            "|cffff5555[WoWF 制造套利]|r 写入购物清单失败: %s。", tostring(listIDOrReason)))
-        end
-      end
-    )
+    list:Add({
+      title = string.format("%s%s|r  |cffffd100[%s]|r", qualityColor, WoWF_CraftArb.ItemName(row.outputID), row.professionName or "专业"),
+      body = table.concat(bodyLines, "\n"),
+      theme = profitable and "arbGood" or "arbBad",
+      badge = row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
+      action = {
+        label = "加入购物清单",
+        fn = function()
+          local ok, listIDOrReason, note = WoWF_CraftArb.AddToShoppingList(row, row.name or WoWF_CraftArb.ItemName(row.outputID))
+          if ok then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+              "|cff00ffcc[WoWF 制造套利]|r 已把「%s」的材料写入购物清单（清单 ID: %s）%s",
+              WoWF_CraftArb.ItemName(row.outputID), tostring(listIDOrReason),
+              note and ("，" .. note) or ""))
+          else
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+              "|cffff5555[WoWF 制造套利]|r 写入购物清单失败: %s。", tostring(listIDOrReason)))
+          end
+        end,
+      },
+    })
   end
 
   -- 5. 空状态
@@ -4867,51 +4849,42 @@ local function RenderTabCraftArb()
     else
       table.insert(emptyLines, "当前筛选条件下没有配方，可清空搜索框或点击「显示全部专业」重试。")
     end
-    local emptyCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      emptyCard, y,
-      "|cffffd100[提示] 暂无可展示的套利结果|r",
-      table.concat(emptyLines, "\n"),
-      { 0.2, 0.85, 0.4, 0.85 },
-      { 0.06, 0.12, 0.09, 0.92 }
-    )
+    list:Add({
+      title = "|cffffd100[提示] 暂无可展示的套利结果|r",
+      body = table.concat(emptyLines, "\n"),
+      theme = "milestone",
+    })
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 local function RenderTabForeverAndNews()
-  local cardIdx = 1
-  local y = 6
+  local list = CreateCardList(6)
   local cls = GetCurrentClassData()
   local spec = GetCurrentSpecData()
   local recProfs = (spec and spec.recommendedProfs) or ""
   local playerProfs = GetPlayerProfessions()
   local isMatchMode = (state.featureFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
-  local toggleBtnLabel = state.featureFilter == "MATCH" and "查看全部特色与专业" or "仅看当前角色匹配"
-  local modeDesc = state.featureFilter == "MATCH"
-    and string.format("当前筛选: 匹配当前角色 (Lv.%d %s · %s)", state.level, cls and cls.name or state.classKey, spec and spec.name or "默认专精")
-    or "当前筛选: 全部无限服特色玩法与 12 大专业"
+  local toggle = FilterToggle("featureFilter", {
+    {
+      value = "MATCH",
+      btnLabel = "查看全部特色与专业",
+      desc = string.format("当前筛选: 匹配当前角色 (Lv.%d %s · %s)", state.level, cls and cls.name or state.classKey, spec and spec.name or "默认专精"),
+    },
+    {
+      value = "ALL",
+      btnLabel = "仅看当前角色匹配",
+      desc = "当前筛选: 全部无限服特色玩法与 12 大专业",
+    },
+  })
 
-  local filterCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-  y = LayoutCard(
-    filterCard, y,
-    "|cff00ffcc[特色&专业] 无限服专属玩法与 1-300 专业指南 (" .. modeDesc .. ")|r",
-    "包含《魔兽世界：无限服》专属玩法（舒适睡袋、制皮营地帐篷、经典旧世传承点数推荐、遭劫的板条箱等）、12 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营/专业且未完成的特色玩法（已完成睡袋或非制皮帐篷将自动隐藏），以及当前专精推荐专业。",
-    { 0.0, 0.85, 0.7, 0.9 },
-    { 0.05, 0.12, 0.14, 0.94 },
-    nil,
-    toggleBtnLabel,
-    function()
-      if state.featureFilter == "MATCH" then
-        state.featureFilter = "ALL"
-      else
-        state.featureFilter = "MATCH"
-      end
-      RefreshUI()
-    end
-  )
+  list:Add({
+    title = "|cff00ffcc[特色&专业] 无限服专属玩法与 1-300 专业指南 (" .. toggle.desc .. ")|r",
+    body = "包含《魔兽世界：无限服》专属玩法（舒适睡袋、制皮营地帐篷、经典旧世传承点数推荐、遭劫的板条箱等）、12 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营/专业且未完成的特色玩法（已完成睡袋或非制皮帐篷将自动隐藏），以及当前专精推荐专业。",
+    theme = "legacy",
+    action = toggle.action,
+  })
 
   -- 1. 无限服专属玩法攻略（露营、睡袋、经典旧世之树、物资箱等）
   for _, sys in ipairs(Data.foreverSystems or {}) do
@@ -4971,19 +4944,16 @@ local function RenderTabForeverAndNews()
         end
       end
 
-      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-      y = LayoutCard(
-        card, y,
-        "|cff00ffcc" .. (sys.title or "") .. "|r",
-        table.concat(lines, "\n"),
-        { 0.0, 0.85, 0.7, 0.9 },
-        { 0.05, 0.12, 0.14, 0.94 },
-        sys.category or "无限服特色",
-        firstCoord and "标记起始坐标" or nil,
-        firstCoord and function()
-          SetWaypointOrPrint(firstCoord.zone, firstCoord.title, firstCoord.x, firstCoord.y)
-        end or nil
-      )
+      list:Add({
+        title = "|cff00ffcc" .. (sys.title or "") .. "|r",
+        body = table.concat(lines, "\n"),
+        theme = "legacy",
+        badge = sys.category or "无限服特色",
+        action = firstCoord and {
+          label = "标记起始坐标",
+          fn = function() SetWaypointOrPrint(firstCoord.zone, firstCoord.title, firstCoord.x, firstCoord.y) end,
+        } or nil,
+      })
     end
   end
 
@@ -5013,15 +4983,12 @@ local function RenderTabForeverAndNews()
 
         local typeLabel = prof.type == "gathering" and "采集专业" or (prof.type == "secondary" and "生活副业" or "制造专业")
         local recTag = isRec and " |cff00ff00[★当前专精推荐]|r" or ""
-        local cProf = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-        y = LayoutCard(
-          cProf, y,
-          string.format("|cff00ff96[专业] %s (1-300)|r%s", prof.name or prof.id, recTag),
-          table.concat(pLines, "\n"),
-          isRec and { 0.1, 0.9, 0.5, 0.95 } or { 0.25, 0.55, 0.45, 0.85 },
-          isRec and { 0.05, 0.15, 0.10, 0.94 } or { 0.06, 0.11, 0.10, 0.92 },
-          typeLabel
-        )
+        list:Add({
+          title = string.format("|cff00ff96[专业] %s (1-300)|r%s", prof.name or prof.id, recTag),
+          body = table.concat(pLines, "\n"),
+          theme = isRec and "profRec" or "prof",
+          badge = typeLabel,
+        })
       end
     end
   end
@@ -5033,19 +5000,15 @@ local function RenderTabForeverAndNews()
   end
   if #newsLines > 0 then
     local meta = Data.meta or {}
-    local cNews = AcquireCard(cardIdx); cardIdx = cardIdx + 1
-    y = LayoutCard(
-      cNews, y,
-      string.format("|cffffa500[公告] wowf.io 无限服最新热修与官方公告 (数据版本: %s)|r", meta.updatedAt or "最新"),
-      table.concat(newsLines, "\n\n"),
-      { 0.9, 0.6, 0.2, 0.9 },
-      { 0.12, 0.09, 0.05, 0.94 },
-      meta.deployId and string.sub(meta.deployId, 1, 15) or "wowf.io"
-    )
+    list:Add({
+      title = string.format("|cffffa500[公告] wowf.io 无限服最新热修与官方公告 (数据版本: %s)|r", meta.updatedAt or "最新"),
+      body = table.concat(newsLines, "\n\n"),
+      theme = "news",
+      badge = meta.deployId and string.sub(meta.deployId, 1, 15) or "wowf.io",
+    })
   end
 
-  HideUnusedCards(cardIdx)
-  contentChild:SetHeight(math.max(y + 20, 480))
+  list:Finish()
 end
 
 -- ============================================================================
