@@ -532,7 +532,13 @@ function Arb.RecipeList()
           seen[key] = true
           local professionKey = Arb.ProfessionKey(recipe.professionName) or Arb.ProfessionKey(set.professionName)
           local skill = professionKey and set.skills and set.skills[professionKey] or nil
-          recipe.professionKey, recipe.professionName = professionKey, professionKey and Arb.ProfessionNames[professionKey] or recipe.professionName
+          if not professionKey and type(recipe.professionName) == "string" then
+            -- 未收录的专业名（如后续资料片新增专线）原样保留，避免被清空
+            recipe.professionKey, recipe.professionName = nil, recipe.professionName
+          else
+            recipe.professionKey = professionKey
+            recipe.professionName = professionKey and Arb.ProfessionNames[professionKey] or recipe.professionName
+          end
           recipe.owner, recipe.ownerName, recipe.ownerSource = set.owner, set.ownerName, set.source
           recipe.skill, recipe.skillMax = skill and skill.level or nil, skill and skill.max or nil
           tinsert(list, recipe)
@@ -540,13 +546,14 @@ function Arb.RecipeList()
       end
     end
   end
-  ingest(storedRecipeSets())
+  local sets = storedRecipeSets()
+  ingest(sets)
   local own = ownRecipeSet()
-  -- 同一角色若 EasyAuction 已有更完整的采集结果，则不再叠加本插件的副本
+  -- 同一角色若 EasyAuction 已有采集结果，则不再叠加本插件的副本
   if own then
     local duplicated = false
-    for _, set in ipairs(storedRecipeSets()) do
-      if set.owner == own.owner then duplicated = true; break end
+    for _, set in ipairs(sets) do
+      if set.owner == own.owner or Arb.IsOwnCharacter(set.owner) then duplicated = true; break end
     end
     if not duplicated then ingest({ own }) end
   end

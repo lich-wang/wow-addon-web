@@ -8477,10 +8477,11 @@ local function RenderTabCraftArb()
 
   -- 2. 筛选与排序控制
   local filterLines = {
-    string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  排序: %s",
+    string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s",
       state.craftProfession and (WoWF_CraftArb.ProfessionNames[state.craftProfession] or state.craftProfession) or "全部专业",
       onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100包含亏损配方|r",
       state.craftCrossOwner ~= false and "|cff99e6ff含同账号小号自产|r" or "|cffaaaaaa仅本角色自产|r",
+      state.craftOnlySkillUp == true and "|cffffd100只看涨点|r" or "|cffaaaaaa含不涨点|r",
       sortKey == "roi" and "投资回报率 (ROI)" or "单次净利润"),
     "|cffaaaaaa提示:|r 点击下方专业汇总卡片可只看该专业；在顶部搜索框输入物品名可进一步过滤。",
     "|cffaaaaaa「中间产物」|r 指布卷、锭、皮等半成品：材料会先比较「拍卖行直购」与「自己制作」哪个更便宜，链式展开到最底层的原料（布、矿石、皮）。",
@@ -8528,6 +8529,23 @@ local function RenderTabCraftArb()
     sortKey == "roi" and "改为按净利润" or "改为按 ROI",
     function()
       state.craftSort = (state.craftSort == "roi") and "profit" or "roi"
+      RefreshUI()
+    end
+  )
+
+  local skillCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    skillCard, y,
+    "|cff00ccff涨点过滤|r",
+    state.craftOnlySkillUp == true
+      and "当前只显示还能涨点的配方（已灰「不涨点」的配方被隐藏）。适合一边冲专业等级一边回本。"
+      or "当前显示全部配方，包含已经不涨点的（可以纯为赚钱批量制作）。",
+    { 0.2, 0.55, 0.8, 0.85 },
+    { 0.06, 0.09, 0.14, 0.94 },
+    nil,
+    state.craftOnlySkillUp == true and "显示全部配方" or "只看还能涨点",
+    function()
+      state.craftOnlySkillUp = state.craftOnlySkillUp ~= true
       RefreshUI()
     end
   )
