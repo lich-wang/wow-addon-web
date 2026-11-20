@@ -135,6 +135,58 @@ local state = {
   craftOnlySkillUp = false, -- 只看还能涨点的配方
 }
 
+local PERSISTED_STATE_KEYS = {
+  "autoFollow",
+  "level",
+  "classKey",
+  "specIndex",
+  "routeId",
+  "faction",
+  "activeTab",
+  "routeFilter",
+  "talentFilter",
+  "dungeonFilter",
+  "featureFilter",
+  "craftMode",
+  "craftSort",
+  "craftOnlyProfit",
+  "craftProfession",
+  "craftCrossOwner",
+  "craftOnlySkillUp",
+}
+
+local hasLoadedPersistedState = false
+local function LoadPersistedState()
+  if hasLoadedPersistedState then return end
+  hasLoadedPersistedState = true
+  WoWFDB = WoWFDB or {}
+  local saved = WoWFDB.uiState
+  if type(saved) ~= "table" then return end
+  for _, key in ipairs(PERSISTED_STATE_KEYS) do
+    if saved[key] ~= nil then
+      state[key] = saved[key]
+    end
+  end
+  if saved.craftProfession == false then
+    state.craftProfession = nil
+  end
+end
+
+local function SavePersistedState()
+  WoWFDB = WoWFDB or {}
+  if type(WoWFDB.uiState) ~= "table" then
+    WoWFDB.uiState = {}
+  end
+  for _, key in ipairs(PERSISTED_STATE_KEYS) do
+    local val = state[key]
+    if val == nil then
+      WoWFDB.uiState[key] = false
+    else
+      WoWFDB.uiState[key] = val
+    end
+  end
+end
+
 -- ============================================================================
 -- 1. 角色状态自动探测与智能匹配
 -- ============================================================================
@@ -3374,9 +3426,14 @@ local function AcquireCard(index)
   return c
 end
 
+local arbToolbar
+
 local function HideUnusedCards(fromIndex)
   for i = fromIndex, #cardPool do
     cardPool[i]:Hide()
+  end
+  if arbToolbar and state.activeTab ~= 8 then
+    arbToolbar:Hide()
   end
 end
 
@@ -4504,6 +4561,72 @@ local function CraftSignColor(value)
   return (tonumber(value) or 0) >= 0 and "|cff44ff88" or "|cffff5555"
 end
 
+local function AttachTooltip(widget, title, bodyOrFn)
+  widget:SetScript("OnEnter", function(self)
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(title, 1, 0.82, 0)
+    local body = (type(bodyOrFn) == "function") and bodyOrFn() or bodyOrFn
+    if body and body ~= "" then
+      GameTooltip:AddLine(body, 0.85, 0.9, 0.95, true)
+    end
+    GameTooltip:Show()
+  end)
+  widget:SetScript("OnLeave", function()
+    if GameTooltip then GameTooltip:Hide() end
+  end)
+end
+
+local function LayoutArbToolbar(yOffset, opts)
+  local width = (contentChild:GetWidth() or 720) - 16
+  if width < 500 then width = 710 end
+  if not arbToolbar then
+    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
+    arbToolbar = CreateFrame("Frame", nil, contentChild, template)
+    arbToolbar:SetHeight(34)
+    if arbToolbar.SetBackdrop then
+      arbToolbar:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 8, edgeSize = 10,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+      })
+      arbToolbar:SetBackdropColor(0.06, 0.09, 0.14, 0.94)
+      arbToolbar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
+    end
+    arbToolbar.btns = {}
+    for i = 1, 4 do
+      local btn = CreateFrame("Button", nil, arbToolbar, "UIPanelButtonTemplate")
+      btn:SetHeight(22)
+      arbToolbar.btns[i] = btn
+    end
+  end
+
+  arbToolbar:SetWidth(width)
+  arbToolbar:ClearAllPoints()
+  arbToolbar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
+  arbToolbar:Show()
+
+  local btnW = math.floor((width - 16 - 18) / 4)
+  for i, item in ipairs(opts.buttons or {}) do
+    local btn = arbToolbar.btns[i]
+    btn:SetWidth(btnW)
+    btn:ClearAllPoints()
+    if i == 1 then
+      btn:SetPoint("LEFT", arbToolbar, "LEFT", 8, 0)
+    else
+      btn:SetPoint("LEFT", arbToolbar.btns[i - 1], "RIGHT", 6, 0)
+    end
+    btn:SetText(item.label)
+    btn:SetScript("OnClick", item.fn)
+    AttachTooltip(btn, item.tipTitle, item.tipBody)
+    btn:Show()
+  end
+
+  return yOffset + 34 + 8
+end
+
 local function RenderTabCraftArb()
   local list = CreateCardList(6)
   local arb = WoWF_CraftArb
@@ -4589,7 +4712,12 @@ local function RenderTabCraftArb()
   if mode == "de" and not hasEnchanting then
     table.insert(infoLines, "|cffff5555注意:|r 当前角色没有【附魔】，分解套利只代表「若能分解」的理论值，实际无法执行。")
   end
-  table.insert(infoLines, "|cffaaaaaa口径:|r 材料按拍卖行可购深度逐档计价（兼容 EasyAuction / 黑石交易技能），中间产物自动比较「拍卖行直购 / 自己制作」取更便宜的一侧，成品售价取对手最低价（不含押金）。")
+  table.insert(infoLines, string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s",
+    state.craftProfession and (arb.ProfessionNames[state.craftProfession] or state.craftProfession) or "全部专业",
+    onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100含亏损|r",
+    state.craftCrossOwner ~= false and "|cff99e6ff含小号自产|r" or "|cffaaaaaa仅本角色|r",
+    state.craftOnlySkillUp == true and "|cffffd100只看涨点|r" or "|cffaaaaaa含不涨点|r",
+    sortKey == "roi" and "ROI" or "单次净利润"))
 
   list:Add({
     title = "|cff00ffcc[制造套利] 用拍卖行行情筛选「当前可制作且能盈利」的配方|r",
@@ -4604,70 +4732,45 @@ local function RenderTabCraftArb()
     },
   })
 
-  -- 2. 筛选与排序控制
-  local filterLines = {
-    string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s",
-      state.craftProfession and (arb.ProfessionNames[state.craftProfession] or state.craftProfession) or "全部专业",
-      onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100包含亏损配方|r",
-      state.craftCrossOwner ~= false and "|cff99e6ff含同账号小号自产|r" or "|cffaaaaaa仅本角色自产|r",
-      state.craftOnlySkillUp == true and "|cffffd100只看涨点|r" or "|cffaaaaaa含不涨点|r",
-      sortKey == "roi" and "投资回报率 (ROI)" or "单次净利润"),
-    "|cffaaaaaa提示:|r 点击下方专业汇总卡片可只看该专业；在顶部搜索框输入物品名可进一步过滤。",
-    "|cffaaaaaa「中间产物」|r 指布卷、锭、皮等半成品：材料会先比较「拍卖行直购」与「自己制作」哪个更便宜，链式展开到最底层的原料（布、矿石、皮）。",
-  }
-  list:Add({
-    title = "|cff00ccff筛选与排序|r",
-    body = table.concat(filterLines, "\n"),
-    theme = "command",
-    action = {
-      label = onlyProfitable and "显示全部配方" or "只看盈利配方",
-      fn = function()
-        state.craftOnlyProfit = not onlyProfitable
-        RefreshUI()
-      end,
-    },
-  })
-
-  list:Add({
-    title = "|cff00ccff中间产物来源|r",
-    body = state.craftCrossOwner ~= false
-      and "当前允许借用同账号其他角色已学的中间产物配方（如小号会做布卷）。\n若只想按本角色自己能做的链计算，请点击右上角按钮切换。"
-      or "当前只按本角色自己会的配方折算中间产物，借不到小号的半成品配方。",
-    theme = "command",
-    action = {
-      label = state.craftCrossOwner ~= false and "只算本角色" or "允许小号自产",
-      fn = function()
-        state.craftCrossOwner = (state.craftCrossOwner == false)
-        RefreshUI()
-      end,
-    },
-  })
-
-  list:Add({
-    title = "|cff00ccff盈利排序|r",
-    body = string.format("按 |cffffd100%s|r 从高到低排列。ROI = 净利润 ÷ 材料成本，更适合小号资金周转；净利润更适合大批量出货。", sortKey == "roi" and "投资回报率" or "单次净利润"),
-    theme = "command",
-    action = {
-      label = sortKey == "roi" and "改为按净利润" or "改为按 ROI",
-      fn = function()
-        state.craftSort = (state.craftSort == "roi") and "profit" or "roi"
-        RefreshUI()
-      end,
-    },
-  })
-
-  list:Add({
-    title = "|cff00ccff涨点过滤|r",
-    body = state.craftOnlySkillUp == true
-      and "当前只显示还能涨点的配方（已灰「不涨点」的配方被隐藏）。适合一边冲专业等级一边回本。"
-      or "当前显示全部配方，包含已经不涨点的（可以纯为赚钱批量制作）。",
-    theme = "command",
-    action = {
-      label = state.craftOnlySkillUp == true and "显示全部配方" or "只看还能涨点",
-      fn = function()
-        state.craftOnlySkillUp = state.craftOnlySkillUp ~= true
-        RefreshUI()
-      end,
+  -- 2. 紧凑工具条（4 个筛选/排序开关 + Tooltip 口径说明）
+  list.y = LayoutArbToolbar(list.y, {
+    buttons = {
+      {
+        label = onlyProfitable and "仅盈利: 开" or "仅盈利: 关",
+        fn = function()
+          state.craftOnlyProfit = not onlyProfitable
+          RefreshUI()
+        end,
+        tipTitle = "盈亏过滤",
+        tipBody = "开启时仅展示净利润 > 0 的配方；关闭后可查看亏损明细（材料按拍卖行可购深度逐档计价，成品售价取对手最低价不含押金）。",
+      },
+      {
+        label = state.craftCrossOwner ~= false and "中间产物: 含小号" or "中间产物: 仅本角",
+        fn = function()
+          state.craftCrossOwner = (state.craftCrossOwner == false)
+          RefreshUI()
+        end,
+        tipTitle = "中间产物来源",
+        tipBody = "「中间产物」指布卷、锭、皮等半成品：会自动比较「拍卖行直购」与「自己制作」哪个更便宜，链式展开到最底层原料。允许含小号时可借用同账号其他角色已学配方。",
+      },
+      {
+        label = sortKey == "roi" and "排序: ROI" or "排序: 净利润",
+        fn = function()
+          state.craftSort = (state.craftSort == "roi") and "profit" or "roi"
+          RefreshUI()
+        end,
+        tipTitle = "盈利排序口径",
+        tipBody = "ROI = 净利润 ÷ 材料成本，适合小号资金周转；单次净利润适合大批量出货。",
+      },
+      {
+        label = state.craftOnlySkillUp == true and "涨点: 只看涨点" or "涨点: 全部",
+        fn = function()
+          state.craftOnlySkillUp = state.craftOnlySkillUp ~= true
+          RefreshUI()
+        end,
+        tipTitle = "技能涨点过滤",
+        tipBody = "开启后隐藏已灰（不涨点）的配方，适合边冲专业等级边回本。",
+      },
     },
   })
 
@@ -5134,23 +5237,7 @@ RefreshUI = function(preserveScroll)
       scrollFrame:SetVerticalScroll(0)
     end
   end
-end
-
-local function AttachTooltip(widget, title, bodyOrFn)
-  widget:SetScript("OnEnter", function(self)
-    if not GameTooltip then return end
-    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-    GameTooltip:ClearLines()
-    GameTooltip:AddLine(title, 1, 0.82, 0)
-    local body = (type(bodyOrFn) == "function") and bodyOrFn() or bodyOrFn
-    if body and body ~= "" then
-      GameTooltip:AddLine(body, 0.85, 0.9, 0.95, true)
-    end
-    GameTooltip:Show()
-  end)
-  widget:SetScript("OnLeave", function()
-    if GameTooltip then GameTooltip:Hide() end
-  end)
+  SavePersistedState()
 end
 
 local dropdownMenu
@@ -5602,6 +5689,7 @@ local hasPrintedWelcome = false
 
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+    LoadPersistedState()
     CreateMinimapButton()
     SyncPlayerCharacter()
     RefreshUI()
@@ -5680,7 +5768,6 @@ SlashCmdList["WOWF"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf dungeon|r — 地下城百科   |cffffd100/wowf news|r — 专业&无限特色   |cffffd100/wowf cmd|r — 常用命令   |cffffd100/wowf arb|r — 制造套利")
     return
   end
-  state.autoFollow = true
   local def = SLASH_TO_TAB[cmd] or TAB_DEFS[1]
   if def.onSlash then def.onSlash() end
   ToggleMainWindow(def.id)
