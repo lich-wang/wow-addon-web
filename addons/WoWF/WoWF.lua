@@ -583,7 +583,8 @@ local ORDERED_ZONE_KEYWORDS = {
   "奥格瑞玛", "暴风城", "铁炉堡", "幽暗城", "雷霆崖", "达纳苏斯", "丹莫罗", "赤脊山", "湿地",
   "荆棘谷", "辛特兰", "黑石山", "莫高雷", "黑海岸", "灰谷", "菲拉斯", "艾萨拉",
   "泽风岛", "河林地", "河林", "海加尔山", "海加尔峰", "辛德拉",
-  "藏宝海湾", "加基森", "棘齿城", "塞拉摩", "闪金镇", "卡拉诺斯", "布瑞尔", "哨兵岭", "塞尔萨玛",
+  "藏宝海湾", "加基森", "棘齿城", "塞拉摩", "羽月要塞", "阿斯特兰纳", "永望镇", "翡翠圣地",
+  "闪金镇", "卡拉诺斯", "布瑞尔", "哨兵岭", "塞尔萨玛",
   "瑟伯切尔", "湖畔镇", "夜色镇", "米奈希尔港", "南海镇", "塔伦米尔", "避难谷地", "落锤镇",
   "格罗姆高营地", "卡加斯", "斯通纳德", "鹰巢山", "恶齿村", "瑟银哨塔", "守望堡", "十字路口",
 }
@@ -750,6 +751,23 @@ local function OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
   local displayLabel = (name and name ~= "") and name or displayZone
 
   if not numX or not numY then
+    if mapID then
+      if C_Map and C_Map.OpenWorldMap then
+        pcall(C_Map.OpenWorldMap, mapID)
+      elseif WorldMapFrame then
+        if ShowUIPanel then
+          pcall(ShowUIPanel, WorldMapFrame)
+        else
+          WorldMapFrame:Show()
+        end
+        if WorldMapFrame.SetMapID then
+          pcall(WorldMapFrame.SetMapID, WorldMapFrame, mapID)
+        end
+      end
+      if WorldMapFrame and WorldMapFrame:IsShown() and WorldMapFrame.Raise then
+        pcall(WorldMapFrame.Raise, WorldMapFrame)
+      end
+    end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 目标位置: |cffffd100" .. displayZone .. " - " .. displayLabel .. "|r")
     return
   end
@@ -833,26 +851,92 @@ local function FormatCoordLink(zone, label, x, y, prefixSpace)
   )
 end
 
-local function FormatNpcMapLink(zone, npc, x, y)
-  local zText = (zone and zone ~= "") and zone or ""
-  local nText = (npc and npc ~= "") and npc or ""
-  local displayName = (nText ~= "") and nText or ((zText ~= "") and zText or "坐标")
+local ITEM_QUALITY_COLORS_HEX = {
+  [0] = "|cff9d9d9d",
+  [1] = "|cffffffff",
+  [2] = "|cff1eff00",
+  [3] = "|cff0070dd",
+  [4] = "|cffa335ee",
+  [5] = "|cffff8000",
+}
+
+local function ResolveLiveItemLink(itemID, fallbackLink)
+  local id = tonumber(itemID)
+  if not id or id <= 0 then return fallbackLink end
+  local getter = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+  if getter then
+    local ok, _, liveLink = pcall(getter, id)
+    if ok and type(liveLink) == "string" and liveLink ~= "" then
+      return liveLink
+    end
+  end
+  if C_Item and C_Item.RequestLoadItemDataByID then
+    pcall(C_Item.RequestLoadItemDataByID, id)
+  end
+  return fallbackLink
+end
+
+local function FormatItemLink(itemID, fallbackName, fallbackQuality)
+  if WoWF_CraftArb and type(WoWF_CraftArb.ItemLink) == "function" then
+    return WoWF_CraftArb.ItemLink(itemID, fallbackName, fallbackQuality)
+  end
+  local id = tonumber(itemID)
+  if not id or id <= 0 then
+    return (fallbackName and fallbackName ~= "" and tostring(fallbackName)) or "未知物品"
+  end
+  local liveLink = ResolveLiveItemLink(id, nil)
+  if liveLink then return liveLink end
+  local q = tonumber(fallbackQuality) or 1
+  local color = ITEM_QUALITY_COLORS_HEX[q] or ITEM_QUALITY_COLORS_HEX[1]
+  local name = (fallbackName and fallbackName ~= "" and tostring(fallbackName)) or ("物品 #" .. tostring(id))
+  return string.format("%s|Hitem:%d:0:0:0:0:0:0:0|h[%s]|h|r", color, id, name)
+end
+
+local function FormatNpcMapLink(zone, npc, x, y, opts)
+  opts = opts or {}
+  local zText = (zone and zone ~= "") and tostring(zone) or ""
+  local pText = (opts.place and opts.place ~= "") and tostring(opts.place) or ""
+  local nText = (npc and npc ~= "") and tostring(npc) or ""
+  local displayName = (nText ~= "") and nText or ((pText ~= "") and pText or ((zText ~= "") and zText or "坐标"))
+
   local numX = tonumber(x)
   local numY = tonumber(y)
-  local mapID = (numX and numY) and ResolveUiMapID(zText, nText) or nil
+  local mapID = (numX and numY) and ResolveUiMapID(zText ~= "" and zText or pText, nText) or nil
+
+  local locPrefix = ""
+  if opts.omitZone ~= true then
+    if zText ~= "" and pText ~= "" and pText ~= zText and not string.find(zText, pText, 1, true) and not string.find(pText, zText, 1, true) then
+      locPrefix = zText .. "·" .. pText
+    elseif zText ~= "" then
+      locPrefix = zText
+    elseif pText ~= "" then
+      locPrefix = pText
+    end
+  elseif pText ~= "" and pText ~= zText and not string.find(zText, pText, 1, true) then
+    locPrefix = pText
+  end
+
   local linkPart
   if numX and numY and mapID then
-    local safeZone = SanitizeLinkField((zText ~= "") and zText or nText)
-    local safeLabel = SanitizeLinkField((nText ~= "") and nText or zText)
+    local safeZone = SanitizeLinkField(locPrefix ~= "" and locPrefix or ((zText ~= "") and zText or nText))
+    local safeLabel = SanitizeLinkField((nText ~= "") and nText or ((locPrefix ~= "") and locPrefix or zText))
     linkPart = string.format(
       "|cff00ffcc|Hwowfmap:%d:%.1f:%.1f:%s:%s|h[%s]|h|r",
       mapID, numX, numY, safeZone, safeLabel, displayName
     )
+  elseif nText ~= "" then
+    local safeZone = SanitizeLinkField(locPrefix ~= "" and locPrefix or zText)
+    local safeLabel = SanitizeLinkField(nText)
+    linkPart = string.format(
+      "|cff00ffcc|Hwowfnpc:%s:%s|h[%s]|h|r",
+      safeZone, safeLabel, displayName
+    )
   else
     linkPart = "|cff00ffcc" .. displayName .. "|r"
   end
-  if zText ~= "" and nText ~= "" then
-    return zText .. " " .. linkPart
+
+  if locPrefix ~= "" and nText ~= "" and locPrefix ~= nText then
+    return locPrefix .. " " .. linkPart
   end
   return linkPart
 end
@@ -860,12 +944,17 @@ end
 local function FormatStepNpcInfo(st, fallbackZone)
   if type(st) ~= "table" then return "" end
   local stZone = (st.zone and st.zone ~= "") and st.zone or (fallbackZone or "")
-  local hasStart = (st.npc and st.npc ~= "") or (st.x ~= nil and st.y ~= nil) or (stZone ~= "")
-  local startStr = hasStart and FormatNpcMapLink(stZone, st.npc, st.x, st.y) or ""
+  local startStr = ""
+  if st.startItemId and (not st.npc or st.npc == "") then
+    startStr = "物品: " .. FormatItemLink(st.startItemId, st.startItemName)
+  else
+    local hasStart = (st.npc and st.npc ~= "") or (st.x ~= nil and st.y ~= nil) or (stZone ~= "")
+    startStr = hasStart and FormatNpcMapLink(stZone, st.npc, st.x, st.y, { place = st.place }) or ""
+  end
   local endZone = (st.endZone and st.endZone ~= "") and st.endZone or stZone
   local hasEnd = st.endNpc and st.endNpc ~= "" and (st.endNpc ~= st.npc or endZone ~= stZone or st.endX ~= st.x or st.endY ~= st.y)
   if hasEnd then
-    local endStr = FormatNpcMapLink(endZone, st.endNpc, st.endX, st.endY)
+    local endStr = FormatNpcMapLink(endZone, st.endNpc, st.endX, st.endY, { place = st.endPlace })
     if startStr ~= "" then
       return "接: " .. startStr .. "，交: " .. endStr
     end
@@ -878,6 +967,7 @@ local function DetectZoneInPrefix(prefixText, fallbackZone)
   if prefixText and prefixText ~= "" then
     local bestKw = nil
     local bestPos = -1
+    local bestEnd = -1
     local bestLen = 0
     for _, kw in ipairs(ORDERED_ZONE_KEYWORDS) do
       local pos = 1
@@ -886,6 +976,7 @@ local function DetectZoneInPrefix(prefixText, fallbackZone)
         if not s then break end
         if s > bestPos or (s == bestPos and #kw > bestLen) then
           bestPos = s
+          bestEnd = e
           bestLen = #kw
           bestKw = kw
         end
@@ -893,14 +984,15 @@ local function DetectZoneInPrefix(prefixText, fallbackZone)
       end
     end
     if bestKw then
-      return bestKw
+      return bestKw, bestEnd
     end
   end
-  return fallbackZone or ""
+  return fallbackZone or "", nil
 end
 
-local function LinkifyInlineCoords(text, defaultZone, defaultLabel)
+local function LinkifyInlineCoords(text, defaultZone, defaultLabel, opts)
   if not text or text == "" then return "" end
+  local linkifyNpc = opts and opts.linkifyNpc == true
   local out = tostring(text)
   -- 将中文全角括号内的坐标统一转为半角括号再替换为可点击地图链接
   out = string.gsub(out, "（(%d+%.?%d*)%s*[,，]%s*(%d+%.?%d*)）", "(%1, %2)")
@@ -913,16 +1005,34 @@ local function LinkifyInlineCoords(text, defaultZone, defaultLabel)
       break
     end
     local before = string.sub(out, lastPos, s - 1)
-    table.insert(result, before)
     local nx = tonumber(xStr)
     local ny = tonumber(yStr)
     if nx and ny and nx >= 1 and nx <= 99.9 and ny >= 1 and ny <= 99.9 then
       local contextStart = math.max(1, s - 60)
       local recentText = string.sub(out, contextStart, s - 1)
-      local inferredZone = DetectZoneInPrefix(recentText, defaultZone)
-      local link = FormatCoordLink(inferredZone, defaultLabel or inferredZone, nx, ny, false)
-      table.insert(result, (link ~= "") and link or string.sub(out, s, e))
+      local inferredZone, zEndRel = DetectZoneInPrefix(recentText, defaultZone)
+      local replacedWithNpc = false
+      if linkifyNpc and zEndRel then
+        local zEndAbs = contextStart + zEndRel - 1
+        if zEndAbs >= lastPos and zEndAbs < s then
+          local npcSeg = string.sub(out, zEndAbs + 1, s - 1)
+          local npcTrimmed = string.gsub(npcSeg, "^%s*(.-)%s*$", "%1")
+          if npcTrimmed ~= "" and #npcTrimmed <= 48 and not string.find(npcTrimmed, "[：:/|、，,（）%(%)。；;\n]") then
+            local prefixBeforeNpc = string.sub(out, lastPos, zEndAbs)
+            local npcLink = FormatNpcMapLink(inferredZone, npcTrimmed, nx, ny, { omitZone = true })
+            table.insert(result, prefixBeforeNpc)
+            table.insert(result, " " .. npcLink)
+            replacedWithNpc = true
+          end
+        end
+      end
+      if not replacedWithNpc then
+        table.insert(result, before)
+        local link = FormatCoordLink(inferredZone, defaultLabel or inferredZone, nx, ny, false)
+        table.insert(result, (link ~= "") and link or string.sub(out, s, e))
+      end
     else
+      table.insert(result, before)
       table.insert(result, string.sub(out, s, e))
     end
     lastPos = e + 1
@@ -1242,9 +1352,7 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
       if not startInfo and type(started and started[3]) == "table" and tonumber(started[3][1]) then
         local itemId = tonumber(started[3][1])
         local itemName = (_G.ItemDB and _G.ItemDB.name and _G.ItemDB.name(itemId)) or (GetItemInfo and GetItemInfo(itemId))
-        if itemName and itemName ~= "" then
-          startInfo = { npc = "[物品] " .. itemName, zone = "", x = nil, y = nil }
-        end
+        startInfo = { npc = nil, startItemId = itemId, startItemName = itemName, zone = "", x = nil, y = nil }
       end
       local endInfo = ResolveQuestieNpc(finished and finished[1]) or ResolveQuestieObject(finished and finished[2])
       local preS = _G.QuestDB.preQuestSingle and _G.QuestDB.preQuestSingle(qid)
@@ -1258,6 +1366,8 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
         level = (type(qLevel) == "number" and qLevel > 0) and qLevel or nil,
         minLevel = (type(qMinLevel) == "number" and qMinLevel > 0) and qMinLevel or nil,
         npc = (startInfo and startInfo.npc ~= "") and startInfo.npc or nil,
+        startItemId = startInfo and startInfo.startItemId or nil,
+        startItemName = startInfo and startInfo.startItemName or nil,
         zone = (startInfo and startInfo.zone ~= "") and startInfo.zone or nil,
         x = startInfo and startInfo.x or nil,
         y = startInfo and startInfo.y or nil,
@@ -1276,7 +1386,7 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
   if raw == false then return fallbackObj end
   if not fallbackObj then return raw end
   local fbHasLoc = (fallbackObj.x ~= nil and fallbackObj.y ~= nil) or (fallbackObj.npc and fallbackObj.npc ~= "")
-  local rawHasLoc = (raw.x ~= nil and raw.y ~= nil) or (raw.npc and raw.npc ~= "")
+  local rawHasLoc = (raw.x ~= nil and raw.y ~= nil) or (raw.npc and raw.npc ~= "") or (raw.startItemId ~= nil)
   local useFbLoc = fbHasLoc or (not rawHasLoc)
   return {
     id = raw.id,
@@ -1284,6 +1394,8 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
     level = raw.level or fallbackObj.level,
     minLevel = raw.minLevel or fallbackObj.minLevel,
     npc = useFbLoc and (fallbackObj.npc or "") or (raw.npc or ""),
+    startItemId = (not useFbLoc) and raw.startItemId or fallbackObj.startItemId,
+    startItemName = (not useFbLoc) and raw.startItemName or fallbackObj.startItemName,
     zone = useFbLoc and (fallbackObj.zone or "") or (raw.zone or ""),
     x = useFbLoc and fallbackObj.x or raw.x,
     y = useFbLoc and fallbackObj.y or raw.y,
@@ -1319,6 +1431,8 @@ local function ResolveQuestChainFromQuestieDB(q)
       name = info.name,
       level = info.level or q.level,
       npc = info.npc or "",
+      startItemId = info.startItemId,
+      startItemName = info.startItemName,
       zone = info.zone or "",
       place = "",
       x = info.x,
@@ -1396,11 +1510,15 @@ local function ResolveQuestChainFromQuestieDB(q)
       local firstInfo = GetQuestieQuestInfo(firstSt.id)
       if firstInfo and firstInfo.minLevel then q.minLevel = firstInfo.minLevel end
       q.npc = firstSt.npc ~= "" and firstSt.npc or q.npc
+      q.startItemId = firstSt.startItemId or q.startItemId
+      q.startItemName = firstSt.startItemName or q.startItemName
       q.zone = firstSt.zone ~= "" and firstSt.zone or q.zone
       q.x = firstSt.x or q.x
       q.y = firstSt.y or q.y
     else
       q.npc = mainInfo.npc ~= "" and mainInfo.npc or q.npc
+      q.startItemId = mainInfo.startItemId or q.startItemId
+      q.startItemName = mainInfo.startItemName or q.startItemName
       q.zone = mainInfo.zone ~= "" and mainInfo.zone or q.zone
       q.x = mainInfo.x or q.x
       q.y = mainInfo.y or q.y
@@ -1413,6 +1531,8 @@ local function ResolveQuestChainFromQuestieDB(q)
     q.stepCount = 1
     q.hasPrereq = false
     q.npc = mainInfo.npc ~= "" and mainInfo.npc or q.npc
+    q.startItemId = mainInfo.startItemId or q.startItemId
+    q.startItemName = mainInfo.startItemName or q.startItemName
     q.zone = mainInfo.zone ~= "" and mainInfo.zone or q.zone
     q.x = mainInfo.x or q.x
     q.y = mainInfo.y or q.y
@@ -3296,6 +3416,34 @@ local function OnCardHyperlinkEnter(self, link)
       GameTooltip:AddLine("|cff00ff00右键点击:|r 打开世界地图标记接取坐标")
     end
     GameTooltip:Show()
+  elseif linkType == "wowfnpc" then
+    local zone, label = string.match(payload or "", "^([^:]*):(.*)$")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(string.format("|cff00ffcc[NPC 位置]|r %s", (label and label ~= "" and label ~= "-") and label or "目标 NPC"))
+    if zone and zone ~= "" and zone ~= "-" then
+      GameTooltip:AddLine(string.format("区域: |cffffd100%s|r", zone))
+    end
+    GameTooltip:AddLine("|cffaaaaaa暂无精确坐标（点击可打开对应区域地图）|r")
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("|cff00ff00左键点击:|r 打开世界地图定位区域")
+    GameTooltip:AddLine("|cff00ff00Shift+左键:|r 发送 NPC 位置到聊天框")
+    GameTooltip:Show()
+  elseif linkType == "item" then
+    local itemID = tonumber(string.match(payload or "", "^(%d+)"))
+    local liveLink = itemID and ResolveLiveItemLink(itemID, nil) or nil
+    local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, liveLink or link)
+    if not ok then
+      GameTooltip:ClearLines()
+      if itemID and GameTooltip.SetItemByID then
+        ok = pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
+      end
+      if not ok then
+        GameTooltip:AddLine(itemID and ("物品 #" .. tostring(itemID)) or "物品信息加载中…", 1, 1, 1)
+      end
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("|cff00ff00左键:|r 查看物品详情  |cff00ff00Shift+左键:|r 发送到聊天框")
+    GameTooltip:Show()
   elseif linkType == "wowfchain" then
     GameTooltip:ClearLines()
     GameTooltip:AddLine("|cff00ffcc[任务链显示]|r")
@@ -3351,6 +3499,28 @@ local function OnCardHyperlinkClick(self, link, text, button)
       end
     end
     InsertLinkToChat(chatLink)
+  elseif linkType == "wowfnpc" then
+    local zone, label = string.match(payload or "", "^([^:]*):(.*)$")
+    local zText = (zone and zone ~= "-") and zone or ""
+    local lText = (label and label ~= "-") and label or zText
+    if IsShiftKeyDown and IsShiftKeyDown() then
+      local msg = (zText ~= "" and lText ~= "" and zText ~= lText)
+        and string.format("[%s - %s]", zText, lText)
+        or string.format("[%s]", lText ~= "" and lText or zText)
+      InsertLinkToChat(msg)
+    else
+      OpenMapAndSetWaypoint(zText, lText, nil, nil, ResolveUiMapID(zText, lText))
+    end
+  elseif linkType == "item" then
+    local itemID = tonumber(string.match(payload or "", "^(%d+)"))
+    local chatLink = ResolveLiveItemLink(itemID, (text and text ~= "") and text or link)
+    if (IsModifiedClick and IsModifiedClick("CHATLINK")) or (IsShiftKeyDown and IsShiftKeyDown()) then
+      InsertLinkToChat(chatLink)
+    elseif HandleModifiedItemClick and IsModifiedClick and IsModifiedClick("DRESSUP") then
+      pcall(HandleModifiedItemClick, chatLink)
+    elseif SetItemRef then
+      pcall(SetItemRef, link, chatLink, button, self)
+    end
   elseif linkType == "wowfchain" then
     local foldKey = (payload and payload ~= "") and payload or nil
     if foldKey then
@@ -3612,8 +3782,8 @@ local function FormatClassRunLine(cr, opts)
   opts = opts or {}
   local firstStep = cr.steps and cr.steps[1]
   local stepZone = PickZone(firstStep, opts.fallbackZone)
-  local sc = (firstStep and firstStep.x and firstStep.y) and FormatCoordLink(stepZone, firstStep.npc or cr.name, firstStep.x, firstStep.y) or ""
-  local npcInfo = firstStep and string.format(" — %s%s %s |cff99e6ff%s|r%s", opts.npcPrefix or "", firstStep.zone or "", firstStep.place or "", firstStep.npc or "", sc) or ""
+  local npcText = firstStep and FormatStepNpcInfo(firstStep, stepZone) or ""
+  local npcInfo = (npcText ~= "") and (" — " .. (opts.npcPrefix or "") .. npcText) or ""
   local teachStr = (cr.teaches and cr.teaches ~= "") and ((opts.teachArrow or " -> 学会 ") .. "|cff71d5ff[" .. cr.teaches .. "]|r") or ""
   local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, opts.indent or "      ", opts.foldCompleted)
   local tag = opts.tag or string.format("|cff00ffcc[Lv.%d %s·%s专属任务链]|r", cr.level or 1, opts.routeName or "", opts.clsName or "")
@@ -3691,8 +3861,8 @@ local function BuildBandLines(band, opts)
     local fList = {}
     for _, fl in ipairs(band.flights) do
       local flZone = PickZone(fl, band.zone)
-      local fc = (fl.x and fl.y) and FormatCoordLink(flZone, (fl.place or "") .. " " .. (fl.name or "飞行点"), fl.x, fl.y) or ""
-      table.insert(fList, string.format("%s %s%s", fl.place or "", fl.name or "", fc))
+      local flLink = FormatNpcMapLink(flZone, (fl.name and fl.name ~= "") and fl.name or "飞行管理员", fl.x, fl.y, { place = fl.place, omitZone = true })
+      table.insert(fList, flLink)
     end
     table.insert(lines, "|cff99e6ff[飞行点] 解锁鸟点:|r " .. table.concat(fList, opts.flightSep or " · "))
   end
@@ -3700,8 +3870,8 @@ local function BuildBandLines(band, opts)
   local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
   if matchedTrainer and matchedTrainer.name ~= "" then
     local tZone = PickZone(matchedTrainer, matchedTrainer.place, band.zone)
-    local tCoord = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
-    table.insert(lines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s · %s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.title or "职业训练师", matchedTrainer.place or band.zone or "", tCoord))
+    local tLink = FormatNpcMapLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y, { place = matchedTrainer.place or band.zone })
+    table.insert(lines, string.format("|cff71d5ff%s训练师:|r %s (%s)", cls and cls.name or "职业", tLink, matchedTrainer.title or "职业训练师"))
   end
 
   local matchedQuests = GetBandQuests(band, state.classKey)
@@ -3715,8 +3885,9 @@ local function BuildBandLines(band, opts)
           or (opts.groupBandQuests and "|cffffd100[关键任务]|r " or "|cffffd100[区域关键任务]|r ")
         local qLink, qTree = FormatQuestWithSteps(q, q.level or band.from, qZone, opts.questIndent or "    ", opts.foldQuestSteps)
         qZone = PickZone(q, q.place, band.zone)
-        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
-        table.insert(qLines, string.format("%s%s%s (Lv.%d) — %s %s%s", opts.questPrefix or "", qTag, qLink, q.level or band.from, q.place or "", q.npc or "", qc))
+        local npcInfo = FormatStepNpcInfo(q, qZone)
+        local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
+        table.insert(qLines, string.format("%s%s%s (Lv.%d)%s", opts.questPrefix or "", qTag, qLink, q.level or band.from, npcSuffix))
         if qTree then table.insert(qLines, qTree) end
       end
     end
@@ -3755,11 +3926,10 @@ local function BuildBandLines(band, opts)
     local pList = {}
     for _, p in ipairs(band.professions) do
       local pZone = PickZone(p, band.zone)
-      local pLabel = (p.name or "") .. ((p.trainer and p.trainer ~= "") and (" " .. p.trainer) or "") .. ((p.place and p.place ~= "") and (" (" .. p.place .. ")") or "")
-      local pc = (p.x and p.y) and FormatCoordLink(pZone, pLabel, p.x, p.y) or ""
+      local pLink = FormatNpcMapLink(pZone, (p.trainer and p.trainer ~= "") and p.trainer or (p.name .. "训练师"), p.x, p.y, { place = p.place, omitZone = true })
       local isRec = (recProfs ~= "" and string.find(recProfs, p.name or "", 1, true) ~= nil)
       local recMark = isRec and "|cff00ff00★推荐|r" or ""
-      table.insert(pList, string.format("|cff00ff96[%s%s]|r %s%s", p.name, recMark, p.trainer or "", pc))
+      table.insert(pList, string.format("|cff00ff96[%s%s]|r %s", p.name, recMark, pLink))
     end
     table.insert(lines, (opts.profLabel or "|cff00ff96顺路学专业:|r ") .. table.concat(pList, opts.profSep or " · "))
   end
@@ -3792,7 +3962,7 @@ local function RenderTabSmartMatch()
   if recProfs ~= "" then
     table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs)
   end
-  table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿坐标|r 打开世界地图标点；|cffffff00点击黄色任务|r 发送到聊天框 (右键标点)。")
+  table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿 NPC/坐标|r 打开地图标点 (Shift+左键发聊天)；|cffffff00点击黄色任务|r 发聊天 (右键标点)；|cff1eff00物品链接|r 悬停看完整提示，Shift+左键发聊天。")
   local playerProfs = GetPlayerProfessions()
   if lvl >= 14 and lvl < 60 and not IsQuestCompletedById(79975) then
     if HasPlayerProfession(playerProfs, "制皮", "Leatherworking") then
@@ -3823,8 +3993,8 @@ local function RenderTabSmartMatch()
     local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
     if matchedTrainer and matchedTrainer.name ~= "" then
       local tZone = PickZone(matchedTrainer, matchedTrainer.place, band.zone)
-      local tCoord = (matchedTrainer.x and matchedTrainer.y) and FormatCoordLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y) or ""
-      table.insert(bandLines, string.format("|cff71d5ff%s训练师:|r |cffffd100%s|r (%s)%s", cls and cls.name or "职业", matchedTrainer.name, matchedTrainer.place or band.zone or "", tCoord))
+      local tLink = FormatNpcMapLink(tZone, matchedTrainer.name, matchedTrainer.x, matchedTrainer.y, { place = matchedTrainer.place or band.zone })
+      table.insert(bandLines, string.format("|cff71d5ff%s训练师:|r %s", cls and cls.name or "职业", tLink))
     end
     local bandQuests = GetBandQuests(band, state.classKey)
     if bandQuests and #bandQuests > 0 then
@@ -4146,9 +4316,10 @@ local function RenderTabRoutes()
             local qNames = {}
             for _, cq in ipairs(tl.quests) do
               local cqZone = PickZone(cq, tl.city)
-              local cqc = (cq.x and cq.y) and FormatCoordLink(cqZone, (cq.npc and cq.npc ~= "") and cq.npc or cq.name, cq.x, cq.y) or ""
               local cqLink = FormatQuestLink(cq, tl.level or b.from, cqZone)
-              table.insert(qNames, string.format("%s (%s %s%s)", cqLink, cq.dungeon or "", cq.npc or "", cqc))
+              local npcInfo = FormatStepNpcInfo(cq, cqZone)
+              local npcPart = (npcInfo ~= "") and (" · " .. npcInfo) or ""
+              table.insert(qNames, string.format("%s (%s%s)", cqLink, cq.dungeon or "", npcPart))
             end
             table.insert(lines, string.format("|cffffa500[主城备战] [Lv.%d %s 副本任务]|r %s", tl.level or b.from, tl.city, table.concat(qNames, " / ")))
           end
@@ -4163,9 +4334,8 @@ local function RenderTabRoutes()
             seenTravelVisit[tKey] = true
             local viaText = VIA_LABELS[tl.via or "walk"] or (tl.via or "转场")
             local destText = (tl.place and tl.place ~= "" and tl.place ~= tl.to) and (tl.to .. "·" .. tl.place) or (tl.to or "")
-            local flCoord = (tl.flightX and tl.flightY) and FormatCoordLink(tl.flightZone or tl.to, tl.flightNpc or "鸟点", tl.flightX, tl.flightY) or ""
             local flText = (tl.flightNpc and tl.flightNpc ~= "")
-              and string.format(" — 顺路开鸟点: %s %s%s", tl.flightZone or "", tl.flightNpc, flCoord)
+              and (" — 顺路开鸟点: " .. FormatNpcMapLink(tl.flightZone or tl.to, tl.flightNpc, tl.flightX, tl.flightY))
               or ""
             table.insert(lines, string.format("|cff99e6ff[跨区交通] [Lv.%d %s]|r %s -> |cff00ffcc%s|r%s", tl.level or b.from, viaText, tl.from or "起点", destText, flText))
           end
@@ -4175,9 +4345,10 @@ local function RenderTabRoutes()
       if b.dungeonQuests and #b.dungeonQuests > 0 then
         for _, dq in ipairs(b.dungeonQuests) do
           local dqZone = PickZone(dq, dq.place, b.zone)
-          local dc = (dq.x and dq.y) and FormatCoordLink(dqZone, (dq.npc and dq.npc ~= "") and dq.npc or dq.name, dq.x, dq.y) or ""
           local dqLink = FormatQuestLink(dq, dq.level or b.from, dqZone)
-          table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r %s — %s %s%s", dq.dungeon, dqLink, dq.place or "", dq.npc or "", dc))
+          local npcInfo = FormatStepNpcInfo(dq, dqZone)
+          local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
+          table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r %s%s", dq.dungeon, dqLink, npcSuffix))
         end
       end
 
@@ -4342,9 +4513,10 @@ local function RenderTabClassAndTalents()
         table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
         for idx, st in ipairs(cr.steps or {}) do
           local stZone = PickZone(st, st.place)
-          local sc = (st.x and st.y) and FormatCoordLink(stZone, st.npc or st.name, st.x, st.y) or ""
           local stLink = FormatQuestLink(st, cr.level, stZone)
-          table.insert(crLines, string.format("    %d. %s — %s %s |cff99e6ff%s|r%s", idx, stLink, st.zone or "", st.place or "", st.npc or "", sc))
+          local npcInfo = FormatStepNpcInfo(st, stZone)
+          local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
+          table.insert(crLines, string.format("    %d. %s%s", idx, stLink, npcSuffix))
         end
       end
     end
@@ -4942,7 +5114,6 @@ local function RenderTabCraftArb()
     if shown >= 40 then break end
     shown = shown + 1
     local bodyLines = {}
-    local qualityColor = WoWF_CraftArb.QualityColor(row.outputID)
     local costText
     if row.costTotal then
       costText = FormatMoney(row.costTotal)
@@ -4953,8 +5124,8 @@ local function RenderTabCraftArb()
       costText = "|cffff8800成本未知|r"
     end
     table.insert(bodyLines, string.format(
-      "|cff99e6ff单次制作:|r 产出 %s%s|r × |cffffd100%s|r  ·  材料成本 %s  ·  可制作 %s",
-      qualityColor, WoWF_CraftArb.ItemName(row.outputID), string.format("%.1f", row.yield or 1),
+      "|cff99e6ff单次制作:|r 产出 %s × |cffffd100%s|r  ·  材料成本 %s  ·  可制作 %s",
+      FormatItemLink(row.outputID, row.name), string.format("%.1f", row.yield or 1),
       costText,
       row.craftable and "|cff00ff00是|r" or "|cffff5555否|r"
     ))
@@ -4962,15 +5133,15 @@ local function RenderTabCraftArb()
     local leafLines = {}
     for _, leaf in ipairs(row.leaves or {}) do
       local unitText = leaf.unit and FormatMoney(leaf.unit) or "|cffff8800无报价|r"
-      table.insert(leafLines, string.format("    · %s%s|r ×%d  @ %s",
-        WoWF_CraftArb.QualityColor(leaf.itemID), WoWF_CraftArb.ItemName(leaf.itemID),
+      table.insert(leafLines, string.format("    · %s ×%d  @ %s",
+        FormatItemLink(leaf.itemID),
         math.ceil(leaf.quantity or 0), unitText))
     end
     local craftNotes = {}
     for _, craft in ipairs(row.craftLines or {}) do
       local saved = craft.saved
-      table.insert(craftNotes, string.format("    · %s%s|r 用配方「%s」自产 ×%d 批%s%s",
-        WoWF_CraftArb.QualityColor(craft.itemID), WoWF_CraftArb.ItemName(craft.itemID),
+      table.insert(craftNotes, string.format("    · %s 用配方「%s」自产 ×%d 批%s%s",
+        FormatItemLink(craft.itemID),
         (craft.recipe and craft.recipe.name) or "中间产物",
         math.max(1, craft.batches or 1),
         (saved and saved > 0) and string.format("（比直购省 %s）", FormatMoney(saved)) or "",
@@ -4989,7 +5160,7 @@ local function RenderTabCraftArb()
     if row.disenchant then
       local parts = {}
       for _, part in ipairs(row.disenchant.parts) do
-        table.insert(parts, string.format("%s×%.1f", WoWF_CraftArb.ItemName(part.itemID), part.quantity))
+        table.insert(parts, string.format("%s×%.1f", FormatItemLink(part.itemID), part.quantity))
       end
       table.insert(bodyLines, string.format(
         "|cff99e6ff分解期望:|r %s%s|r%s",
@@ -5039,7 +5210,7 @@ local function RenderTabCraftArb()
 
     local profitable = (row.profit or 0) > 0
     list:Add({
-      title = string.format("%s%s|r  |cffffd100[%s]|r", qualityColor, WoWF_CraftArb.ItemName(row.outputID), row.professionName or "专业"),
+      title = string.format("%s  |cffffd100[%s]|r", FormatItemLink(row.outputID, row.name), row.professionName or "专业"),
       body = table.concat(bodyLines, "\n"),
       theme = profitable and "arbGood" or "arbBad",
       badge = row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
@@ -5049,8 +5220,8 @@ local function RenderTabCraftArb()
           local ok, listIDOrReason, note = WoWF_CraftArb.AddToShoppingList(row, row.name or WoWF_CraftArb.ItemName(row.outputID))
           if ok then
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
-              "|cff00ffcc[WoWF 制造套利]|r 已把「%s」的材料写入购物清单（清单 ID: %s）%s",
-              WoWF_CraftArb.ItemName(row.outputID), tostring(listIDOrReason),
+              "|cff00ffcc[WoWF 制造套利]|r 已把 %s 的材料写入购物清单（清单 ID: %s）%s",
+              FormatItemLink(row.outputID, row.name), tostring(listIDOrReason),
               note and ("，" .. note) or ""))
           else
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
@@ -5206,7 +5377,7 @@ local function RenderTabForeverAndNews()
           table.insert(pLines, "|cff71d5ff1–300 冲级路线:|r " .. prof.brackets)
         end
         if prof.trainers and prof.trainers ~= "" then
-          table.insert(pLines, "|cffffa500关键训练师与突破:|r " .. LinkifyInlineCoords(prof.trainers, "", (prof.name or "") .. "训练师"))
+          table.insert(pLines, "|cffffa500关键训练师与突破:|r " .. LinkifyInlineCoords(prof.trainers, "", (prof.name or "") .. "训练师", { linkifyNpc = true }))
         end
         if prof.foreverNote and prof.foreverNote ~= "" then
           table.insert(pLines, "|cff00ffcc★ 无限服指南:|r " .. LinkifyInlineCoords(prof.foreverNote, "", prof.name or ""))
@@ -5824,10 +5995,11 @@ end
 for _, craftEv in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_CLOSE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, craftEv)
 end
+pcall(eventFrame.RegisterEvent, eventFrame, "GET_ITEM_INFO_RECEIVED")
 
 local hasPrintedWelcome = false
 
-eventFrame:SetScript("OnEvent", function(_, event, arg1)
+eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
     LoadPersistedState()
     CreateMinimapButton()
@@ -5884,6 +6056,10 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if WoWF_CraftArb then WoWF_CraftArb.Reset() end
     if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
       ScheduleRefresh(true, 0.2)
+    end
+  elseif event == "GET_ITEM_INFO_RECEIVED" then
+    if arg2 and mainFrame and mainFrame:IsShown() then
+      ScheduleRefresh(true, 0.3)
     end
   elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
     if mainFrame and mainFrame:IsShown() then
