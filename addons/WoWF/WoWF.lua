@@ -5012,10 +5012,68 @@ local function RenderTabForeverAndNews()
 end
 
 -- ============================================================================
--- 6. 主窗口构建与顶部状态控制栏
+-- 6. 标签页注册表、主窗口构建与顶部状态控制栏
 -- ============================================================================
 
+local TAB_DEFS = {
+  { id = 1, label = "智能匹配",     render = RenderTabSmartMatch,      slash = { "", "home", "smart" } },
+  { id = 2, label = "升级路线",     render = RenderTabRoutes,          slash = { "route", "level" }, onSlash = function() state.routeFilter = "MATCH" end },
+  { id = 3, label = "职业与天赋",   render = RenderTabClassAndTalents, slash = { "class", "talent" }, onSlash = function() state.talentFilter = "MATCH" end },
+  { id = 4, label = "一键宏库",     render = RenderTabMacros,          slash = { "macro", "macros" } },
+  { id = 5, label = "地下城百科",   render = RenderTabDungeons,        slash = { "dungeon", "dungeons" } },
+  { id = 6, label = "专业&无限特色", render = RenderTabForeverAndNews, slash = { "news", "forever", "prof", "professions" }, onSlash = function() state.featureFilter = "MATCH" end },
+  { id = 7, label = "常用命令",     render = RenderTabCommands,        slash = { "cmd", "commands", "console" } },
+  { id = 8, label = "制造套利",     render = RenderTabCraftArb,        slash = { "arb", "craft", "crafting", "profit", "auction" } },
+}
+local TAB_BY_ID = {}
+local SLASH_TO_TAB = {}
+for _, def in ipairs(TAB_DEFS) do
+  TAB_BY_ID[def.id] = def
+  for _, alias in ipairs(def.slash or {}) do
+    SLASH_TO_TAB[alias] = def
+  end
+end
+
 local headerControls = {}
+local refreshTimerPending = false
+local pendingPreserveScroll = false
+
+local function ScheduleRefresh(preserveScroll, delay)
+  if not mainFrame or not mainFrame:IsShown() then return end
+  if preserveScroll then
+    pendingPreserveScroll = true
+  end
+  if refreshTimerPending then return end
+  if C_Timer and C_Timer.After then
+    refreshTimerPending = true
+    C_Timer.After(delay or 0.2, function()
+      refreshTimerPending = false
+      local ps = pendingPreserveScroll
+      pendingPreserveScroll = false
+      RefreshUI(ps)
+    end)
+  else
+    local ps = pendingPreserveScroll
+    pendingPreserveScroll = false
+    RefreshUI(ps)
+  end
+end
+
+local function ResetToCharacter(followState)
+  if followState ~= nil then
+    state.autoFollow = followState and true or false
+  else
+    state.autoFollow = true
+  end
+  if state.autoFollow then
+    state.routeFilter = "MATCH"
+    state.talentFilter = "MATCH"
+    state.dungeonFilter = "MATCH"
+    state.featureFilter = "MATCH"
+    SyncPlayerCharacter()
+  end
+  RefreshUI()
+end
 
 RefreshUI = function(preserveScroll)
   if not mainFrame or not mainFrame:IsShown() then return end
@@ -5056,23 +5114,8 @@ RefreshUI = function(preserveScroll)
 
   local savedScroll = (preserveScroll and scrollFrame) and (scrollFrame:GetVerticalScroll() or 0) or 0
 
-  if state.activeTab == 1 then
-    RenderTabSmartMatch()
-  elseif state.activeTab == 2 then
-    RenderTabRoutes()
-  elseif state.activeTab == 3 then
-    RenderTabClassAndTalents()
-  elseif state.activeTab == 4 then
-    RenderTabMacros()
-  elseif state.activeTab == 5 then
-    RenderTabDungeons()
-  elseif state.activeTab == 7 then
-    RenderTabCommands()
-  elseif state.activeTab == 8 then
-    RenderTabCraftArb()
-  else
-    RenderTabForeverAndNews()
-  end
+  local tabDef = TAB_BY_ID[state.activeTab] or TAB_DEFS[1]
+  tabDef.render()
 
   if scrollFrame then
     if preserveScroll then
@@ -5144,15 +5187,7 @@ local function CreateMainWindow()
   autoCheck:SetPoint("LEFT", 6, 0)
   autoCheck:SetChecked(state.autoFollow)
   autoCheck:SetScript("OnClick", function(self)
-    state.autoFollow = self:GetChecked() and true or false
-    if state.autoFollow then
-      state.routeFilter = "MATCH"
-      state.talentFilter = "MATCH"
-      state.dungeonFilter = "MATCH"
-      state.featureFilter = "MATCH"
-      SyncPlayerCharacter()
-    end
-    RefreshUI()
+    ResetToCharacter(self:GetChecked() and true or false)
   end)
   headerControls.autoCheck = autoCheck
 
@@ -5162,13 +5197,7 @@ local function CreateMainWindow()
   matchRoleBtn:SetPoint("LEFT", autoCheck, "RIGHT", 2, 0)
   matchRoleBtn:SetText("|cff00ffcc匹配角色|r")
   matchRoleBtn:SetScript("OnClick", function()
-    state.autoFollow = true
-    state.routeFilter = "MATCH"
-    state.talentFilter = "MATCH"
-    state.dungeonFilter = "MATCH"
-    state.featureFilter = "MATCH"
-    SyncPlayerCharacter()
-    RefreshUI()
+    ResetToCharacter(true)
   end)
   headerControls.matchRoleBtn = matchRoleBtn
 
@@ -5268,25 +5297,14 @@ local function CreateMainWindow()
   searchBox:SetTextInsets(6, 6, 0, 0)
   searchBox:SetScript("OnTextChanged", function(self)
     state.searchQuery = self:GetText() or ""
-    RefreshUI()
+    ScheduleRefresh(false, 0.2)
   end)
   searchBox:SetScript("OnEscapePressed", function(self)
     self:SetText("")
     self:ClearFocus()
   end)
 
-  -- 八大功能标签栏（按文字宽度自适应排布，兼容中英文与新增的「制造套利」页）
-  local TAB_DEFS = {
-    { id = 1, label = "智能匹配" },
-    { id = 2, label = "升级路线" },
-    { id = 3, label = "职业与天赋" },
-    { id = 4, label = "一键宏库" },
-    { id = 5, label = "地下城百科" },
-    { id = 6, label = "专业&无限特色" },
-    { id = 7, label = "常用命令" },
-    { id = 8, label = "制造套利" },
-  }
-
+  -- 八大功能标签栏（由 TAB_DEFS 统一驱动）
   local tabX = 12
   for i, def in ipairs(TAB_DEFS) do
     local btn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
@@ -5471,15 +5489,11 @@ end
 local hasPrintedWelcome = false
 
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
-  if event == "PLAYER_LOGIN" then
+  if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
     CreateMinimapButton()
     SyncPlayerCharacter()
     RefreshUI()
-  elseif event == "PLAYER_ENTERING_WORLD" then
-    CreateMinimapButton()
-    SyncPlayerCharacter()
-    RefreshUI()
-    if not hasPrintedWelcome then
+    if event == "PLAYER_ENTERING_WORLD" and not hasPrintedWelcome then
       hasPrintedWelcome = true
       local route = GetCurrentRoute()
       local cls = GetCurrentClassData()
@@ -5510,7 +5524,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     RefreshUI()
   elseif event == "UPDATE_FACTION" or event == "BAG_UPDATE_DELAYED" then
     if mainFrame and mainFrame:IsShown() and (state.activeTab == 1 or state.activeTab == 2) then
-      RefreshUI(true)
+      ScheduleRefresh(true, 0.2)
     end
   elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then
     -- 打开专业窗口时顺带补全配方缓存（离线也能给出成本，不必依赖 EasyAuction 采集）
@@ -5518,25 +5532,27 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if ok and count and count > 0 then
       WoWFDB.craftHarvestCount = count
       if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
-        RefreshUI(true)
+        ScheduleRefresh(true, 0.2)
       end
     end
   elseif event == "TRADE_SKILL_CLOSE" then
     if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
-      RefreshUI(true)
+      ScheduleRefresh(true, 0.2)
     end
   elseif event == "AUCTION_HOUSE_SHOW" or event == "AUCTION_HOUSE_CLOSED" then
     -- 行情快照只在拍卖行内更新：回到「制造套利」页时重新计算一次
     if WoWF_CraftArb then WoWF_CraftArb.Reset() end
     if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
-      RefreshUI(true)
+      ScheduleRefresh(true, 0.2)
     end
   elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
-    SyncPlayerCharacter()
-    RefreshUI(true)
+    if mainFrame and mainFrame:IsShown() then
+      ScheduleRefresh(true, 0.2)
+    end
   else
-    SyncPlayerCharacter()
-    RefreshUI()
+    if mainFrame and mainFrame:IsShown() then
+      ScheduleRefresh(false, 0.2)
+    end
   end
 end)
 
@@ -5545,25 +5561,7 @@ SLASH_WOWF2 = "/wowfio"
 SlashCmdList["WOWF"] = function(msg)
   local cmd = string.lower(string.gsub(msg or "", "^%s*(.-)%s*$", "%1"))
   state.autoFollow = true
-  SyncPlayerCharacter()
-  if cmd == "macro" or cmd == "macros" then
-    ToggleMainWindow(4)
-  elseif cmd == "cmd" or cmd == "commands" or cmd == "console" then
-    ToggleMainWindow(7)
-  elseif cmd == "dungeon" or cmd == "dungeons" then
-    ToggleMainWindow(5)
-  elseif cmd == "route" or cmd == "level" then
-    state.routeFilter = "MATCH"
-    ToggleMainWindow(2)
-  elseif cmd == "class" or cmd == "talent" then
-    state.talentFilter = "MATCH"
-    ToggleMainWindow(3)
-  elseif cmd == "news" or cmd == "forever" or cmd == "prof" or cmd == "professions" then
-    state.featureFilter = "MATCH"
-    ToggleMainWindow(6)
-  elseif cmd == "arb" or cmd == "craft" or cmd == "crafting" or cmd == "profit" or cmd == "auction" then
-    ToggleMainWindow(8)
-  else
-    ToggleMainWindow(1)
-  end
+  local def = SLASH_TO_TAB[cmd] or TAB_DEFS[1]
+  if def.onSlash then def.onSlash() end
+  ToggleMainWindow(def.id)
 end
