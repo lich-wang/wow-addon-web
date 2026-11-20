@@ -274,8 +274,10 @@ local function DetectActiveTalentSpec(classFile)
             local bestScore = -1
             for idx, sp in ipairs(cls.specs) do
               local score = 0
+              local seenTalents = {}
               for _, st in ipairs(sp.steps or {}) do
-                if st.name and purchasedByName[st.name] then
+                if st.name and not seenTalents[st.name] and purchasedByName[st.name] then
+                  seenTalents[st.name] = true
                   score = score + purchasedByName[st.name]
                 end
               end
@@ -514,8 +516,8 @@ local ORDERED_ZONE_KEYWORDS = {
 }
 
 local function ResolveUiMapID(zoneText, placeText)
-  for _, raw in ipairs({ zoneText, placeText }) do
-    if raw and raw ~= "" then
+  for _, raw in ipairs({ zoneText or "", placeText or "" }) do
+    if raw ~= "" then
       if ZONE_TO_UIMAP_ID[raw] then
         return ZONE_TO_UIMAP_ID[raw]
       end
@@ -536,13 +538,7 @@ local function ResolveUiMapID(zoneText, placeText)
       end
     end
   end
-  if C_Map and C_Map.GetBestMapForUnit then
-    local ok, playerMap = pcall(C_Map.GetBestMapForUnit, "player")
-    if ok and playerMap and playerMap > 0 then
-      return playerMap
-    end
-  end
-  return 1429
+  return nil
 end
 
 -- 自定义大地图高亮图钉（即使在主城或不支持原生 C_Map.SetUserWaypoint 的特殊图层，也能在打开的世界地图上精准显示发光坐标标记）
@@ -754,6 +750,7 @@ local function FormatCoordLink(zone, label, x, y, prefixSpace)
   local numY = tonumber(y)
   if not numX or not numY then return "" end
   local mapID = ResolveUiMapID(zone, label)
+  if not mapID then return "" end
   local safeZone = SanitizeLinkField((zone and zone ~= "") and zone or label)
   local safeLabel = SanitizeLinkField((label and label ~= "") and label or zone)
   local sp = (prefixSpace == false) and "" or " "
@@ -769,9 +766,9 @@ local function FormatNpcMapLink(zone, npc, x, y)
   local displayName = (nText ~= "") and nText or ((zText ~= "") and zText or "坐标")
   local numX = tonumber(x)
   local numY = tonumber(y)
+  local mapID = (numX and numY) and ResolveUiMapID(zText, nText) or nil
   local linkPart
-  if numX and numY then
-    local mapID = ResolveUiMapID(zText, nText)
+  if numX and numY and mapID then
     local safeZone = SanitizeLinkField((zText ~= "") and zText or nText)
     local safeLabel = SanitizeLinkField((nText ~= "") and nText or zText)
     linkPart = string.format(
@@ -1204,15 +1201,18 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
   end
   if raw == false then return fallbackObj end
   if not fallbackObj then return raw end
+  local fbHasLoc = (fallbackObj.x ~= nil and fallbackObj.y ~= nil) or (fallbackObj.npc and fallbackObj.npc ~= "")
+  local rawHasLoc = (raw.x ~= nil and raw.y ~= nil) or (raw.npc and raw.npc ~= "")
+  local useFbLoc = fbHasLoc or (not rawHasLoc)
   return {
     id = raw.id,
     name = raw.name,
     level = raw.level or fallbackObj.level,
     minLevel = raw.minLevel or fallbackObj.minLevel,
-    npc = raw.npc or fallbackObj.npc or "",
-    zone = raw.zone or fallbackObj.zone or "",
-    x = raw.x or fallbackObj.x,
-    y = raw.y or fallbackObj.y,
+    npc = useFbLoc and (fallbackObj.npc or "") or (raw.npc or ""),
+    zone = useFbLoc and (fallbackObj.zone or "") or (raw.zone or ""),
+    x = useFbLoc and fallbackObj.x or raw.x,
+    y = useFbLoc and fallbackObj.y or raw.y,
     endNpc = raw.endNpc or fallbackObj.endNpc,
     endZone = raw.endZone or fallbackObj.endZone,
     endX = raw.endX or fallbackObj.endX,
@@ -1271,27 +1271,27 @@ local function ResolveQuestChainFromQuestieDB(q)
     if type(info.preGroup) == "table" then
       for _, pid in ipairs(info.preGroup) do
         local npid = tonumber(pid)
-        if npid and npid > 0 then table.insert(preG, npid) end
+        if npid and npid ~= 0 then table.insert(preG, npid) end
       end
     end
     local preS = {}
     if type(info.preSingle) == "table" then
       for _, pid in ipairs(info.preSingle) do
         local npid = tonumber(pid)
-        if npid and npid > 0 then table.insert(preS, npid) end
+        if npid and npid ~= 0 then table.insert(preS, npid) end
       end
     end
     local reqAll, singlePre = nil, nil
     if #preG > 1 then
       reqAll = preG
       for _, pid in ipairs(preG) do
-        collectPre(pid, depth + 1)
+        collectPre(math.abs(pid), depth + 1)
       end
     elseif #preG == 1 then
-      singlePre = preG[1]
+      singlePre = math.abs(preG[1])
       collectPre(singlePre, depth + 1)
     elseif #preS == 1 then
-      singlePre = preS[1]
+      singlePre = math.abs(preS[1])
       collectPre(singlePre, depth + 1)
     end
     table.insert(steps, makeStep(qid, info, singlePre, reqAll))
@@ -1830,7 +1830,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, 
     return FormatQuestLink(q, fallbackLevel, fallbackZone), nil
   end
   local chainDone = IsQuestCompleted(q)
-  local primary = FormatQuestLink(q, fallbackLevel, fallbackZone, chainDone)
+  local primary = FormatQuestLink(q, fallbackLevel, fallbackZone, nil, chainDone)
   local primaryId = tonumber(q.id or q.questId)
   local parentZone = (q.zone and q.zone ~= "") and q.zone or (fallbackZone or "")
   local primaryIdx = nil
@@ -1857,6 +1857,7 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, 
     if sid and sid > 0 then
       local isPrimary = (sid == primaryId)
       local stZone = (st.zone and st.zone ~= "") and st.zone or parentZone
+      local sameZoneAsPrimary = (not st.zone or st.zone == "") or (not q.zone or q.zone == "") or (st.zone == q.zone)
       local stepObj = {
         id = sid,
         faction = q.faction,
@@ -1866,10 +1867,10 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, 
         npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
         zone = stZone,
         place = (st.place and st.place ~= "") and st.place or (isPrimary and q.place or ""),
-        x = st.x or (isPrimary and q.x or nil),
-        y = st.y or (isPrimary and q.y or nil),
+        x = st.x or (isPrimary and sameZoneAsPrimary and q.x or nil),
+        y = st.y or (isPrimary and sameZoneAsPrimary and q.y or nil),
       }
-      local link = FormatQuestLink(stepObj, fallbackLevel, stZone, chainDone)
+      local link = FormatQuestLink(stepObj, fallbackLevel, stZone)
       local coloredLink = isPrimary and link or ("|cff99e6ff" .. link .. "|r")
       stepById[sid] = { step = st, link = coloredLink, isPrimary = isPrimary }
       table.insert(orderedLinks, coloredLink)
@@ -2294,7 +2295,7 @@ local function ShowCopyMacroDialog(macroTitle, macroCode)
 
     local hint = copyDialog:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     hint:SetPoint("TOPLEFT", 14, -34)
-    hint:SetText("|cff99e6ff按 Ctrl+C 复制宏命令，或点击下方按钮直接写入角色宏槽位：|r")
+    hint:SetText("|cff99e6ff按 Ctrl+C 复制已选中的文本：|r")
 
     local editBg = CreateFrame("Frame", nil, copyDialog, template)
     editBg:SetPoint("TOPLEFT", 14, -54)
@@ -2421,7 +2422,7 @@ local function GetMatchedDungeonTip(spec, level)
       return d
     end
   end
-  return spec.dungeonTips[#spec.dungeonTips]
+  return nil
 end
 
 local function GetMatchedTalentStep(spec, level)
@@ -2946,7 +2947,7 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
         local matchedStarter = nil
         local acceptLv = nil
         local function checkStepInZone(stObj, curMin, curLv)
-          if curMin > lvl or curLv < minOkLv or curLv > maxOkLv then
+          if type(curMin) ~= "number" or type(curLv) ~= "number" or curMin > lvl or curLv < minOkLv or curLv > maxOkLv then
             return false
           end
           local mId = tonumber(stObj and stObj.id)
@@ -3522,9 +3523,10 @@ local function RenderTabSmartMatch()
       local qLines = {}
       for _, q in ipairs(matchedQuests) do
         local qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or band.zone)
-        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
         local qTag = (q.kind == "class") and "|cff00ffcc[★职业专属]|r " or "|cffffd100[关键任务]|r "
         local qLink, qTree = FormatQuestWithSteps(q, q.level or band.from, qZone, "      ")
+        qZone = (q.zone and q.zone ~= "") and q.zone or (q.place or band.zone)
+        local qc = (q.x and q.y) and FormatCoordLink(qZone, (q.npc and q.npc ~= "") and q.npc or q.name, q.x, q.y) or ""
         table.insert(qLines, string.format("  - %s%s (Lv.%d) — %s %s%s", qTag, qLink, q.level or band.from, q.place or "", q.npc or "", qc))
         if qTree then table.insert(qLines, qTree) end
       end
@@ -3710,7 +3712,10 @@ local function RenderTabSmartMatch()
         local qZone = (q.zone and q.zone ~= "") and q.zone or (d.entranceZone or d.zone or "")
         local acceptTag = (not IsQuestLineStarted(q)) and string.format(" (可接 Lv.%d)", q.minLevel or d.minLevel) or ""
         local npcInfo = FormatStepNpcInfo(q, qZone)
-        if npcInfo == "" and q.inside then npcInfo = "(副本内接取)" end
+        local hasStarterPos = (q.npc and q.npc ~= "") or (q.x and q.y)
+        if q.inside and not hasStarterPos then
+          npcInfo = (npcInfo ~= "") and (npcInfo .. " (副本内接取)") or "(副本内接取)"
+        end
         local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
         if #grp.quests > 1 and grp.prefixLen >= 1 then
           local headerPrefix, treeBody = FormatSharedPrefixGroup(grp, d.minLevel, qZone, "        ", true)
@@ -4150,7 +4155,7 @@ local function RenderTabClassAndTalents()
   for _, p in ipairs(spec.phases or {}) do
     local isCurrent = (lvl >= p.from and lvl <= p.to)
     local passLevel = (not isMatchMode) or ((p.to or 60) >= lvl)
-    local textBlob = (p.keep or "") .. " " .. (p.cycle or "") .. " " .. (p.note or "")
+    local textBlob = (p.keep or "") .. " " .. (p.open or "") .. " " .. (p.cycle or "") .. " " .. (p.note or "")
     if passLevel and MatchesSearch(textBlob) then
       local lines = {
         "|cff00ff96【常驻保持】|r " .. (p.keep or "无"),
@@ -4853,7 +4858,7 @@ local function RenderTabCraftArb()
     elseif onlyProfitable then
       table.insert(emptyLines, string.format(
         "|cffffd100当前没有可盈利的配方。|r已分析 %d 条、有报价 %d 条；可点击上方「显示全部配方」查看亏损明细，或检查行情快照是否过期。",
-        meta.total or 0, meta.shown or 0))
+        meta.total or 0, meta.priced or 0))
     else
       table.insert(emptyLines, "当前筛选条件下没有配方，可清空搜索框或点击「显示全部专业」重试。")
     end

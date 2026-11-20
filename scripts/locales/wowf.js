@@ -8,7 +8,15 @@ const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
 const WOWF_ADDON_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../addons/WoWF');
 
 function readWoWFLuaFile(filename) {
-  return fs.readFileSync(path.join(WOWF_ADDON_DIR, filename), 'utf8').replace(/\r\n/g, '\n');
+  return fs.readFileSync(path.join(WOWF_ADDON_DIR, filename), 'utf8').replace(/\r\n|\r/g, '\n');
+}
+
+function getGitHeadOid() {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 function getAutoWowfVersion() {
@@ -3881,8 +3889,15 @@ WoWF_Data = ${toLuaValue(dataset, 0)}
  * @returns {Promise<{ zip: JSZip, outPath: string, version: string, source: string }>}
  */
 export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbBuf = null) {
+  const headSnapshot = getGitHeadOid();
+  const craftLuaContent = readWoWFLuaFile('CraftArb.lua');
+  const coreLuaContent = readWoWFLuaFile('WoWF.lua');
+
   console.log('Synchronizing live data from https://wowf.io/zh for WoWF Companion...');
   const dataset = await buildWoWFDataset(cacheDir, getHeaders, questieDbBuf);
+  if (headSnapshot && getGitHeadOid() !== headSnapshot) {
+    throw new Error('[WoWF] 异步抓取期间仓库 HEAD 发生变化，请重新执行打包以保证源码与版本号一致。');
+  }
   if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds)) {
     throw new Error('[WoWF] 缺少完整的区域任务链索引 (zoneQuests/zoneAreaIds)，请确认 .cache/upstream-addons/questie-db-forever.zip 可读。');
   }
@@ -3893,8 +3908,6 @@ export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbB
   const zip = new JSZip();
   const tocContent = generateWoWFToc(fullVersion, dataset.meta.updatedAt);
   const dataLuaContent = generateWoWFDataLua(dataset);
-  const craftLuaContent = readWoWFLuaFile('CraftArb.lua');
-  const coreLuaContent = readWoWFLuaFile('WoWF.lua');
 
   zip.file('WoWF/WoWF.toc', tocContent);
   zip.file('WoWF/Data.lua', dataLuaContent);

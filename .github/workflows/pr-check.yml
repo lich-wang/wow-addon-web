@@ -112,5 +112,5 @@ jobs:
           sudo luarocks install luacheck
 
       - name: Run luacheck on addons/WoWF
-        run: luacheck addons/WoWF --codes
+        run: luacheck addons/WoWF/CraftArb.lua addons/WoWF/WoWF.lua --codes
 
