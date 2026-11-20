@@ -97,3 +97,19 @@ jobs:
             } catch (err) {
               core.setFailed(`❌ PR 描述中引用的 Issue #${matchedIssue} 不存在或无权访问，请检查 Issue 编号是否正确！`);
             }
+
+  luacheck:
+    name: Lua 静态检查 (luacheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luacheck
+
+      - name: Run luacheck on addons/WoWF
+        run: luacheck addons/WoWF --codes
+

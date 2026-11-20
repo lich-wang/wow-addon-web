@@ -1,24 +1,4 @@
-/**
- * 生成 WoWF/CraftArb.lua —— 「制造套利」引擎（纯数据与计算，不创建任何界面元素）
- *
- * 数据来源：
- * - EasyAuction 行情：全局 `EasyAuctionAPI`（GetRecord / GetDepth / GetSettings / GetMarketInfo）
- * - EasyAuction 专业数据库：账号级存档 `EasyAuctionDB12.professions.characters[*]`，
- *   含各角色已学配方与专业等级（详见 EasyAuction/EASYAUCTION_API.md 的存档结构说明）
- * - 本插件自行采集：`C_TradeSkillUI`（WoWFDB.recipeCache[角色键]），在打开专业窗口时补全
- *
- * 计算模型（两阶段，避免「同一种原料按不同数量分别计价」的失真）：
- * 1. 结构决策：按单件成本比较「拍卖行直购」与「自己制作」，递归展开中间产物
- *    （布 → 布卷 → 装备），路径上已出现的物品不再自产，防止配方互引死循环；
- * 2. 统一计价：把整条方案里所有要买的原料按物品汇总，再用同一份 EasyAuction
- *    可购深度按合并后的数量算成本，缺货单独标注。
- */
-
-/**
- * @returns {string} WoWF/CraftArb.lua 的完整 Lua 源码
- */
-export function generateWoWFCraftArbLua() {
-  return String.raw`-- ============================================================================
+-- ============================================================================
 -- WoWF CraftArb · 制造套利引擎
 -- 数据源：EasyAuction 行情与专业数据库 + 本插件自行采集的原生配方
 -- 职责：递归折算材料成本（含中间产物自产）、估算售价/分解收益与净利润
@@ -1556,5 +1536,3 @@ function Arb.AddToShoppingList(row, label)
 
   return false, "EasyAuction / 黑石交易技能均未就绪"
 end
-`;
-}
