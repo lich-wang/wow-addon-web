@@ -289,6 +289,21 @@ function Arb.QualityColor(itemID)
   return QUALITY_COLORS[(info and info.quality) or 1] or QUALITY_COLORS[1]
 end
 
+---物品游戏内超链接（未加载时构造标准 item 链接以支持悬停 Tooltip 与点击）
+---@param itemID number
+---@return string
+function Arb.ItemLink(itemID)
+  local id = tonumber(itemID)
+  if not id then return Arb.ItemName(itemID) end
+  local info = Arb.Items(id)
+  if info and type(info.link) == "string" and info.link ~= "" then
+    return info.link
+  end
+  local color = Arb.QualityColor(id)
+  local name = Arb.ItemName(id)
+  return format("%s|Hitem:%d:0:0:0:0:0:0:0|h[%s]|h|r", color, id, name)
+end
+
 -- ============================================================================
 -- 3. 拍卖行行情接入（EasyAuction 优先，兼容黑石交易技能 Blackthornes_TS）
 -- ============================================================================

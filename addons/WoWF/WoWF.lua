@@ -4942,7 +4942,6 @@ local function RenderTabCraftArb()
     if shown >= 40 then break end
     shown = shown + 1
     local bodyLines = {}
-    local qualityColor = WoWF_CraftArb.QualityColor(row.outputID)
     local costText
     if row.costTotal then
       costText = FormatMoney(row.costTotal)
@@ -4953,8 +4952,8 @@ local function RenderTabCraftArb()
       costText = "|cffff8800成本未知|r"
     end
     table.insert(bodyLines, string.format(
-      "|cff99e6ff单次制作:|r 产出 %s%s|r × |cffffd100%s|r  ·  材料成本 %s  ·  可制作 %s",
-      qualityColor, WoWF_CraftArb.ItemName(row.outputID), string.format("%.1f", row.yield or 1),
+      "|cff99e6ff单次制作:|r 产出 %s × |cffffd100%s|r  ·  材料成本 %s  ·  可制作 %s",
+      WoWF_CraftArb.ItemLink(row.outputID), string.format("%.1f", row.yield or 1),
       costText,
       row.craftable and "|cff00ff00是|r" or "|cffff5555否|r"
     ))
@@ -4962,15 +4961,15 @@ local function RenderTabCraftArb()
     local leafLines = {}
     for _, leaf in ipairs(row.leaves or {}) do
       local unitText = leaf.unit and FormatMoney(leaf.unit) or "|cffff8800无报价|r"
-      table.insert(leafLines, string.format("    · %s%s|r ×%d  @ %s",
-        WoWF_CraftArb.QualityColor(leaf.itemID), WoWF_CraftArb.ItemName(leaf.itemID),
+      table.insert(leafLines, string.format("    · %s ×%d  @ %s",
+        WoWF_CraftArb.ItemLink(leaf.itemID),
         math.ceil(leaf.quantity or 0), unitText))
     end
     local craftNotes = {}
     for _, craft in ipairs(row.craftLines or {}) do
       local saved = craft.saved
-      table.insert(craftNotes, string.format("    · %s%s|r 用配方「%s」自产 ×%d 批%s%s",
-        WoWF_CraftArb.QualityColor(craft.itemID), WoWF_CraftArb.ItemName(craft.itemID),
+      table.insert(craftNotes, string.format("    · %s 用配方「%s」自产 ×%d 批%s%s",
+        WoWF_CraftArb.ItemLink(craft.itemID),
         (craft.recipe and craft.recipe.name) or "中间产物",
         math.max(1, craft.batches or 1),
         (saved and saved > 0) and string.format("（比直购省 %s）", FormatMoney(saved)) or "",
@@ -4989,7 +4988,7 @@ local function RenderTabCraftArb()
     if row.disenchant then
       local parts = {}
       for _, part in ipairs(row.disenchant.parts) do
-        table.insert(parts, string.format("%s×%.1f", WoWF_CraftArb.ItemName(part.itemID), part.quantity))
+        table.insert(parts, string.format("%s×%.1f", WoWF_CraftArb.ItemLink(part.itemID), part.quantity))
       end
       table.insert(bodyLines, string.format(
         "|cff99e6ff分解期望:|r %s%s|r%s",
@@ -5039,7 +5038,7 @@ local function RenderTabCraftArb()
 
     local profitable = (row.profit or 0) > 0
     list:Add({
-      title = string.format("%s%s|r  |cffffd100[%s]|r", qualityColor, WoWF_CraftArb.ItemName(row.outputID), row.professionName or "专业"),
+      title = string.format("%s  |cffffd100[%s]|r", WoWF_CraftArb.ItemLink(row.outputID), row.professionName or "专业"),
       body = table.concat(bodyLines, "\n"),
       theme = profitable and "arbGood" or "arbBad",
       badge = row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
