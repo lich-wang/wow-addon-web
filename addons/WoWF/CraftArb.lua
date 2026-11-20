@@ -224,6 +224,7 @@ local GEAR_CLASS_BY_ID = { [2] = "weapon", [4] = "armor" }
 local GEAR_CLASS_BY_TEXT = { ["武器"] = "weapon", ["护甲"] = "armor", weapon = "weapon", armor = "armor" }
 
 local itemCache = {}
+local pendingItems = {}
 -- 物品数据从「未加载」变成「已加载」时自增，用于让分析缓存失效
 local itemDataVersion = 0
 
@@ -250,7 +251,8 @@ function Arb.Items(itemID)
   if cached and cached.loaded then return cached end
   local values = rawItemInfo(id)
   if not values or type(values[1]) ~= "string" or values[1] == "" then
-    -- 首次读取会触发客户端加载，下一次渲染再取
+    -- 首次读取会触发客户端加载，待加载事件到达后再重绘
+    pendingItems[id] = true
     if type(C_Item) == "table" and type(C_Item.RequestLoadItemDataByID) == "function" then
       pcall(C_Item.RequestLoadItemDataByID, id)
     end
@@ -268,8 +270,17 @@ function Arb.Items(itemID)
   info.weapon, info.armor = kind == "weapon", kind == "armor"
   info.gear = info.weapon or info.armor
   itemCache[id] = info
+  pendingItems[id] = nil
   itemDataVersion = itemDataVersion + 1
   return info
+end
+
+---判断指定物品是否正处于 CraftArb 等待异步加载状态
+---@param itemID number
+---@return boolean
+function Arb.HasPendingItem(itemID)
+  local id = tonumber(itemID)
+  return id ~= nil and pendingItems[id] == true
 end
 
 ---物品显示名，客户端未加载时退回占位

@@ -6018,8 +6018,8 @@ end
 for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED", "SKILL_LINES_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
--- 制造套利：专业窗口打开时自动补全本插件的配方缓存
-for _, craftEv in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_CLOSE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED" }) do
+-- 制造套利：专业窗口打开时自动补全本插件的配方缓存，物品异步加载完成时重绘套利页
+for _, craftEv in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_CLOSE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "GET_ITEM_INFO_RECEIVED", "ITEM_DATA_LOAD_RESULT" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, craftEv)
 end
 pcall(eventFrame.RegisterEvent, eventFrame, "GET_ITEM_INFO_RECEIVED")
@@ -6084,9 +6084,15 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
       ScheduleRefresh(true, 0.2)
     end
-  elseif event == "GET_ITEM_INFO_RECEIVED" then
-    if arg2 and mainFrame and mainFrame:IsShown() then
-      ScheduleRefresh(true, 0.3)
+  elseif event == "GET_ITEM_INFO_RECEIVED" or event == "ITEM_DATA_LOAD_RESULT" then
+    if arg2 == true then
+      local itemID = tonumber(arg1)
+      if itemID and WoWF_CraftArb and WoWF_CraftArb.HasPendingItem and WoWF_CraftArb.HasPendingItem(itemID) then
+        if WoWF_CraftArb.Reset then WoWF_CraftArb.Reset() end
+      end
+      if mainFrame and mainFrame:IsShown() then
+        ScheduleRefresh(true, 0.25)
+      end
     end
   elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
     if mainFrame and mainFrame:IsShown() then
