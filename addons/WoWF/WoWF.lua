@@ -130,7 +130,7 @@ local state = {
   craftMode = "sell", -- "sell" | "de"（制造套利的成品出售 / 分解套利）
   craftSort = "profit", -- "profit" | "roi"
   craftOnlyProfit = true, -- 默认只看能赚钱的配方
-  craftProfession = nil, -- 只显示某个专业（nil = 全部）
+  craftProfession = nil, -- 过滤的专业集合（nil = 全部，table = { [key] = true }）
   craftCrossOwner = true, -- 允许借用同账号其他角色的中间产物配方
   craftOnlySkillUp = false, -- 只看还能涨点的配方
 }
@@ -155,6 +155,29 @@ local PERSISTED_STATE_KEYS = {
   "craftOnlySkillUp",
 }
 
+local function NormalizeCraftProfession(val)
+  if type(val) == "string" and val ~= "" then
+    return { [val] = true }
+  end
+  if type(val) == "table" then
+    local out = {}
+    for _, key in ipairs(val) do
+      if type(key) == "string" and key ~= "" then
+        out[key] = true
+      end
+    end
+    for key, enabled in pairs(val) do
+      if type(key) == "string" and key ~= "" and enabled then
+        out[key] = true
+      end
+    end
+    if next(out) ~= nil then
+      return out
+    end
+  end
+  return nil
+end
+
 local hasLoadedPersistedState = false
 local function LoadPersistedState()
   if hasLoadedPersistedState then return end
@@ -167,9 +190,7 @@ local function LoadPersistedState()
       state[key] = saved[key]
     end
   end
-  if saved.craftProfession == false then
-    state.craftProfession = nil
-  end
+  state.craftProfession = NormalizeCraftProfession(state.craftProfession)
 end
 
 local function SavePersistedState()
@@ -179,7 +200,7 @@ local function SavePersistedState()
   end
   for _, key in ipairs(PERSISTED_STATE_KEYS) do
     local val = state[key]
-    if val == nil then
+    if val == nil or (key == "craftProfession" and type(val) == "table" and next(val) == nil) then
       WoWFDB.uiState[key] = false
     else
       WoWFDB.uiState[key] = val
@@ -4578,6 +4599,9 @@ local function AttachTooltip(widget, title, bodyOrFn)
   end)
 end
 
+local dropdownMenu
+local OpenControlDropdown
+
 local function LayoutArbToolbar(yOffset, opts)
   local width = (contentChild:GetWidth() or 720) - 16
   if width < 500 then width = 710 end
@@ -4596,11 +4620,13 @@ local function LayoutArbToolbar(yOffset, opts)
       arbToolbar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
     end
     arbToolbar.btns = {}
-    for i = 1, 4 do
-      local btn = CreateFrame("Button", nil, arbToolbar, "UIPanelButtonTemplate")
-      btn:SetHeight(22)
-      arbToolbar.btns[i] = btn
-    end
+  end
+
+  local items = opts.buttons or {}
+  local count = #items
+  if count == 0 then
+    arbToolbar:Hide()
+    return yOffset
   end
 
   arbToolbar:SetWidth(width)
@@ -4608,15 +4634,27 @@ local function LayoutArbToolbar(yOffset, opts)
   arbToolbar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
   arbToolbar:Show()
 
-  local btnW = math.floor((width - 16 - 18) / 4)
-  for i, item in ipairs(opts.buttons or {}) do
+  for i = 1, count do
+    if not arbToolbar.btns[i] then
+      local btn = CreateFrame("Button", nil, arbToolbar, "UIPanelButtonTemplate")
+      btn:SetHeight(22)
+      arbToolbar.btns[i] = btn
+    end
+  end
+  for i = count + 1, #arbToolbar.btns do
+    arbToolbar.btns[i]:Hide()
+  end
+
+  local gap = 6
+  local btnW = math.floor((width - 16 - gap * math.max(0, count - 1)) / count)
+  for i, item in ipairs(items) do
     local btn = arbToolbar.btns[i]
     btn:SetWidth(btnW)
     btn:ClearAllPoints()
     if i == 1 then
       btn:SetPoint("LEFT", arbToolbar, "LEFT", 8, 0)
     else
-      btn:SetPoint("LEFT", arbToolbar.btns[i - 1], "RIGHT", 6, 0)
+      btn:SetPoint("LEFT", arbToolbar.btns[i - 1], "RIGHT", gap, 0)
     end
     btn:SetText(item.label)
     btn:SetScript("OnClick", item.fn)
@@ -4625,6 +4663,56 @@ local function LayoutArbToolbar(yOffset, opts)
   end
 
   return yOffset + 34 + 8
+end
+
+local function IsCraftProfessionSelected(key)
+  return type(state.craftProfession) == "table" and state.craftProfession[key] == true
+end
+
+local function ToggleCraftProfession(key)
+  if type(key) ~= "string" or key == "" then return end
+  local nextSet = {}
+  if type(state.craftProfession) == "table" then
+    for k, enabled in pairs(state.craftProfession) do
+      if enabled then nextSet[k] = true end
+    end
+  end
+  if nextSet[key] then
+    nextSet[key] = nil
+  else
+    nextSet[key] = true
+  end
+  state.craftProfession = (next(nextSet) ~= nil) and nextSet or nil
+end
+
+local function FormatCraftProfessionFilter(arb, professions)
+  if type(state.craftProfession) ~= "table" or next(state.craftProfession) == nil then
+    return "专业: 全部", "全部专业"
+  end
+  local names, seen = {}, {}
+  for _, stats in ipairs(professions or {}) do
+    if state.craftProfession[stats.key] then
+      seen[stats.key] = true
+      table.insert(names, (arb and arb.ProfessionNames and arb.ProfessionNames[stats.key]) or stats.name or stats.key)
+    end
+  end
+  local extra = {}
+  for k, enabled in pairs(state.craftProfession) do
+    if enabled and not seen[k] then
+      table.insert(extra, k)
+    end
+  end
+  table.sort(extra)
+  for _, k in ipairs(extra) do
+    table.insert(names, (arb and arb.ProfessionNames and arb.ProfessionNames[k]) or k)
+  end
+  if #names == 0 then
+    return "专业: 全部", "全部专业"
+  elseif #names == 1 then
+    return "专业: " .. names[1], names[1]
+  else
+    return string.format("专业: %d项", #names), table.concat(names, "、")
+  end
 end
 
 local function RenderTabCraftArb()
@@ -4712,8 +4800,9 @@ local function RenderTabCraftArb()
   if mode == "de" and not hasEnchanting then
     table.insert(infoLines, "|cffff5555注意:|r 当前角色没有【附魔】，分解套利只代表「若能分解」的理论值，实际无法执行。")
   end
+  local profBtnLabel, profSummaryText = FormatCraftProfessionFilter(arb, meta.professions)
   table.insert(infoLines, string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s",
-    state.craftProfession and (arb.ProfessionNames[state.craftProfession] or state.craftProfession) or "全部专业",
+    profSummaryText,
     onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100含亏损|r",
     state.craftCrossOwner ~= false and "|cff99e6ff含小号自产|r" or "|cffaaaaaa仅本角色|r",
     state.craftOnlySkillUp == true and "|cffffd100只看涨点|r" or "|cffaaaaaa含不涨点|r",
@@ -4732,9 +4821,82 @@ local function RenderTabCraftArb()
     },
   })
 
-  -- 2. 紧凑工具条（4 个筛选/排序开关 + Tooltip 口径说明）
+  -- 2. 紧凑工具条（专业下拉 + 4 个筛选/排序开关 + Tooltip 口径说明）
   list.y = LayoutArbToolbar(list.y, {
     buttons = {
+      {
+        label = profBtnLabel,
+        fn = function(self)
+          OpenControlDropdown(self, function()
+            local items = {
+              {
+                text = "全部专业（清空筛选）",
+                isNotRadio = true,
+                checked = function()
+                  return type(state.craftProfession) ~= "table" or next(state.craftProfession) == nil
+                end,
+                func = function()
+                  state.craftProfession = nil
+                  RefreshUI()
+                end,
+              },
+            }
+            local profs = meta.professions or {}
+            if #profs == 0 then
+              table.insert(items, {
+                text = "暂无可用专业配方",
+                disabled = true,
+                notCheckable = true,
+              })
+            else
+              for _, stats in ipairs(profs) do
+                local key = stats.key
+                local name = (arb.ProfessionNames and arb.ProfessionNames[key]) or stats.name or key
+                table.insert(items, {
+                  text = string.format("%s (%d/%d)", name, stats.profitable or 0, stats.total or 0),
+                  isNotRadio = true,
+                  keepShownOnClick = true,
+                  checked = function()
+                    return IsCraftProfessionSelected(key)
+                  end,
+                  func = function()
+                    ToggleCraftProfession(key)
+                    RefreshUI()
+                    if UIDropDownMenu_Refresh and dropdownMenu then
+                      UIDropDownMenu_Refresh(dropdownMenu, nil, 1)
+                    end
+                  end,
+                })
+              end
+            end
+            return items
+          end, function()
+            local profs = meta.professions or {}
+            if #profs == 0 then
+              state.craftProfession = nil
+            else
+              local curKey = type(state.craftProfession) == "table" and next(state.craftProfession) or nil
+              local nextIdx = 1
+              if curKey then
+                for i, stats in ipairs(profs) do
+                  if stats.key == curKey then
+                    nextIdx = i + 1
+                    break
+                  end
+                end
+              end
+              if nextIdx > #profs then
+                state.craftProfession = nil
+              else
+                state.craftProfession = { [profs[nextIdx].key] = true }
+              end
+            end
+            RefreshUI()
+          end)
+        end,
+        tipTitle = "专业过滤（单选/多选）",
+        tipBody = "点击打开专业下拉框：可勾选一个或多个专业同时查看，点击「全部专业」可清空筛选。",
+      },
       {
         label = onlyProfitable and "仅盈利: 开" or "仅盈利: 关",
         fn = function()
@@ -4777,12 +4939,12 @@ local function RenderTabCraftArb()
   -- 3. 分专业汇总
   if #(meta.professions or {}) > 0 then
     for _, stats in ipairs(meta.professions) do
-      local isActive = state.craftProfession == stats.key
+      local isActive = IsCraftProfessionSelected(stats.key)
       local body = string.format(
         "配方 |cffffd100%d|r 条  ·  可盈利 |cff44ff88%d|r 条  ·  最高单次净利润 %s%s|r\n%s",
         stats.total or 0, stats.profitable or 0,
         CraftSignColor(stats.best), FormatMoney(stats.best or 0),
-        isActive and "|cff00ff00[已筛选该专业]|r 再次点击可取消" or "点击右上角按钮只看该专业"
+        isActive and "|cff00ff00[已筛选该专业]|r 再次点击可取消" or "点击右上角按钮加入筛选（支持上方下拉框多选）"
       )
       list:Add({
         title = string.format("%s %s", isActive and "|cff00ff00►|r" or "|cffffd100•|r", WoWF_CraftArb.ProfessionNames[stats.key] or stats.key),
@@ -4790,13 +4952,9 @@ local function RenderTabCraftArb()
         theme = isActive and "routeCur" or "info",
         badge = string.format("%d/%d 盈利", stats.profitable or 0, stats.total or 0),
         action = {
-          label = isActive and "显示全部专业" or "只看这个专业",
+          label = isActive and "取消筛选" or "筛选该专业",
           fn = function()
-            if isActive then
-              state.craftProfession = nil
-            else
-              state.craftProfession = stats.key
-            end
+            ToggleCraftProfession(stats.key)
             RefreshUI()
           end,
         },
@@ -5240,8 +5398,7 @@ RefreshUI = function(preserveScroll)
   SavePersistedState()
 end
 
-local dropdownMenu
-local function OpenControlDropdown(anchorBtn, buildItemsFn, fallbackFn)
+OpenControlDropdown = function(anchorBtn, buildItemsFn, fallbackFn)
   if UIDropDownMenu_Initialize and UIDropDownMenu_CreateInfo and UIDropDownMenu_AddButton and ToggleDropDownMenu then
     if not dropdownMenu then
       dropdownMenu = CreateFrame("Frame", "WoWFControlDropDown", UIParent, "UIDropDownMenuTemplate")
@@ -5250,8 +5407,17 @@ local function OpenControlDropdown(anchorBtn, buildItemsFn, fallbackFn)
       for _, item in ipairs(buildItemsFn() or {}) do
         local info = UIDropDownMenu_CreateInfo()
         info.text = item.text
-        info.checked = item.checked and true or false
+        if type(item.checked) == "function" then
+          info.checked = item.checked
+        else
+          info.checked = item.checked and true or false
+        end
         info.func = item.func
+        if item.keepShownOnClick ~= nil then info.keepShownOnClick = item.keepShownOnClick end
+        if item.isNotRadio ~= nil then info.isNotRadio = item.isNotRadio end
+        if item.notCheckable ~= nil then info.notCheckable = item.notCheckable end
+        if item.isTitle ~= nil then info.isTitle = item.isTitle end
+        if item.disabled ~= nil then info.disabled = item.disabled end
         UIDropDownMenu_AddButton(info, level)
       end
     end, "MENU")
