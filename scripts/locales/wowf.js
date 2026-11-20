@@ -8409,16 +8409,17 @@ local function RenderTabCraftArb()
   -- 1. 数据源与专业等级总览
   local infoLines = {}
   local stateText
+  local providerName = meta.provider == "blackthornes" and "黑石交易技能" or "EasyAuction"
   if meta.state == "ready" then
     local snapshot = meta.market and tonumber(meta.market.updatedAt)
     local stamp = snapshot and snapshot > 0 and date("%m-%d %H:%M", snapshot) or nil
     stateText = stamp
-      and string.format("|cff00ff00已连接 EasyAuction 行情|r（快照: %s）", tostring(stamp))
-      or "|cff00ff00已连接 EasyAuction 行情|r"
+      and string.format("|cff00ff00已连接 %s 行情|r（快照: %s）", providerName, tostring(stamp))
+      or string.format("|cff00ff00已连接 %s 行情|r", providerName)
   elseif meta.state == "loading" then
-    stateText = "|cffffd100已安装 EasyAuction，但当前市场行情尚未初始化|r（进一次拍卖行或等待初始化完成）"
+    stateText = "|cffffd100已安装 EasyAuction / 黑石交易技能，但当前市场行情尚未初始化|r（扫描一次拍卖行或等待初始化完成）"
   else
-    stateText = "|cffff5555未检测到 EasyAuction 行情 API|r，安装并启用 EasyAuction 后本页才会给出真实价格"
+    stateText = "|cffff5555未检测到 EasyAuction 或黑石交易技能行情|r，启用任一拍卖插件并扫描拍卖行后即可给出真实价格"
   end
   table.insert(infoLines, "|cff99e6ff行情数据:|r " .. stateText)
 
@@ -8447,7 +8448,7 @@ local function RenderTabCraftArb()
     end
   end
   table.insert(infoLines, string.format(
-    "|cff99e6ff配方来源:|r EasyAuction 专业库 |cffffd100%d|r 个角色  ·  本插件采集 |cffffd100%d|r 条%s",
+    "|cff99e6ff配方来源:|r 拍卖/专业库 |cffffd100%d|r 个角色  ·  本插件采集 |cffffd100%d|r 条%s",
     meta.players or 0,
     recipeCount,
     recipeCount == 0 and "（打开一次专业窗口即可自动补全）" or ""
@@ -8463,12 +8464,12 @@ local function RenderTabCraftArb()
   if mode == "de" and not hasEnchanting then
     table.insert(infoLines, "|cffff5555注意:|r 当前角色没有【附魔】，分解套利只代表「若能分解」的理论值，实际无法执行。")
   end
-  table.insert(infoLines, "|cffaaaaaa口径:|r 材料按 EasyAuction 可购深度逐档计价，中间产物自动比较「拍卖行直购 / 自己制作」取更便宜的一侧，成品售价取对手最低价（不含押金）。")
+  table.insert(infoLines, "|cffaaaaaa口径:|r 材料按拍卖行可购深度逐档计价（兼容 EasyAuction / 黑石交易技能），中间产物自动比较「拍卖行直购 / 自己制作」取更便宜的一侧，成品售价取对手最低价（不含押金）。")
 
   local infoCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
   y = LayoutCard(
     infoCard, y,
-    "|cff00ffcc[制造套利] 用 EasyAuction 行情筛选「当前可制作且能盈利」的配方|r",
+    "|cff00ffcc[制造套利] 用拍卖行行情筛选「当前可制作且能盈利」的配方|r",
     table.concat(infoLines, "\n"),
     { 0.0, 0.85, 0.7, 0.95 },
     { 0.05, 0.14, 0.16, 0.95 },
@@ -8681,7 +8682,8 @@ local function RenderTabCraftArb()
     table.insert(bodyLines, string.format(
       "|cff99e6ff技能:|r %s  ·  角色 %s|r%s%s",
       CRAFT_DIFFICULTY_LABEL[row.skillUp] or CRAFT_DIFFICULTY_LABEL.unknown,
-      row.ownerSource == "easyauction" and "EasyAuction 专业库" or "本插件采集",
+      row.ownerSource == "easyauction" and "EasyAuction 专业库"
+        or (row.ownerSource == "blackthornes" and "黑石交易技能" or "本插件采集"),
       (row.skill and string.format(" · |cffffd100%d/%d|r", row.skill, row.skillMax or 0)) or "",
       row.ownCharacter and "" or " |cffff8800[同账号小号]|r"
     ))
@@ -8700,7 +8702,7 @@ local function RenderTabCraftArb()
         local ok, listIDOrReason, note = WoWF_CraftArb.AddToShoppingList(row, row.name or WoWF_CraftArb.ItemName(row.outputID))
         if ok then
           DEFAULT_CHAT_FRAME:AddMessage(string.format(
-            "|cff00ffcc[WoWF 制造套利]|r 已把「%s」的材料写入 EasyAuction 购物清单（清单 ID: %s）%s",
+            "|cff00ffcc[WoWF 制造套利]|r 已把「%s」的材料写入购物清单（清单 ID: %s）%s",
             WoWF_CraftArb.ItemName(row.outputID), tostring(listIDOrReason),
             note and ("，" .. note) or ""))
         else
@@ -8716,12 +8718,12 @@ local function RenderTabCraftArb()
     local emptyLines = {}
     if meta.total == 0 then
       table.insert(emptyLines, "|cffffd100还没有可用于分析的配方数据。|r")
-      table.insert(emptyLines, "1. 安装并启用 EasyAuction（本仓库精选库可一键安装），进过拍卖行后其专业库会记录各角色已学配方；")
+      table.insert(emptyLines, "1. 安装并启用 EasyAuction 或黑石交易技能（Blackthornes_TS），进过拍卖行后其专业库会记录各角色已学配方；")
       table.insert(emptyLines, "2. 也可以打开一次游戏原生专业窗口（裁缝/锻造/附魔等），本页面会自动采集当前角色的配方；")
-      table.insert(emptyLines, "3. 首次使用请让 EasyAuction 扫描一次拍卖行，否则没有可比价的行情。")
+      table.insert(emptyLines, "3. 首次使用请让拍卖行插件扫描一次拍卖行，否则没有可比价的行情。")
     elseif meta.state ~= "ready" then
       table.insert(emptyLines, "|cffffd100行情尚未就绪，暂时无法算利润。|r")
-      table.insert(emptyLines, "请启用 EasyAuction 并至少扫描一次拍卖行；随后本页会自动按新行情重算。")
+      table.insert(emptyLines, "请启用 EasyAuction 或黑石交易技能并至少扫描一次拍卖行；随后本页会自动按新行情重算。")
     elseif onlyProfitable then
       table.insert(emptyLines, string.format(
         "|cffffd100当前没有可盈利的配方。|r已分析 %d 条、有报价 %d 条；可点击上方「显示全部配方」查看亏损明细，或检查行情快照是否过期。",

@@ -79,12 +79,28 @@ Arb.ProfessionNames = {
   cooking = "烹饪", firstaid = "急救",
 }
 
+local SKILL_LINE_PROFESSIONS = {
+  [2937] = "alchemy",        [171] = "alchemy",
+  [2938] = "blacksmithing",  [164] = "blacksmithing",
+  [2940] = "enchanting",     [333] = "enchanting",
+  [2941] = "engineering",    [202] = "engineering",
+  [2944] = "herbalism",      [182] = "herbalism",
+  [2945] = "leatherworking", [165] = "leatherworking",
+  [2946] = "mining",         [186] = "mining",
+  [2947] = "skinning",       [393] = "skinning",
+  [2948] = "tailoring",      [197] = "tailoring",
+  [185] = "cooking",         [129] = "firstaid",
+}
+
 local GATHERING = { herbalism = true, mining = true, skinning = true, fishing = true }
 
----把专业名（中文或英文）归一化成稳定的内部 key
+---把专业名（中文/英文）或 skillLineID 归一化成稳定的内部 key
 ---@param name string|nil
+---@param skillLineID number|nil
 ---@return string|nil
-function Arb.ProfessionKey(name)
+function Arb.ProfessionKey(name, skillLineID)
+  local line = tonumber(skillLineID)
+  if line and SKILL_LINE_PROFESSIONS[line] then return SKILL_LINE_PROFESSIONS[line] end
   if type(name) ~= "string" or name == "" then return nil end
   return PROFESSION_KEYS[name] or PROFESSION_KEYS[lower(name)]
 end
@@ -165,7 +181,7 @@ end
 function Arb.Professions()
   local list, seen = {}, {}
   local function add(name, level, maxLevel, skillLineID, texture)
-    local key = Arb.ProfessionKey(name)
+    local key = Arb.ProfessionKey(name, skillLineID)
     if not key or seen[key] then return end
     local current, ceiling = tonumber(level) or 0, tonumber(maxLevel) or 0
     if current <= 0 and ceiling <= 0 then return end
@@ -294,7 +310,7 @@ function Arb.QualityColor(itemID)
 end
 
 -- ============================================================================
--- 3. EasyAuction 行情接入
+-- 3. 拍卖行行情接入（EasyAuction 优先，兼容黑石交易技能 Blackthornes_TS）
 -- ============================================================================
 
 ---EasyAuction 的全局 API，未就绪时返回 nil
@@ -307,14 +323,55 @@ function Arb.Market()
   return api
 end
 
+local function blackthornesPriceTable()
+  local db = _G.BlackthornesTSDB
+  if type(db) ~= "table" or type(db.prices) ~= "table" then return nil end
+  local realm = realmName()
+  local faction
+  if type(UnitFactionGroup) == "function" then
+    local ok, value = pcall(UnitFactionGroup, "player")
+    if ok and type(value) == "string" and value ~= "" then faction = value end
+  end
+  if realm ~= "" and faction then
+    local t = db.prices[realm .. "-" .. faction]
+    if type(t) == "table" and next(t) ~= nil then return t end
+  end
+  if realm ~= "" then
+    local prefix = realm .. "-"
+    for k, t in pairs(db.prices) do
+      if type(k) == "string" and sub(k, 1, #prefix) == prefix and type(t) == "table" and next(t) ~= nil then
+        return t
+      end
+    end
+  end
+  for _, t in pairs(db.prices) do
+    if type(t) == "table" and next(t) ~= nil then return t end
+  end
+  return nil
+end
+
+local function blackthornesApi()
+  local api = _G.BlackthornesTS_API
+  if type(api) == "table" and type(api.GetPrice) == "function" then return api end
+  return nil
+end
+
+---当前实际生效的行情数据源："easyauction" | "blackthornes" | nil
+---@return string|nil
+function Arb.MarketProvider()
+  if Arb.Market() then return "easyauction" end
+  if blackthornesPriceTable() or blackthornesApi() then return "blackthornes" end
+  return nil
+end
+
 ---区分「未安装」「已安装但行情未初始化」「就绪」三种状态
 ---@return string
 function Arb.ApiState()
-  local api = _G.EasyAuctionAPI
-  if type(api) ~= "table" or type(api.IsReady) ~= "function" then return "missing" end
-  local ok, ready = pcall(api.IsReady)
-  if ok and ready == true then return "ready" end
-  return "loading"
+  if Arb.MarketProvider() then return "ready" end
+  if type(_G.EasyAuctionAPI) == "table" or type(_G.BlackthornesTSDB) == "table" or type(_G.BlackthornesTS_API) == "table" then
+    return "loading"
+  end
+  return "missing"
 end
 
 local quoteCache, sellCache, recipeListCache, rowCache
@@ -329,17 +386,26 @@ Arb.Reset()
 
 local function revision()
   local api = Arb.Market()
-  if not api or type(api.GetRevision) ~= "function" then return nil end
-  local ok, value = pcall(api.GetRevision)
-  if ok then return tonumber(value) end
+  if api and type(api.GetRevision) == "function" then
+    local ok, value = pcall(api.GetRevision)
+    if ok then return tonumber(value) end
+  end
+  local db = _G.BlackthornesTSDB
+  if type(db) == "table" and (blackthornesPriceTable() or blackthornesApi()) then
+    local tbl = blackthornesPriceTable()
+    local count = 0
+    if tbl then for _ in pairs(tbl) do count = count + 1 end end
+    return tconcat({ "bt", floor(tonumber(db.lastScan) or tonumber(db.lastFullScan) or 0), count }, ":")
+  end
+  return nil
 end
 
----按需要购买的数量取单价：优先用 EasyAuction 的可购深度，其次回落到存档报价
+---按需要购买的数量取单价：优先用 EasyAuction 的可购深度，其次兼容黑石交易技能价格阶梯与存档
 ---库存买不齐时仍给出估价，但通过 detail.shortfall 标记，调用方必须区别对待
 ---@param itemID number
 ---@param quantity number 需要购买的数量（>0）
 ---@return number|nil unitPrice 单价（铜）
----@return string|nil source "depth" | "record" | "insufficient" | "no-api"
+---@return string|nil source "depth" | "record" | "api" | "insufficient" | "no-api"
 ---@return table|nil detail 形如 { unit, source, shortfall = {have, need} }
 function Arb.PriceFor(itemID, quantity)
   local id = tonumber(itemID)
@@ -350,37 +416,71 @@ function Arb.PriceFor(itemID, quantity)
   if cached then return cached.unit, cached.source, cached end
 
   local api = Arb.Market()
-  if not api then return nil, "no-api" end
+  local btPrices = not api and blackthornesPriceTable() or nil
+  local btApi = not api and blackthornesApi() or nil
+  if not api and not btPrices and not btApi then return nil, "no-api" end
   local unit, source, shortfall
 
-  if type(api.GetDepth) == "function" then
-    local ok, depth = pcall(api.GetDepth, id, 200)
-    if ok and type(depth) == "table" and depth.complete == true then
-      local total = tonumber(depth.totalQuantity) or 0
-      local covered = tonumber(depth.coveredQuantity) or 0
-      if total < wanted then
-        -- 库存不足：仍可用报价估算单价，但要标记「买不齐」
-        shortfall = { have = total, need = wanted }
-      end
-      if covered >= wanted then
-        local spent, left = 0, wanted
-        for _, level in ipairs(depth.levels or {}) do
-          if left <= 0 then break end
-          local amount = min(left, tonumber(level[2]) or 0)
-          if amount > 0 then
-            spent, left = spent + amount * (tonumber(level[1]) or 0), left - amount
+  if api then
+    if type(api.GetDepth) == "function" then
+      local ok, depth = pcall(api.GetDepth, id, 200)
+      if ok and type(depth) == "table" and depth.complete == true then
+        local total = tonumber(depth.totalQuantity) or 0
+        local covered = tonumber(depth.coveredQuantity) or 0
+        if total < wanted then
+          -- 库存不足：仍可用报价估算单价，但要标记「买不齐」
+          shortfall = { have = total, need = wanted }
+        end
+        if covered >= wanted then
+          local spent, left = 0, wanted
+          for _, level in ipairs(depth.levels or {}) do
+            if left <= 0 then break end
+            local amount = min(left, tonumber(level[2]) or 0)
+            if amount > 0 then
+              spent, left = spent + amount * (tonumber(level[1]) or 0), left - amount
+            end
           end
+          if left <= 0 and spent > 0 then unit, source = spent / wanted, "depth" end
+        end
+      end
+    end
+
+    if not unit and type(api.GetRecord) == "function" then
+      local ok, record = pcall(api.GetRecord, id)
+      if ok and type(record) == "table" then
+        local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
+        if price and price > 0 then unit, source = price, "record" end
+      end
+    end
+  else
+    local record = btPrices and btPrices[id]
+    if type(record) == "table" then
+      local ladder = record.ladder
+      if type(ladder) == "table" and #ladder >= 2 and #ladder % 2 == 0 then
+        local total, spent, left = 0, 0, wanted
+        for i = 1, #ladder, 2 do
+          local p, u = tonumber(ladder[i]) or 0, tonumber(ladder[i + 1]) or 0
+          if u > 0 and p > 0 then
+            total = total + u
+            if left > 0 then
+              local take = min(left, u)
+              spent, left = spent + take * p, left - take
+            end
+          end
+        end
+        if total < wanted then
+          shortfall = { have = total, need = wanted }
         end
         if left <= 0 and spent > 0 then unit, source = spent / wanted, "depth" end
       end
+      if not unit then
+        local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
+        if price and price > 0 then unit, source = price, "record" end
+      end
     end
-  end
-
-  if not unit and type(api.GetRecord) == "function" then
-    local ok, record = pcall(api.GetRecord, id)
-    if ok and type(record) == "table" then
-      local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
-      if price and price > 0 then unit, source = price, "record" end
+    if not unit and btApi then
+      local ok, price = pcall(btApi.GetPrice, id)
+      if ok and type(price) == "number" and price > 0 then unit, source = price, "api" end
     end
   end
 
@@ -400,15 +500,32 @@ function Arb.SellQuote(itemID)
   local cached = sellCache[id]
   if cached then return cached.price, cached.record end
   local api = Arb.Market()
-  if not api or type(api.GetRecord) ~= "function" then return nil end
-  local ok, record = pcall(api.GetRecord, id)
-  if not ok or type(record) ~= "table" then return nil end
-  local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
-  sellCache[id] = { price = price, record = record }
-  return price, record
+  if api and type(api.GetRecord) == "function" then
+    local ok, record = pcall(api.GetRecord, id)
+    if not ok or type(record) ~= "table" then return nil end
+    local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
+    sellCache[id] = { price = price, record = record }
+    return price, record
+  end
+  local btPrices = blackthornesPriceTable()
+  local record = btPrices and btPrices[id]
+  if type(record) == "table" then
+    local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
+    sellCache[id] = { price = price, record = record }
+    return price, record
+  end
+  local btApi = blackthornesApi()
+  if btApi then
+    local ok, price = pcall(btApi.GetPrice, id)
+    if ok and type(price) == "number" and price > 0 then
+      sellCache[id] = { price = price, record = nil }
+      return price, nil
+    end
+  end
+  return nil
 end
 
----拍卖行手续费率（EasyAuction 设置，缺省 5%）
+---拍卖行手续费率（EasyAuction / 黑石交易技能设置，缺省 5%）
 ---@return number
 function Arb.AuctionCut()
   local api = Arb.Market()
@@ -418,6 +535,11 @@ function Arb.AuctionCut()
       local cut = tonumber(settings.auctionCut)
       if cut and cut >= 0 and cut < 1 then return cut end
     end
+  end
+  local bt = _G.BlackthornesTSDB
+  if type(bt) == "table" and type(bt.settings) == "table" then
+    local cut = tonumber(bt.settings.auctionCut)
+    if cut and cut >= 0 and cut < 1 then return cut end
   end
   return DEFAULT_CUT
 end
@@ -477,36 +599,43 @@ local function normalizeStoredRecipe(raw)
   }
 end
 
----读取 EasyAuction 账号级专业数据库里的全部角色配方
+---读取 EasyAuction / 黑石交易技能 账号级专业数据库里的全部角色配方
 ---@return table[] 形如 { owner, ownerName, ruleset, skills, recipes, source }
 local function storedRecipeSets()
   local sets = {}
-  local db = _G.EasyAuctionDB12
-  local professions = type(db) == "table" and db.professions
-  local characters = type(professions) == "table" and professions.characters
-  if type(characters) ~= "table" then return sets end
-  for owner, record in pairs(characters) do
-    if type(record) == "table" and type(record.recipes) == "table" then
-      local skills = {}
-      for _, skill in ipairs(record.professions or {}) do
-        local key = Arb.ProfessionKey(skill.name or skill.professionName)
-        if key and not skills[key] then
-          skills[key] = { level = tonumber(skill.skillLevel) or 0, max = tonumber(skill.maxSkillLevel) or 0 }
+  local function readChars(characters, source)
+    if type(characters) ~= "table" then return end
+    for owner, record in pairs(characters) do
+      if type(record) == "table" and type(record.recipes) == "table" then
+        local skills = {}
+        for _, skill in ipairs(record.professions or {}) do
+          local key = Arb.ProfessionKey(skill.name or skill.professionName, skill.skillLineID)
+          if key and not skills[key] then
+            skills[key] = { level = tonumber(skill.skillLevel) or 0, max = tonumber(skill.maxSkillLevel) or 0 }
+          end
         end
-      end
-      local recipes = {}
-      for _, raw in pairs(record.recipes) do
-        local recipe = normalizeStoredRecipe(raw)
-        if recipe then tinsert(recipes, recipe) end
-      end
-      if #recipes > 0 then
-        tinsert(sets, {
-          owner = tostring(owner), ownerName = record.name, ruleset = record.ruleset or record.realm,
-          skills = skills, recipes = recipes, source = "easyauction",
-        })
+        local recipes = {}
+        for _, raw in pairs(record.recipes) do
+          local recipe = normalizeStoredRecipe(raw)
+          if recipe then tinsert(recipes, recipe) end
+        end
+        if #recipes > 0 then
+          tinsert(sets, {
+            owner = tostring(owner), ownerName = record.name, ruleset = record.ruleset or record.realm,
+            skills = skills, recipes = recipes, source = source,
+          })
+        end
       end
     end
   end
+
+  local ea = _G.EasyAuctionDB12
+  local eaProf = type(ea) == "table" and ea.professions
+  readChars(type(eaProf) == "table" and eaProf.characters or nil, "easyauction")
+
+  local bt = _G.BlackthornesTSDB
+  readChars(type(bt) == "table" and bt.characters or nil, "blackthornes")
+
   return sets
 end
 
@@ -547,16 +676,19 @@ end
 ---@return string
 local function recipeSignature()
   local count, stamp, characters = 0, 0, 0
-  local db = _G.EasyAuctionDB12
-  local entry = type(db) == "table" and db.professions
-  local records = type(entry) == "table" and entry.characters
-  if type(records) == "table" then
+  local function scanChars(records)
+    if type(records) ~= "table" then return end
     for _, record in pairs(records) do
       characters = characters + 1
       local at = type(record) == "table" and tonumber(record.recipesCachedAt) or 0
       if at and at > stamp then stamp = at end
     end
   end
+  local ea = _G.EasyAuctionDB12
+  local eaEntry = type(ea) == "table" and ea.professions
+  scanChars(type(eaEntry) == "table" and eaEntry.characters or nil)
+  local bt = _G.BlackthornesTSDB
+  scanChars(type(bt) == "table" and bt.characters or nil)
   local cache = WoWFDB.recipeCache
   if type(cache) == "table" then
     for _, scoped in pairs(cache) do
@@ -580,7 +712,7 @@ function Arb.RecipeList()
         local key = set.owner .. "#" .. tostring(recipe.id)
         if not seen[key] then
           seen[key] = true
-          local professionKey = Arb.ProfessionKey(recipe.professionName) or Arb.ProfessionKey(set.professionName)
+          local professionKey = Arb.ProfessionKey(recipe.professionName, recipe.skillLineID) or Arb.ProfessionKey(set.professionName)
           local skill = professionKey and set.skills and set.skills[professionKey] or nil
           recipe.professionKey = professionKey
           -- 未收录的专业名（如后续资料片新增专线）原样保留，避免被清空；其 skill 为 nil，页面不显示技能等级
@@ -1325,10 +1457,14 @@ function Arb.Analyse(options)
   if api and type(api.GetMarketInfo) == "function" then
     local ok, value = pcall(api.GetMarketInfo)
     if ok then marketInfo = value end
+  elseif type(_G.BlackthornesTSDB) == "table" and Arb.MarketProvider() == "blackthornes" then
+    local bt = _G.BlackthornesTSDB
+    local updated = tonumber(bt.lastScan) or tonumber(bt.lastFullScan) or 0
+    if updated > 0 then marketInfo = { updatedAt = updated } end
   end
 
   return rows, {
-    mode = mode, cut = cut, state = Arb.ApiState(), revision = revision(),
+    mode = mode, cut = cut, state = Arb.ApiState(), provider = Arb.MarketProvider(), revision = revision(),
     market = marketInfo, professions = professions,
     total = #cache, priced = rowCache.priced or 0, shown = #rows, hidden = hiddenByKeep,
     profitable = profitable, best = rows[1],
@@ -1363,7 +1499,7 @@ local function truncateUtf8(text, maxBytes)
   return "…"
 end
 
----把一条利润行需要采购的叶子材料写入 EasyAuction 临时购物清单
+---把一条利润行需要采购的叶子材料写入 EasyAuction 或黑石交易技能购物清单
 ---@param row table Analyse 返回的利润行
 ---@param label string|nil 清单名后缀（一般是产出物品名）
 ---@return boolean ok
@@ -1373,42 +1509,61 @@ function Arb.AddToShoppingList(row, label)
   if type(row) ~= "table" or type(row.leaves) ~= "table" or #row.leaves == 0 then
     return false, "该配方没有需要采购的材料"
   end
-  local api = Arb.Market()
-  if not api then return false, "EasyAuction 行情尚未就绪" end
-  if type(api.CreateShoppingList) ~= "function" or type(api.SetShoppingListItem) ~= "function" then
-    return false, "EasyAuction 版本过旧，缺少购物清单 API"
-  end
   local title = "WoWF 制造套利"
   if type(label) == "string" and label ~= "" then
     title = truncateUtf8(title .. " · " .. label, 48)
   end
-  local created, listID = pcall(api.CreateShoppingList, title, true)
-  if not created then return false, tostring(listID or "创建购物清单失败") end
-  if not listID then return false, "创建购物清单失败" end
 
-  local accepted, failed = 0, {}
-  for _, leaf in ipairs(row.leaves) do
-    -- 数量向上取整到整件；单价上限给 5% 余量，避免材料涨价后清单直接失效
-    local cap = leaf.unit and ceil(leaf.unit * 1.05) or nil
-    local okItem, reason = pcall(api.SetShoppingListItem, listID, leaf.itemID,
-      ceil(leaf.quantity), cap, Arb.ItemName(leaf.itemID))
-    if okItem and reason == true then
-      accepted = accepted + 1
-    else
-      tinsert(failed, tostring(reason or "未知错误"))
+  local api = Arb.Market()
+  if api then
+    if type(api.CreateShoppingList) ~= "function" or type(api.SetShoppingListItem) ~= "function" then
+      return false, "EasyAuction 版本过旧，缺少购物清单 API"
     end
+    local created, listID = pcall(api.CreateShoppingList, title, true)
+    if not created then return false, tostring(listID or "创建购物清单失败") end
+    if not listID then return false, "创建购物清单失败" end
+
+    local accepted, failed = 0, {}
+    for _, leaf in ipairs(row.leaves) do
+      -- 数量向上取整到整件；单价上限给 5% 余量，避免材料涨价后清单直接失效
+      local cap = leaf.unit and ceil(leaf.unit * 1.05) or nil
+      local okItem, reason = pcall(api.SetShoppingListItem, listID, leaf.itemID,
+        ceil(leaf.quantity), cap, Arb.ItemName(leaf.itemID))
+      if okItem and reason == true then
+        accepted = accepted + 1
+      else
+        tinsert(failed, tostring(reason or "未知错误"))
+      end
+    end
+    if type(api.OpenShoppingList) == "function" then
+      -- 拍卖行没打开时这里会返回 auction-house-closed，属于预期情况，不影响清单写入
+      pcall(api.OpenShoppingList, listID)
+    end
+    if accepted == 0 then
+      return false, (failed[1] and ("写入购物清单失败: " .. failed[1])) or "写入购物清单失败"
+    end
+    if #failed > 0 then
+      return true, listID, format("%d/%d 条材料写入成功", accepted, #row.leaves)
+    end
+    return true, listID
   end
-  if type(api.OpenShoppingList) == "function" then
-    -- 拍卖行没打开时这里会返回 auction-house-closed，属于预期情况，不影响清单写入
-    pcall(api.OpenShoppingList, listID)
+
+  local bt = _G.BlackthornesTSDB
+  if type(bt) == "table" then
+    if type(bt.shoppingLists) ~= "table" then bt.shoppingLists = {} end
+    local nextId = tonumber(bt.shoppingListNextId) or (#bt.shoppingLists + 1)
+    if nextId < 1 then nextId = 1 end
+    local items = {}
+    for _, leaf in ipairs(row.leaves) do
+      local cap = leaf.unit and ceil(leaf.unit * 1.05) or nil
+      tinsert(items, { id = leaf.itemID, want = max(1, ceil(leaf.quantity or 1)), maxPay = cap })
+    end
+    tinsert(bt.shoppingLists, { id = nextId, name = title, items = items })
+    bt.shoppingListNextId = nextId + 1
+    return true, nextId, "已写入黑石交易技能购物清单"
   end
-  if accepted == 0 then
-    return false, (failed[1] and ("写入购物清单失败: " .. failed[1])) or "写入购物清单失败"
-  end
-  if #failed > 0 then
-    return true, listID, format("%d/%d 条材料写入成功", accepted, #row.leaves)
-  end
-  return true, listID
+
+  return false, "EasyAuction / 黑石交易技能均未就绪"
 end
 `;
 }
