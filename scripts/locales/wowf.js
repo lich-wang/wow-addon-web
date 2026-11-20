@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
+import { generateWoWFCraftArbLua } from './wowfCraftArb.js';
 
 const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
 
@@ -3843,7 +3844,8 @@ function generateWoWFToc(version, updatedAt) {
 ## Title: WoWF Companion (wowf.io 无限服智能百科)
 ## Title-zhCN: |cff00ffcc[无限百科]|r WoWF Companion (wowf.io 动态指南)
 ## Notes: In-game smart companion for wowf.io on WoW Forever (16001). Dynamically matches leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
-## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、35大副本（含9大无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告。(数据同步: ${updatedAt})
+## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、35大副本（含9大无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告，并用 EasyAuction 行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
+## OptionalDeps: EasyAuction
 ## Author: lich.tech & wowf.io
 ## Version: ${version}
 ## Dependencies: QuestieDB
@@ -3852,6 +3854,7 @@ function generateWoWFToc(version, updatedAt) {
 ## X-Category: Guide
 
 Data.lua
+CraftArb.lua
 WoWF.lua
 `;
 }
@@ -3998,6 +4001,12 @@ local state = {
   featureFilter = "MATCH", -- "MATCH" | "ALL"
   searchQuery = "",
   expandedChains = {}, -- 已手动展开的副本任务链（默认折叠已完成的前置步骤）
+  craftMode = "sell", -- "sell" | "de"（制造套利的成品出售 / 分解套利）
+  craftSort = "profit", -- "profit" | "roi"
+  craftOnlyProfit = true, -- 默认只看能赚钱的配方
+  craftProfession = nil, -- 只显示某个专业（nil = 全部）
+  craftCrossOwner = true, -- 允许借用同账号其他角色的中间产物配方
+  craftOnlySkillUp = false, -- 只看还能涨点的配方
 }
 
 -- ============================================================================
@@ -8337,6 +8346,356 @@ local function RenderTabDungeons()
   contentChild:SetHeight(math.max(y + 20, 480))
 end
 
+-- ============================================================================
+-- 制造套利页：EasyAuction 行情 + 角色专业等级 + 中间产物递归折算 + 分解套利
+-- ============================================================================
+
+local CRAFT_DIFFICULTY_LABEL = {
+  optimal = "|cffffd100最佳(必涨点)|r",
+  medium = "|cff88ff88中等|r",
+  easy = "|cff99ccff简单|r",
+  trivial = "|cff999999已灰(不涨点)|r",
+  unknown = "|cff999999档位未知|r",
+}
+
+local function FormatMoney(copper)
+  local value = math.floor(tonumber(copper) or 0)
+  local sign = value < 0 and "-" or ""
+  value = math.abs(value)
+  local gold = math.floor(value / 10000)
+  local silver = math.floor((value % 10000) / 100)
+  local rest = value % 100
+  if gold > 0 then return string.format("%s%d金%d银%d铜", sign, gold, silver, rest) end
+  if silver > 0 then return string.format("%s%d银%d铜", sign, silver, rest) end
+  return string.format("%s%d铜", sign, rest)
+end
+
+local function CraftSignColor(value)
+  return (tonumber(value) or 0) >= 0 and "|cff44ff88" or "|cffff5555"
+end
+
+local function RenderTabCraftArb()
+  local cardIdx = 1
+  local y = 6
+  local arb = WoWF_CraftArb
+  local mode = state.craftMode == "de" and "de" or "sell"
+  local sortKey = state.craftSort == "roi" and "roi" or "profit"
+  local onlyProfitable = state.craftOnlyProfit ~= false
+
+  if not arb then
+    local brokenCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+    LayoutCard(
+      brokenCard, y,
+      "|cffff5555[制造套利] 引擎未加载|r",
+      "未检测到 WoWF_CraftArb，请确认 CraftArb.lua 已在 WoWF.toc 中且加载顺序位于 WoWF.lua 之前。",
+      { 0.8, 0.3, 0.3, 0.9 },
+      { 0.14, 0.06, 0.06, 0.94 }
+    )
+    HideUnusedCards(cardIdx)
+    contentChild:SetHeight(480)
+    return
+  end
+
+  local rows, meta = arb.Analyse({
+    mode = mode,
+    profession = state.craftProfession,
+    onlyProfitable = onlyProfitable,
+    onlySkillUp = state.craftOnlySkillUp == true,
+    crossOwner = state.craftCrossOwner ~= false,
+    sort = sortKey,
+    query = (state.searchQuery and state.searchQuery ~= "") and state.searchQuery or nil,
+  })
+
+  -- 1. 数据源与专业等级总览
+  local infoLines = {}
+  local stateText
+  if meta.state == "ready" then
+    local snapshot = meta.market and tonumber(meta.market.updatedAt)
+    local stamp = snapshot and snapshot > 0 and date("%m-%d %H:%M", snapshot) or nil
+    stateText = stamp
+      and string.format("|cff00ff00已连接 EasyAuction 行情|r（快照: %s）", tostring(stamp))
+      or "|cff00ff00已连接 EasyAuction 行情|r"
+  elseif meta.state == "loading" then
+    stateText = "|cffffd100已安装 EasyAuction，但当前市场行情尚未初始化|r（进一次拍卖行或等待初始化完成）"
+  else
+    stateText = "|cffff5555未检测到 EasyAuction 行情 API|r，安装并启用 EasyAuction 后本页才会给出真实价格"
+  end
+  table.insert(infoLines, "|cff99e6ff行情数据:|r " .. stateText)
+
+  local ownProfessions = meta.ownProfessions or {}
+  if #ownProfessions > 0 then
+    local parts = {}
+    for _, profession in ipairs(ownProfessions) do
+      table.insert(parts, string.format("%s |cffaaaaaa%d/%d|r", profession.name or profession.key, profession.level or 0, profession.max or 0))
+    end
+    table.insert(infoLines, "|cff99e6ff本角色专业等级:|r " .. table.concat(parts, "  ·  "))
+  else
+    table.insert(infoLines, "|cff99e6ff本角色专业等级:|r |cffffd100未检测到已学专业|r（打开专业窗口或学习专业后重试）")
+  end
+
+  local hasEnchanting = false
+  for _, profession in ipairs(ownProfessions) do
+    if profession.key == "enchanting" then hasEnchanting = true end
+  end
+  local recipeCount = 0
+  if type(WoWFDB.recipeCache) == "table" then
+    for _ in pairs(WoWFDB.recipeCache) do recipeCount = recipeCount + 1 end
+  end
+  table.insert(infoLines, string.format(
+    "|cff99e6ff配方来源:|r EasyAuction 专业库 |cffffd100%d|r 个角色  ·  本插件采集 |cffffd100%d|r 条%s",
+    meta.players or 0,
+    recipeCount,
+    recipeCount == 0 and "（打开一次专业窗口即可自动补全）" or ""
+  ))
+  table.insert(infoLines, string.format(
+    "|cff99e6ff统计:|r 已分析 |cffffd100%d|r 条配方，可定价 |cffffd100%d|r 条，当前筛选下 |cffffd100%d|r 条，其中 |cff44ff88盈利 %d|r 条  ·  当前模式: %s",
+    meta.total or 0,
+    meta.priced or 0,
+    meta.shown or 0,
+    meta.profitable or 0,
+    mode == "de" and "|cffffd100分解套利|r" or "|cff99e6ff成品出售|r"
+  ))
+  if mode == "de" and not hasEnchanting then
+    table.insert(infoLines, "|cffff5555注意:|r 当前角色没有【附魔】，分解套利只代表「若能分解」的理论值，实际无法执行。")
+  end
+  table.insert(infoLines, "|cffaaaaaa口径:|r 材料按 EasyAuction 可购深度逐档计价，中间产物自动比较「拍卖行直购 / 自己制作」取更便宜的一侧，成品售价取对手最低价（不含押金）。")
+
+  local infoCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    infoCard, y,
+    "|cff00ffcc[制造套利] 用 EasyAuction 行情筛选「当前可制作且能盈利」的配方|r",
+    table.concat(infoLines, "\n"),
+    { 0.0, 0.85, 0.7, 0.95 },
+    { 0.05, 0.14, 0.16, 0.95 },
+    nil,
+    mode == "de" and "切回成品出售" or "切到分解套利",
+    function()
+      state.craftMode = (state.craftMode == "de") and "sell" or "de"
+      RefreshUI()
+    end
+  )
+
+  -- 2. 筛选与排序控制
+  local filterLines = {
+    string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  排序: %s",
+      state.craftProfession and (WoWF_CraftArb.ProfessionNames[state.craftProfession] or state.craftProfession) or "全部专业",
+      onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100包含亏损配方|r",
+      state.craftCrossOwner ~= false and "|cff99e6ff含同账号小号自产|r" or "|cffaaaaaa仅本角色自产|r",
+      sortKey == "roi" and "投资回报率 (ROI)" or "单次净利润"),
+    "|cffaaaaaa提示:|r 点击下方专业汇总卡片可只看该专业；在顶部搜索框输入物品名可进一步过滤。",
+    "|cffaaaaaa「中间产物」|r 指布卷、锭、皮等半成品：材料会先比较「拍卖行直购」与「自己制作」哪个更便宜，链式展开到最底层的原料（布、矿石、皮）。",
+  }
+  local filterCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    filterCard, y,
+    "|cff00ccff筛选与排序|r",
+    table.concat(filterLines, "\n"),
+    { 0.2, 0.55, 0.8, 0.85 },
+    { 0.06, 0.09, 0.14, 0.94 },
+    nil,
+    onlyProfitable and "显示全部配方" or "只看盈利配方",
+    function()
+      state.craftOnlyProfit = not onlyProfitable
+      RefreshUI()
+    end
+  )
+
+  local crossCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    crossCard, y,
+    "|cff00ccff中间产物来源|r",
+    state.craftCrossOwner ~= false
+      and "当前允许借用同账号其他角色已学的中间产物配方（如小号会做布卷）。\n若只想按本角色自己能做的链计算，请点击右下按钮切换。"
+      or "当前只按本角色自己会的配方折算中间产物，借不到小号的半成品配方。",
+    { 0.2, 0.55, 0.8, 0.85 },
+    { 0.06, 0.09, 0.14, 0.94 },
+    nil,
+    state.craftCrossOwner ~= false and "只算本角色" or "允许小号自产",
+    function()
+      state.craftCrossOwner = (state.craftCrossOwner == false)
+      RefreshUI()
+    end
+  )
+
+  local sortCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+  y = LayoutCard(
+    sortCard, y,
+    "|cff00ccff盈利排序|r",
+    string.format("按 |cffffd100%s|r 从高到低排列。ROI = 净利润 ÷ 材料成本，更适合小号资金周转；净利润更适合大批量出货。", sortKey == "roi" and "投资回报率" or "单次净利润"),
+    { 0.2, 0.55, 0.8, 0.85 },
+    { 0.06, 0.09, 0.14, 0.94 },
+    nil,
+    sortKey == "roi" and "改为按净利润" or "改为按 ROI",
+    function()
+      state.craftSort = (state.craftSort == "roi") and "profit" or "roi"
+      RefreshUI()
+    end
+  )
+
+  -- 3. 分专业汇总
+  if #(meta.professions or {}) > 0 then
+    for _, stats in ipairs(meta.professions) do
+      local isActive = state.craftProfession == stats.key
+      local body = string.format(
+        "配方 |cffffd100%d|r 条  ·  可盈利 |cff44ff88%d|r 条  ·  最高单次净利润 %s%s|r\n%s",
+        stats.total or 0, stats.profitable or 0,
+        CraftSignColor(stats.best), FormatMoney(stats.best or 0),
+        isActive and "|cff00ff00[已筛选该专业]|r 再次点击可取消" or "点击右下按钮只看该专业"
+      )
+      local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+      y = LayoutCard(
+        card, y,
+        string.format("%s %s", isActive and "|cff00ff00►|r" or "|cffffd100•|r", WoWF_CraftArb.ProfessionNames[stats.key] or stats.key),
+        body,
+        isActive and { 0.0, 0.9, 0.5, 0.9 } or { 0.25, 0.35, 0.45, 0.8 },
+        isActive and { 0.06, 0.16, 0.10, 0.94 } or { 0.08, 0.10, 0.14, 0.92 },
+        string.format("%d/%d 盈利", stats.profitable or 0, stats.total or 0),
+        isActive and "显示全部专业" or "只看这个专业",
+        function()
+          state.craftProfession = isActive and nil or stats.key
+          RefreshUI()
+        end
+      )
+    end
+  end
+
+  -- 4. 利润明细（最多 40 条，避免一次创建过多卡片）
+  local shown = 0
+  for _, row in ipairs(rows) do
+    if shown >= 40 then break end
+    shown = shown + 1
+    local bodyLines = {}
+    local qualityColor = WoWF_CraftArb.QualityColor(row.outputID)
+    table.insert(bodyLines, string.format(
+      "|cff99e6ff单次制作:|r 产出 %s%s|r × |cffffd100%s|r  ·  材料成本 %s|r  ·  可制作 |cff00ff00是|r",
+      qualityColor, WoWF_CraftArb.ItemName(row.outputID), string.format("%.1f", row.yield or 1),
+      FormatMoney(row.costTotal or 0)
+    ))
+
+    local leafLines = {}
+    for _, leaf in ipairs(row.leaves or {}) do
+      table.insert(leafLines, string.format("    · %s|r ×%d  @ %s", WoWF_CraftArb.QualityColor(leaf.itemID),
+        math.ceil(leaf.quantity or 0), FormatMoney(leaf.unit or 0)))
+    end
+    local craftNotes = {}
+    for _, line in ipairs(row.craftLines or {}) do
+      local detail = line.detail or {}
+      if detail.recipe then
+        local saved = detail.saved
+        table.insert(craftNotes, string.format("    · %s|r 用配方「%s」自产%s",
+          WoWF_CraftArb.QualityColor(line.itemID), detail.recipe.name or "中间产物",
+          (saved and saved > 0) and string.format("（比直购省 %s）", FormatMoney(saved)) or ""))
+      end
+    end
+    if #leafLines > 0 then
+      table.insert(bodyLines, "|cffffd100采购清单 (拍卖行):|r\n" .. table.concat(leafLines, "\n"))
+    end
+    if row.stockShort then
+      table.insert(bodyLines, "|cffff8800注意:|r 部分材料在 EasyAuction 当前深度里库存不足，实际可能买不齐，单价按现有挂单估算。")
+    end
+    if #craftNotes > 0 then
+      table.insert(bodyLines, "|cff88ff88自产中间产物:|r\n" .. table.concat(craftNotes, "\n"))
+    end
+
+    if row.disenchant then
+      local parts = {}
+      for _, part in ipairs(row.disenchant.parts) do
+        table.insert(parts, string.format("%s×%.1f", WoWF_CraftArb.ItemName(part.itemID), part.quantity))
+      end
+      table.insert(bodyLines, string.format(
+        "|cff99e6ff分解期望:|r %s%s|r%s",
+        FormatMoney(row.disenchant.ev or 0),
+        (#parts > 0) and ("（" .. table.concat(parts, " + ") .. "）") or "",
+        row.disenchant.incomplete and " |cffff8800部分材料无报价，期望值偏低|r" or ""
+      ))
+    end
+    if row.price then
+      table.insert(bodyLines, string.format("|cff99e6ff拍卖行参考价:|r %s|r / 件（对手最低价或当前最低价）",
+        FormatMoney(row.price)))
+    end
+    if row.disenchantEV then
+      table.insert(bodyLines, string.format("|cff99e6ff分解期望:|r %s|r / 件 %s",
+        FormatMoney(row.disenchantEV),
+        row.disenchantWins and "|cff44ff88（分解更赚，可切到「分解套利」看细节）|r"
+          or "|cffaaaaaa（不如直接卖店/卖拍卖）|r"))
+    end
+
+    if row.profit then
+      table.insert(bodyLines, string.format(
+        "|cff99e6ff拍卖手续费:|r %s  ·  净利润 %s%s|r  ·  ROI %s%.1f%%|r  ·  每件 %s%s|r",
+        FormatMoney(row.cut or 0),
+        CraftSignColor(row.profit), FormatMoney(row.profit),
+        CraftSignColor(row.roi), (row.roi or 0) * 100,
+        CraftSignColor(row.profitPerUnit), FormatMoney(row.profitPerUnit or 0)
+      ))
+    else
+      table.insert(bodyLines, "|cffff8800无法给出利润:|r " .. (row.reason or "缺少数据"))
+    end
+    table.insert(bodyLines, string.format(
+      "|cff99e6ff技能:|r %s  ·  角色 %s|r%s%s",
+      CRAFT_DIFFICULTY_LABEL[row.skillUp] or CRAFT_DIFFICULTY_LABEL.unknown,
+      row.ownerSource == "easyauction" and "EasyAuction 专业库" or "本插件采集",
+      (row.skill and string.format(" · |cffffd100%d/%d|r", row.skill, row.skillMax or 0)) or "",
+      row.ownCharacter and "" or " |cffff8800[同账号小号]|r"
+    ))
+
+    local card = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+    local profitable = (row.profit or 0) > 0
+    y = LayoutCard(
+      card, y,
+      string.format("%s%s|r  |cffffd100[%s]|r", qualityColor, WoWF_CraftArb.ItemName(row.outputID), row.professionName or "专业"),
+      table.concat(bodyLines, "\n"),
+      profitable and { 0.2, 0.9, 0.5, 0.9 } or { 0.5, 0.3, 0.3, 0.85 },
+      profitable and { 0.05, 0.14, 0.10, 0.94 } or { 0.12, 0.08, 0.08, 0.92 },
+      row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
+      "加入购物清单",
+      function()
+        local ok, listIDOrReason, note = WoWF_CraftArb.AddToShoppingList(row, row.name or WoWF_CraftArb.ItemName(row.outputID))
+        if ok then
+          DEFAULT_CHAT_FRAME:AddMessage(string.format(
+            "|cff00ffcc[WoWF 制造套利]|r 已把「%s」的材料写入 EasyAuction 购物清单（清单 ID: %s）%s",
+            WoWF_CraftArb.ItemName(row.outputID), tostring(listIDOrReason),
+            note and ("，" .. note) or ""))
+        else
+          DEFAULT_CHAT_FRAME:AddMessage(string.format(
+            "|cffff5555[WoWF 制造套利]|r 写入购物清单失败: %s。", tostring(listIDOrReason)))
+        end
+      end
+    )
+  end
+
+  -- 5. 空状态
+  if shown == 0 then
+    local emptyLines = {}
+    if meta.total == 0 then
+      table.insert(emptyLines, "|cffffd100还没有可用于分析的配方数据。|r")
+      table.insert(emptyLines, "1. 安装并启用 EasyAuction（本仓库精选库可一键安装），进过拍卖行后其专业库会记录各角色已学配方；")
+      table.insert(emptyLines, "2. 也可以打开一次游戏原生专业窗口（裁缝/锻造/附魔等），本页面会自动采集当前角色的配方；")
+      table.insert(emptyLines, "3. 首次使用请让 EasyAuction 扫描一次拍卖行，否则没有可比价的行情。")
+    elseif meta.state ~= "ready" then
+      table.insert(emptyLines, "|cffffd100行情尚未就绪，暂时无法算利润。|r")
+      table.insert(emptyLines, "请启用 EasyAuction 并至少扫描一次拍卖行；随后本页会自动按新行情重算。")
+    elseif onlyProfitable then
+      table.insert(emptyLines, string.format(
+        "|cffffd100当前没有可盈利的配方。|r已分析 %d 条、有报价 %d 条；可点击上方「显示全部配方」查看亏损明细，或检查行情快照是否过期。",
+        meta.total or 0, meta.shown or 0))
+    else
+      table.insert(emptyLines, "当前筛选条件下没有配方，可清空搜索框或点击「显示全部专业」重试。")
+    end
+    local emptyCard = AcquireCard(cardIdx); cardIdx = cardIdx + 1
+    y = LayoutCard(
+      emptyCard, y,
+      "|cffffd100[提示] 暂无可展示的套利结果|r",
+      table.concat(emptyLines, "\n"),
+      { 0.2, 0.85, 0.4, 0.85 },
+      { 0.06, 0.12, 0.09, 0.92 }
+    )
+  end
+
+  HideUnusedCards(cardIdx)
+  contentChild:SetHeight(math.max(y + 20, 480))
+end
+
 local function RenderTabForeverAndNews()
   local cardIdx = 1
   local y = 6
@@ -8561,6 +8920,8 @@ RefreshUI = function(preserveScroll)
     RenderTabDungeons()
   elseif state.activeTab == 7 then
     RenderTabCommands()
+  elseif state.activeTab == 8 then
+    RenderTabCraftArb()
   else
     RenderTabForeverAndNews()
   end
@@ -8766,7 +9127,7 @@ local function CreateMainWindow()
     self:ClearFocus()
   end)
 
-  -- 七大功能标签栏
+  -- 八大功能标签栏（按文字宽度自适应排布，兼容中英文与新增的「制造套利」页）
   local TAB_DEFS = {
     { id = 1, label = "智能匹配" },
     { id = 2, label = "升级路线" },
@@ -8775,18 +9136,26 @@ local function CreateMainWindow()
     { id = 5, label = "地下城百科" },
     { id = 6, label = "专业&无限特色" },
     { id = 7, label = "常用命令" },
+    { id = 8, label = "制造套利" },
   }
 
+  local tabX = 12
   for i, def in ipairs(TAB_DEFS) do
     local btn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
-    btn:SetSize(105, 26)
-    btn:SetPoint("TOPLEFT", 12 + (i - 1) * 108, -82)
     btn:SetText(def.label)
+    local textWidth = btn:GetTextWidth()
+    if not textWidth or textWidth <= 0 then
+      textWidth = #def.label * 14
+    end
+    local width = math.max(74, math.ceil(textWidth + 20))
+    btn:SetSize(width, 26)
+    btn:SetPoint("TOPLEFT", tabX, -82)
     btn:SetScript("OnClick", function()
       state.activeTab = def.id
       RefreshUI()
     end)
     tabButtons[i] = btn
+    tabX = tabX + width + 4
   end
 
   -- 滚动内容区域
@@ -8946,6 +9315,10 @@ end
 for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED", "SKILL_LINES_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
+-- 制造套利：专业窗口打开时自动补全本插件的配方缓存
+for _, craftEv in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_CLOSE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED" }) do
+  pcall(eventFrame.RegisterEvent, eventFrame, craftEv)
+end
 
 local hasPrintedWelcome = false
 
@@ -8991,6 +9364,25 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if mainFrame and mainFrame:IsShown() and (state.activeTab == 1 or state.activeTab == 2) then
       RefreshUI(true)
     end
+  elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then
+    -- 打开专业窗口时顺带补全配方缓存（离线也能给出成本，不必依赖 EasyAuction 采集）
+    local ok, count = pcall(function() return WoWF_CraftArb and WoWF_CraftArb.Harvest() end)
+    if ok and count and count > 0 then
+      WoWFDB.craftHarvestCount = count
+      if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+        RefreshUI(true)
+      end
+    end
+  elseif event == "TRADE_SKILL_CLOSE" then
+    if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+      RefreshUI(true)
+    end
+  elseif event == "AUCTION_HOUSE_SHOW" or event == "AUCTION_HOUSE_CLOSED" then
+    -- 行情快照只在拍卖行内更新：回到「制造套利」页时重新计算一次
+    if WoWF_CraftArb then WoWF_CraftArb.Reset() end
+    if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+      RefreshUI(true)
+    end
   elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
     SyncPlayerCharacter()
     RefreshUI(true)
@@ -9021,6 +9413,8 @@ SlashCmdList["WOWF"] = function(msg)
   elseif cmd == "news" or cmd == "forever" or cmd == "prof" or cmd == "professions" then
     state.featureFilter = "MATCH"
     ToggleMainWindow(6)
+  elseif cmd == "arb" or cmd == "craft" or cmd == "crafting" or cmd == "profit" or cmd == "auction" then
+    ToggleMainWindow(8)
   else
     ToggleMainWindow(1)
   end
@@ -9048,10 +9442,12 @@ export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbB
   const zip = new JSZip();
   const tocContent = generateWoWFToc(fullVersion, dataset.meta.updatedAt);
   const dataLuaContent = generateWoWFDataLua(dataset);
+  const craftLuaContent = generateWoWFCraftArbLua();
   const coreLuaContent = generateWoWFLua();
 
   zip.file('WoWF/WoWF.toc', tocContent);
   zip.file('WoWF/Data.lua', dataLuaContent);
+  zip.file('WoWF/CraftArb.lua', craftLuaContent);
   zip.file('WoWF/WoWF.lua', coreLuaContent);
 
   const outPath = path.join(outputDir, 'wowf.zip');
