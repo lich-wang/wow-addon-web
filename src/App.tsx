@@ -712,7 +712,7 @@ export function App() {
       <footer className="border-t border-slate-800/80 bg-slate-950 py-6 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>
-            WoW Web Addon Manager · 遵循 MIT 开源协议 · 专为魔兽世界玩家打造
+            巫妖王的无限精选插件 · 遵循 MIT 开源协议 · 专为魔兽世界玩家打造
           </p>
           <div className="flex items-center space-x-4">
             <button

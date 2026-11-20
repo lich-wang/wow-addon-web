@@ -1,5 +1,5 @@
 -- ============================================================================
--- WoWF Companion (wowf.io 无限服游戏内动态智能指南)
+-- 巫妖王的无限百科 (wowf.io 无限服游戏内动态智能指南)
 -- 专为《魔兽世界：无限服》(Interface: 16001) 打造
 -- 支持根据当前角色等级、职业、专精、种族与阵营自动匹配升级路线、输出循环、天赋、宏与副本
 -- ============================================================================
@@ -750,7 +750,7 @@ local function OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
   local displayLabel = (name and name ~= "") and name or displayZone
 
   if not numX or not numY then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 目标位置: |cffffd100" .. displayZone .. " - " .. displayLabel .. "|r")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 目标位置: |cffffd100" .. displayZone .. " - " .. displayLabel .. "|r")
     return
   end
 
@@ -801,7 +801,7 @@ local function OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
   local scaledX = math.floor(numX * 100 + 0.5)
   local scaledY = math.floor(numY * 100 + 0.5)
   local worldMapLink = string.format("|cffffff00|Hworldmap:%d:%d:%d|h[%s · %s (%.1f, %.1f)]|h|r", mapID or 1429, scaledX, scaledY, displayZone, displayLabel, numX, numY)
-  DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 已在世界地图标记坐标: " .. worldMapLink .. " |cffaaaaaa(Shift+点击坐标可直接发到聊天框)|r")
+  DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 已在世界地图标记坐标: " .. worldMapLink .. " |cffaaaaaa(Shift+点击坐标可直接发到聊天框)|r")
 end
 
 local function SetWaypointOrPrint(zone, name, x, y, explicitMapID)
@@ -2415,7 +2415,7 @@ end
 
 local function CreateOrUpdateGameMacro(macroTitle, macroCode)
   if InCombatLockdown and InCombatLockdown() then
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff4444[WoWF 无限百科]|r 战斗中无法直接创建宏，已为您打开复制窗口！")
+    DEFAULT_CHAT_FRAME:AddMessage("|cffff4444[巫妖王的无限百科]|r 战斗中无法直接创建宏，已为您打开复制窗口！")
     ShowCopyMacroDialog(macroTitle, macroCode)
     return
   end
@@ -2426,7 +2426,7 @@ local function CreateOrUpdateGameMacro(macroTitle, macroCode)
     if existingIdx and existingIdx > 0 then
       if EditMacro then
         EditMacro(existingIdx, shortName, "INV_Misc_QuestionMark", macroCode, 1, 1)
-        DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 已更新现有宏: |cffffd100[" .. shortName .. "]|r (输入 /macro 查看)")
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 已更新现有宏: |cffffd100[" .. shortName .. "]|r (输入 /macro 查看)")
         return
       end
     else
@@ -2437,7 +2437,7 @@ local function CreateOrUpdateGameMacro(macroTitle, macroCode)
       local perChar = (numChar and numChar < 18) and 1 or nil
       local ok, idx = pcall(CreateMacro, shortName, "INV_Misc_QuestionMark", macroCode, perChar)
       if ok and idx then
-        DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 已一键创建游戏内宏: |cffffd100[" .. shortName .. "]|r (输入 /macro 拖到技能栏即可使用)")
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 已一键创建游戏内宏: |cffffd100[" .. shortName .. "]|r (输入 /macro 拖到技能栏即可使用)")
         return
       end
     end
@@ -5461,7 +5461,7 @@ local function CreateMainWindow()
   -- 标题栏
   local titleText = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   titleText:SetPoint("TOPLEFT", 16, -14)
-  titleText:SetText("|cff00ffccWoWF Companion|r  |cffffd100魔兽世界：无限服 (wowf.io) 游戏内智能动态百科|r")
+  titleText:SetText("|cff00ffcc巫妖王的无限百科|r  |cffffd100魔兽世界：无限服 (wowf.io) 游戏内智能动态百科|r")
 
   local closeBtn = CreateFrame("Button", nil, mainFrame, "UIPanelCloseButton")
   closeBtn:SetPoint("TOPRIGHT", -4, -4)
@@ -5789,7 +5789,7 @@ local function CreateMinimapButton()
     local step = GetMatchedTalentStep(spec, state.level)
 
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:AddLine("|cff00ffccWoWF Companion|r |cffffd100(wowf.io 无限服百科)|r")
+    GameTooltip:AddLine("|cff00ffcc巫妖王的无限百科|r |cffffd100(wowf.io 无限服百科)|r")
     local zoneList = {}
     local seenZones = {}
     if band and band.zone and band.zone ~= "" then
@@ -5865,7 +5865,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
       local cls = GetCurrentClassData()
       local spec = GetCurrentSpecData()
       DEFAULT_CHAT_FRAME:AddMessage(string.format(
-        "|cff00ffcc[WoWF 无限百科]|r 已加载 |cffffd100wowf.io|r 动态数据库并自动匹配当前角色: |cffffd100Lv.%d %s·%s (%s)|r！输入 |cffffd100/wowf|r 或点击小地图图标查看。",
+        "|cff00ffcc[巫妖王的无限百科]|r 已加载 |cffffd100wowf.io|r 动态数据库并自动匹配当前角色: |cffffd100Lv.%d %s·%s (%s)|r！输入 |cffffd100/wowf|r 或点击小地图图标查看。",
         state.level,
         route and route.name or "",
         cls and cls.name or "",
@@ -5886,7 +5886,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if band then
       table.insert(msgParts, string.format("推荐练级区: |cffffd100%s (%s)|r", band.zone or "", (band.hub and band.hub.name) or ""))
     end
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
   elseif event == "UPDATE_FACTION" or event == "BAG_UPDATE_DELAYED" then
     if mainFrame and mainFrame:IsShown() and (state.activeTab == 1 or state.activeTab == 2) then
@@ -5928,7 +5928,7 @@ SLASH_WOWF2 = "/wowfio"
 SlashCmdList["WOWF"] = function(msg)
   local cmd = string.lower(string.gsub(msg or "", "^%s*(.-)%s*$", "%1"))
   if cmd == "help" or cmd == "?" then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 无限百科]|r 可用斜杠子命令:")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 可用斜杠子命令:")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf|r — 打开智能匹配仪表盘")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf route|r — 升级路线   |cffffd100/wowf class|r — 职业与天赋   |cffffd100/wowf macro|r — 一键宏库")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf dungeon|r — 地下城百科   |cffffd100/wowf news|r — 专业&无限特色   |cffffd100/wowf cmd|r — 常用命令   |cffffd100/wowf arb|r — 制造套利")

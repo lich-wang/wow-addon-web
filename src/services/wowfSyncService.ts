@@ -74,7 +74,7 @@ function extractDbVersionFromNews(news: WoWFLiveNewsItem[]): string | null {
 }
 
 /**
- * 安装或更新 WoWF Companion 时，通过 /api/proxy 动态拉取 https://wowf.io 最新热修与元数据，
+ * 安装或更新 巫妖王的无限百科 时，通过 /api/proxy 动态拉取 https://wowf.io 最新热修与元数据，
  * 实时注入到压缩包内的 WoWF/Data.lua 中，确保玩家装入游戏的数据与网站同步。
  * 若网络离线或超时则无感回退至内置离线包。
  */
@@ -85,7 +85,7 @@ export async function syncWoWFZipWithLiveWebsite(
   try {
     onProgress?.({
       status: 'downloading',
-      addonName: 'WoWF Companion',
+      addonName: '巫妖王的无限百科',
       percent: 40,
       message: '正在从 https://wowf.io/zh 实时同步最新热修与百科数据...',
     });

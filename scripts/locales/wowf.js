@@ -3857,8 +3857,8 @@ function generateWoWFToc(version, updatedAt, dataset) {
   const totalDungeons = dungeons.length;
   const newDungeons = dungeons.filter(d => d?.isNew).length;
   return `## Interface: 16001
-## Title: WoWF Companion (wowf.io 无限服智能百科)
-## Title-zhCN: |cff00ffcc[无限百科]|r WoWF Companion (wowf.io 动态指南)
+## Title: 巫妖王的无限百科
+## Title-zhCN: |cff00ffcc[巫妖王的无限百科]|r 无限服动态指南
 ## Notes: In-game smart companion for wowf.io on WoW Forever (16001). Dynamically matches leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
 ## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
 ## OptionalDeps: EasyAuction
@@ -3885,7 +3885,7 @@ WoWF_Data = ${toLuaValue(dataset, 0)}
 }
 
 /**
- * 构建并打包 WoWF Companion 插件压缩包 (public/addons/wowf.zip)
+ * 构建并打包 巫妖王的无限百科 插件压缩包 (public/addons/wowf.zip)
  * @param {string} outputDir
  * @param {string} cacheDir
  * @param {(url: string) => Record<string, string>} getHeaders
@@ -3896,7 +3896,7 @@ export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbB
   const craftLuaContent = readWoWFLuaFile('CraftArb.lua');
   const coreLuaContent = readWoWFLuaFile('WoWF.lua');
 
-  console.log('Synchronizing live data from https://wowf.io/zh for WoWF Companion...');
+  console.log('Synchronizing live data from https://wowf.io/zh for 巫妖王的无限百科...');
   const dataset = await buildWoWFDataset(cacheDir, getHeaders, questieDbBuf);
   if (headSnapshot && getGitHeadOid() !== headSnapshot) {
     throw new Error('[WoWF] 异步抓取期间仓库 HEAD 发生变化，请重新执行打包以保证源码与版本号一致。');

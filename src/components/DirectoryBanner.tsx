@@ -175,7 +175,7 @@ export const DirectoryBanner: React.FC<DirectoryBannerProps> = ({
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
-                  <span>魔兽世界插件管理器 · 深度汉化</span>
+                  <span>巫妖王的无限精选插件 · 深度汉化</span>
                   <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300">
                     免设置直下 · 浏览器直连 · 客户端直装
                   </span>

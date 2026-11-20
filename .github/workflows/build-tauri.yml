@@ -129,7 +129,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
-          name: '魔兽世界插件管理器桌面版 ${{ steps.get_tag.outputs.tag }}'
+          name: '巫妖王的无限精选插件桌面版 ${{ steps.get_tag.outputs.tag }}'
           body: |
             魔兽世界网页插件管理器 - 官方原生桌面客户端 (基于 Tauri 2.0)。
 

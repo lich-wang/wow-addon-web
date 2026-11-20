@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WoW Web Addon Manager - Local Bridge Agent
+巫妖王的无限精选插件 - Local Bridge Agent
 极轻量本地穿透助手 (基于 Python 标准库，零第三方依赖)
 运行在 127.0.0.1:24642，为网页端 (https://wow.lich.tech) 提供本地魔兽世界目录直通读写能力
 彻底解决 Windows C:\\Program Files (x86) 浏览器沙箱拦截问题
@@ -251,7 +251,7 @@ class LocalBridgeHandler(BaseHTTPRequestHandler):
 
 def run():
     print("=" * 60)
-    print("  WoW Web Addon Manager - 本地极速直连助手")
+    print("  巫妖王的无限精选插件 - 本地极速直连助手")
     print(f"  正在监听本地通信端口: http://127.0.0.1:{PORT}")
     print("=" * 60)
 

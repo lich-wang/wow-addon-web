@@ -3,13 +3,13 @@
     "version": "v12.1.12",
     "source": "https://edge.forgecdn.net/files/9688/481/Bagnon-12.1.12.zip"
   },
+  "blackthornes-tradeskills": {
+    "version": "v1.35.0",
+    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.35.0/Blackthornes_TS-v1.35.0-forever.zip"
+  },
   "dungeonsforever": {
     "version": "v2.1.118",
     "source": "https://edge.forgecdn.net/files/9696/731/DungeonsForever2.1.118.zip"
-  },
-  "easyauction": {
-    "version": "v20261119.3",
-    "source": "https://edge.forgecdn.net/files/9695/475/EasyAuction-V20261119.3.zip"
   },
   "forever-mouse-tooltip": {
     "version": "v0.2.0",
