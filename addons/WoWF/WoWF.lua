@@ -4694,7 +4694,11 @@ local function RenderTabCraftArb()
         action = {
           label = isActive and "显示全部专业" or "只看这个专业",
           fn = function()
-            state.craftProfession = isActive and nil or stats.key
+            if isActive then
+              state.craftProfession = nil
+            else
+              state.craftProfession = stats.key
+            end
             RefreshUI()
           end,
         },
