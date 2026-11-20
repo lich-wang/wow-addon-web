@@ -5885,11 +5885,13 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
       ScheduleRefresh(true, 0.2)
     end
   elseif event == "GET_ITEM_INFO_RECEIVED" or event == "ITEM_DATA_LOAD_RESULT" then
-    if arg2 == true and mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+    if arg2 == true then
       local itemID = tonumber(arg1)
       if itemID and WoWF_CraftArb and WoWF_CraftArb.HasPendingItem and WoWF_CraftArb.HasPendingItem(itemID) then
         if WoWF_CraftArb.Reset then WoWF_CraftArb.Reset() end
-        ScheduleRefresh(true, 0.25)
+        if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+          ScheduleRefresh(true, 0.25)
+        end
       end
     end
   elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
