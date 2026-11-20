@@ -2136,7 +2136,9 @@ local function FormatQuestWithSteps(q, fallbackLevel, fallbackZone, treeIndent, 
       local hasStepCoords = (st.x ~= nil and st.y ~= nil)
       local effSt = {
         id = sid,
-        npc = (st.npc and st.npc ~= "") and st.npc or (isPrimary and q.npc or ""),
+        npc = (st.npc and st.npc ~= "") and st.npc or ((isPrimary and not st.startItemId) and q.npc or ""),
+        startItemId = st.startItemId,
+        startItemName = st.startItemName,
         zone = stZone,
         x = hasStepCoords and st.x or (canFallbackCoords and q.x or nil),
         y = hasStepCoords and st.y or (canFallbackCoords and q.y or nil),
