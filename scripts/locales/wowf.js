@@ -2834,6 +2834,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       const ids = entry.steps && entry.steps.length > 0 ? entry.steps.map(s => s.id) : [entry.id];
       return !list.some((other, oIdx) => {
         if (oIdx === idx || !other) return false;
+        if (entry.id && other.id && entry.id !== other.id) return false;
         if (other.faction !== entry.faction && other.faction !== 'both') return false;
         const oIds = other.steps && other.steps.length > 0 ? other.steps.map(s => s.id) : [other.id];
         if (oIds.length >= ids.length) return false;
