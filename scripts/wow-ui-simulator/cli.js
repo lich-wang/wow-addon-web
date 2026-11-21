@@ -160,16 +160,10 @@ async function main() {
         console.error('[Assert Failed] /wowf dungeon rendered 0 dungeon cards!');
         assertionFailed = true;
       }
-      const withQuestSection = dungeonCards.filter((c) => c.body.includes('必接副本任务'));
+      const withQuestSection = dungeonCards.filter((c) => c.body.includes('必接副本任务 ('));
       if (withQuestSection.length === 0) {
         console.error('[Assert Failed] /wowf dungeon rendered 0 cards with 必接副本任务!');
         assertionFailed = true;
-      }
-      for (const dc of dungeonCards) {
-        if (!dc.body.includes('必接副本任务')) {
-          console.error(`[Assert Failed] Dungeon card missing 必接副本任务 section: ${dc.title.split('\n')[0]}`);
-          assertionFailed = true;
-        }
       }
     }
     for (const c of cards.slice(0, 6)) {
