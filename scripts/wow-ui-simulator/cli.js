@@ -186,10 +186,6 @@ async function main() {
         assertionFailed = true;
       }
     }
-    if (opts.assert && cmd === '/wowf news' && !cards.some((c) => c.body.includes('[定位]'))) {
-      console.error('[Assert Failed] /wowf news 未把正文坐标转换为 [定位] 链接!');
-      assertionFailed = true;
-    }
     for (const c of cards.slice(0, 6)) {
       console.log(`  [Card] ${c.title.split('\n')[0]}`);
       const previewLines = c.body.split('\n').filter(Boolean).slice(0, 4);
@@ -355,6 +351,101 @@ async function main() {
       console.log('[✓] QuestieDB-only runtime resolution test passed (1050 + 1053 chain resolved from QuestDB/NpcDB).');
     }
     qdbRt.destroy();
+  }
+
+  // Coordinate link regression: mock data with普通坐标 / 箭头多坐标 / 全角括号 / 专业训练师 / 公告
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const coordRt = new WoWSimulatorRuntime({
+      level: 25,
+      classKey: 'MAGE',
+      raceKey: '人类',
+      faction: 'Alliance',
+    });
+    const coordMockLua = `
+      WoWF_Data = {
+        meta = { version = "coord-link-test", updatedAt = "2026-01-01", deployId = "coord-test" },
+        routes = {},
+        classes = {
+          MAGE = {
+            name = "法师",
+            specs = {
+              { key = "frost", name = "冰霜专精", recommendedProfs = "", musts = {}, phases = {}, steps = {} },
+            },
+            classRuns = {},
+            macros = {},
+          },
+        },
+        dungeons = {},
+        professions = {
+          {
+            id = "alchemy",
+            name = "炼金",
+            type = "crafting",
+            brackets = "1-300",
+            makes = {},
+            pairs = {},
+            trainers = "初级：暴风城训练师 (52.9, 74.5) / 幽暗城训练师 (62.5, 61.8)",
+            foreverNote = "在藏宝海湾 (26.9, 77.2) 可购买配方。",
+          },
+        },
+        foreverSystems = {
+          {
+            id = "sleeping-bag",
+            category = "露营",
+            minLevel = 14,
+            title = "坐标测试：舒适的睡袋",
+            summary = "在西部荒野 (37.6, 50.7) 接取任务。",
+            steps = {
+              {
+                step = 1,
+                questId = 79191,
+                questName = "摸石过河 (一)",
+                questLevel = 14,
+                zone = "西部荒野",
+                coord = { x = 37.6, y = 50.7 },
+                altCoord = { zone = "贫瘠之地", x = 49.1, y = 56.3 },
+                title = "第一步：西部荒野焦痕残骸 (37.6, 50.7) / 或贫瘠之地 (49.1, 56.3)",
+                detail = "联盟从西部荒野 (37.6, 50.7) 接取；部落从贫瘠之地 (49.1, 56.3) 接取。",
+              },
+              {
+                step = 2,
+                zone = "石爪山脉",
+                coord = { x = 39.7, y = 50.0 },
+                altCoord = { zone = "石爪山脉", x = 50.8, y = 52.7 },
+                title = "第二步：石爪山脉背包 (39.7, 50.0 → 50.8, 52.7)",
+                detail = "先到 (39.7, 50.0) 接取，再前往 (50.8, 52.7) 点击背包。",
+              },
+            },
+          },
+        },
+        news = {
+          { date = "2026-01-01", title = "坐标测试公告", summary = "在藏宝海湾 (26.9, 77.2) 修复了若干问题。" },
+        },
+      }
+    `;
+    const coordCoreFiles = files.filter((f) => !path.basename(f.filename).toLowerCase().startsWith('data.lua'));
+    coordRt.loadAddon(addonName, [{ filename: 'CoordLinkMockData.lua', content: coordMockLua }, ...coordCoreFiles]);
+    coordRt.runSlashCommand('/wowf news');
+    const coordSnap = coordRt.getSnapshot();
+    const coordCards = summarizeCards(coordSnap);
+    const coordText = coordCards.map((c) => `${c.title}\n${c.body}`).join('\n');
+    const coordPattern = /\b\d{1,2}\.\d\s*,\s*\d{1,2}\.\d\b/;
+    const passed =
+      coordSnap.luaErrors.length === 0 &&
+      coordCards.length > 0 &&
+      !coordPattern.test(coordText) &&
+      coordText.includes('[定位]') &&
+      coordText.includes('石爪山脉') &&
+      coordText.includes('摸石过河');
+    if (!passed) {
+      console.error(
+        `[Assert Failed] Coordinate link regression failed (errors=${coordSnap.luaErrors.length}, cards=${coordCards.length}, hasRaw=${coordPattern.test(coordText)}, hasLink=${coordText.includes('[定位]')})`
+      );
+      assertionFailed = true;
+    } else {
+      console.log('[✓] Coordinate link regression passed (raw coords hidden, [定位] links generated).');
+    }
+    coordRt.destroy();
   }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
