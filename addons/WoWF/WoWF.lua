@@ -2880,18 +2880,23 @@ local function FormatBandZonesBlock(band, headerLabel)
     return nil
   end
   local function zoneLine(zoneName, hubName, hubX, hubY, from, to, note)
+    local hasCoord = (hubX and hubY) and true or false
     local label = (hubName and hubName ~= "") and hubName or ""
-    -- 营地名与区域名相同时不再重复输出（否则会出现「尘泥沼泽 (尘泥沼泽 Lv.35-42)」）
-    if label == (zoneName or "") then label = "" end
+    -- 营地名与区域名相同时不再重复输出营地名，但坐标仍然可用：把可点击链接挂到区域名本身，
+    -- 这样精简后不会丢掉「点区域名定位」的能力（否则只剩一段不可点的彩色文字）。
+    local sameAsZone = (label == (zoneName or ""))
+    local zoneLink = hasCoord
+      and FormatNpcMapLink(zoneName, zoneName or "", hubX, hubY, { omitZone = true })
+      or ("|cff00ffcc" .. (zoneName or "") .. "|r")
     local hubPart = ""
-    if label ~= "" then
-      local link = (hubX and hubY)
+    if label ~= "" and not sameAsZone then
+      hubPart = (hasCoord
         and FormatNpcMapLink(zoneName, label, hubX, hubY, { omitZone = true })
-        or ("|cff00ffcc" .. label .. "|r")
-      hubPart = link .. " "
+        or ("|cff00ffcc" .. label .. "|r")) .. " "
     end
-    local noteStr = (note and note ~= "") and (" — " .. LinkifyInlineCoords(note, zoneName or "", label ~= "" and label or (zoneName or ""))) or ""
-    return string.format("  · |cff00ffcc%s|r (%sLv.%d-%d)%s", zoneName or "", hubPart, from or 1, to or 60, noteStr)
+    local noteAnchor = (label ~= "" and not sameAsZone) and label or (zoneName or "")
+    local noteStr = (note and note ~= "") and (" — " .. LinkifyInlineCoords(note, zoneName or "", noteAnchor)) or ""
+    return string.format("  · %s (%sLv.%d-%d)%s", zoneLink, hubPart, from or 1, to or 60, noteStr)
   end
   local zoneLines = {
     zoneLine(band.zone, (band.hub and band.hub.name) or "", band.hub and band.hub.x, band.hub and band.hub.y,

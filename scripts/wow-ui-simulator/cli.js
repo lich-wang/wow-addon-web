@@ -83,6 +83,7 @@ async function resolveAddonFiles(opts) {
 
   // If loading repo addons/WoWF without Data.lua, check public/addons/wowf.zip or fallback to SAMPLE_WOWF_DATA_LUA
   const hasDataLua = files.some((f) => path.basename(f.filename).toLowerCase() === 'data.lua');
+  let usingSampleData = false;
   if (!hasDataLua && addonName.toLowerCase() === 'wowf') {
     let dataLua = '';
     let source = '';
@@ -101,11 +102,12 @@ async function resolveAddonFiles(opts) {
       }
       dataLua = SAMPLE_WOWF_DATA_LUA;
       source = '内置演示 Data.lua';
+      usingSampleData = true;
     }
     files.unshift({ filename: `Data.lua (${source})`, content: dataLua });
   }
 
-  return { addonName, targetDir, files };
+  return { addonName, targetDir, files, usingSampleData };
 }
 
 function isFrameTreeShown(frame, frames) {
@@ -135,7 +137,7 @@ function summarizeCards(snapshot) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const { addonName, targetDir, files } = await resolveAddonFiles(opts);
+  const { addonName, targetDir, files, usingSampleData } = await resolveAddonFiles(opts);
 
   console.log(`[WoW UI Simulator] Addon: ${addonName} (${targetDir})`);
   console.log(`[WoW UI Simulator] Character: Lv.${opts.level} ${opts.faction} ${opts.classKey}`);
@@ -180,17 +182,34 @@ async function main() {
       }
     }
     if (opts.assert && cmd === '/wowf route') {
-      // 职业任务链与专精要点只允许在顶部「核心职业任务与专精里程碑」卡出现一次，
-      // 之前阶段卡也会各渲染一遍，页面上同一批职业任务看起来像是显示了两遍。
-      // 注意只统计里程碑卡那种「Lv.X …·法师职业任务]」标签，避免误伤阶段卡里
-      // 合法的「[★法师职业任务]」关键任务条目。
-      const milestoneTagRe = /Lv\.\d+ [^·\n]*·[^\n]*职业任务\]/;
-      const classRunCards = cards.filter((c) => milestoneTagRe.test(c.body));
-      if (classRunCards.length > 1) {
+      // 职业任务链只允许在顶部「核心职业任务与专精里程碑」卡出现一次。
+      // 按「链身份（等级 + 标签）」统计，而不是按“职业任务”字样计数，
+      // 这样阶段卡里合法的普通职业关键任务不会被误判成重复链。
+      const chainTagRe = /\[Lv\.(\d+) ([^\]\n]*?)(?:职业任务|专属任务链)\]/g;
+      const chainLevels = new Map();
+      cards.forEach((c, idx) => {
+        for (const m of c.body.matchAll(chainTagRe)) {
+          const level = m[1];
+          if (!chainLevels.has(level)) chainLevels.set(level, new Set());
+          chainLevels.get(level).add(idx);
+        }
+      });
+      const dupChains = [...chainLevels.entries()].filter(([, set]) => set.size > 1);
+      if (dupChains.length > 0) {
         console.error(
-          `[Assert Failed] /wowf route 职业任务链出现在 ${classRunCards.length} 张卡片里（应仅在里程碑卡出现一次）`
+          `[Assert Failed] /wowf route 职业任务链重复渲染：${dupChains
+            .map(([lvl, set]) => `Lv.${lvl} 出现在 ${set.size} 张卡`)
+            .join('、')}`
         );
         assertionFailed = true;
+      }
+      // 内置演示数据保证包含职业任务链与 altZones；用样例数据跑时必须各命中一次，
+      // 否则计数恒为 0、断言会“静默通过”。
+      if (usingSampleData) {
+        if (chainLevels.size === 0) {
+          console.error('[Assert Failed] /wowf route 内置演示数据未渲染出职业任务链，去重断言未被真正覆盖');
+          assertionFailed = true;
+        }
       }
       // 本阶段适龄练级区域详细清单只给当前阶段一张卡，避免每张阶段卡重复同一批区域
       const zoneBlockCards = cards.filter((c) => c.body.includes('本阶段适龄练级区域'));
@@ -198,6 +217,10 @@ async function main() {
         console.error(
           `[Assert Failed] /wowf route 「本阶段适龄练级区域」出现在 ${zoneBlockCards.length} 张卡片里（应仅当前阶段卡）`
         );
+        assertionFailed = true;
+      }
+      if (usingSampleData && zoneBlockCards.length === 0) {
+        console.error('[Assert Failed] /wowf route 内置演示数据未渲染出详细区域块，区域去重断言未被真正覆盖');
         assertionFailed = true;
       }
     }
