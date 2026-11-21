@@ -1031,11 +1031,11 @@ local function HasNpcDelimiter(s)
 end
 
 -- 补漏：处理 “(瑟根石 47.8, 56.3)” 这类括号内带地名、以及箭头多坐标等首轮正则覆盖不到的坐标对
-local function LinkifyRemainingCoordPairs(text, defaultZone, defaultLabel)
+local function LinkifyPlainCoordPairs(text, defaultZone, defaultLabel)
   local result = {}
   local lastPos = 1
   while true do
-    local s, e, xStr, yStr = string.find(text, "(%d+%.%d+)%s*[,，]%s*(%d+%.?%d*)", lastPos)
+    local s, e, xStr, yStr = string.find(text, "(%d+%.?%d+)%s*,%s*(%d+%.?%d+)", lastPos)
     if not s then
       table.insert(result, string.sub(text, lastPos))
       break
@@ -1057,10 +1057,44 @@ local function LinkifyRemainingCoordPairs(text, defaultZone, defaultLabel)
   return table.concat(result, "")
 end
 
+-- 跳过已有的 |H...|h...|h 链接，只对普通文本片段执行坐标补漏，避免二次链接化破坏链接载荷
+local function LinkifyRemainingCoordPairs(text, defaultZone, defaultLabel)
+  local result = {}
+  local cursor = 1
+  while true do
+    local ls, le = string.find(text, "|H.-|h.-|h", cursor)
+    if not ls then
+      table.insert(result, LinkifyPlainCoordPairs(string.sub(text, cursor), defaultZone, defaultLabel))
+      break
+    end
+    table.insert(result, LinkifyPlainCoordPairs(string.sub(text, cursor, ls - 1), defaultZone, defaultLabel))
+    table.insert(result, string.sub(text, ls, le))
+    cursor = le + 1
+  end
+  return table.concat(result, "")
+end
+
+-- 从标题/标签中移除坐标括号，用于地图图钉与聊天文本等不显示链接的位置
+local function StripCoordsFromText(text)
+  if not text or text == "" then return "" end
+  local out = tostring(text)
+  out = string.gsub(out, "(%d)%s*，%s*(%d)", "%1,%2")
+  out = string.gsub(out, "（", "(")
+  out = string.gsub(out, "）", ")")
+  out = string.gsub(out, "%b()", function(seg)
+    if string.find(seg, "%d+%.?%d*%s*,%s*%d+%.?%d*") then return "" end
+    return seg
+  end)
+  out = string.gsub(out, "%s+", " ")
+  return (string.gsub(out, "^%s*(.-)%s*$", "%1"))
+end
+
 local function LinkifyInlineCoords(text, defaultZone, defaultLabel, opts)
   if not text or text == "" then return "" end
   local linkifyNpc = opts and opts.linkifyNpc == true
   local out = tostring(text)
+  -- 仅替换两个数字之间的全角逗号，避免改动普通说明文本中的标点
+  out = string.gsub(out, "(%d)%s*，%s*(%d)", "%1,%2")
   -- 将中文全角括号内的坐标统一转为半角括号再替换为可点击地图链接
   out = string.gsub(out, "（(%d+%.?%d*)%s*[,，]%s*(%d+%.?%d*)）", "(%1, %2)")
   -- 箭头/连字符多坐标（如 “(39.7, 50.0 → 50.8, 52.7)”）拆成两个独立坐标组，避免漏掉后一处坐标
@@ -5436,7 +5470,10 @@ local function RenderTabForeverAndNews()
           end
         end
         if factionMatch then
-          local stepLabel = (st.questName and st.questName ~= "") and st.questName or stepTitle
+          local stepLabel = (st.questName and st.questName ~= "") and st.questName or StripCoordsFromText(stepTitle)
+          if stepLabel == "" then
+            stepLabel = (st.zone and st.zone ~= "") and st.zone or "起点"
+          end
           if st.coord and not firstCoord then
             firstCoord = { zone = st.zone, title = stepLabel, x = st.coord.x, y = st.coord.y }
           end

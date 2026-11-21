@@ -171,5 +171,8 @@ WoWF_Data = {
   professions = {
     { name = "采矿 + 工程学", category = "PvE / PvP 推荐", summary = "工程学提供手雷、火箭靴与传送器，副本与野外均极强。" },
   },
+  news = {
+    { date = "2026-01-01", title = "样例公告：暴风城修复", summary = "在暴风城 (50.4, 66.4) 修复了若干问题。" },
+  },
 }
 `;

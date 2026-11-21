@@ -6,6 +6,9 @@ import { SAMPLE_WOWF_DATA_LUA } from './sample-data.js';
 import { stripWoWFormatting } from './text-measure.js';
 import { generateHtmlReport } from './html-report.js';
 
+// 坐标数值：兼容整点/多位小数、半角/全角逗号，用于校验可见文案中不得残留坐标
+const COORD_TEXT_PATTERN = /\b\d{1,3}(?:\.\d+)?\s*[,，]\s*\d{1,3}(?:\.\d+)?\b/;
+
 function parseArgs(argv) {
   const opts = {
     addonDir: path.resolve('addons/WoWF'),
@@ -156,9 +159,8 @@ async function main() {
     }
     // 坐标只允许存在于链接载荷与悬停 Tooltip 中；卡片标题/正文不得出现裸坐标数值
     if (opts.assert) {
-      const coordPattern = /\b\d{1,2}\.\d\s*,\s*\d{1,2}\.\d\b/;
       for (const c of cards) {
-        const leaked = [c.title, c.body].find((t) => coordPattern.test(t));
+        const leaked = [c.title, c.body].find((t) => COORD_TEXT_PATTERN.test(t));
         if (leaked) {
           console.error(`[Assert Failed] ${cmd} 仍渲染出裸坐标: ${String(leaked).slice(0, 160)}`);
           assertionFailed = true;
@@ -167,7 +169,7 @@ async function main() {
       }
       for (const m of snap.chatMessages) {
         const plain = stripWoWFormatting(m.text);
-        if (coordPattern.test(plain)) {
+        if (COORD_TEXT_PATTERN.test(plain)) {
           console.error(`[Assert Failed] ${cmd} 聊天框仍输出裸坐标: ${plain.slice(0, 160)}`);
           assertionFailed = true;
           break;
@@ -183,6 +185,17 @@ async function main() {
       const withQuestSection = dungeonCards.filter((c) => c.body.includes('必接副本任务 ('));
       if (withQuestSection.length === 0) {
         console.error('[Assert Failed] /wowf dungeon rendered 0 cards with 必接副本任务!');
+        assertionFailed = true;
+      }
+    }
+    if (opts.assert && cmd === '/wowf news') {
+      const hasNewsCard = cards.some((c) => c.title.includes('公告'));
+      const hasCoordLink = cards.some((c) => c.body.includes('[定位]'));
+      if (!hasNewsCard) {
+        console.error('[Assert Failed] /wowf news 未渲染出公告卡片（检查样例/真实 Data.news）!');
+        assertionFailed = true;
+      } else if (!hasCoordLink) {
+        console.error('[Assert Failed] /wowf news 公告正文未生成 [定位] 链接!');
         assertionFailed = true;
       }
     }
@@ -413,7 +426,7 @@ async function main() {
                 coord = { x = 39.7, y = 50.0 },
                 altCoord = { zone = "石爪山脉", x = 50.8, y = 52.7 },
                 title = "第二步：石爪山脉背包 (39.7, 50.0 → 50.8, 52.7)",
-                detail = "先到 (39.7, 50.0) 接取，再前往 (50.8, 52.7) 点击背包。",
+                detail = "先到 (39.7, 50.0) 接取，再前往 (50.8, 52.7) 点击背包；艾尔文森林（营地 47, 56）、艾尔文森林（47.8，56.3）与艾尔文森林（营地 47.85, 56.35）也要覆盖。",
               },
             },
           },
@@ -429,17 +442,16 @@ async function main() {
     const coordSnap = coordRt.getSnapshot();
     const coordCards = summarizeCards(coordSnap);
     const coordText = coordCards.map((c) => `${c.title}\n${c.body}`).join('\n');
-    const coordPattern = /\b\d{1,2}\.\d\s*,\s*\d{1,2}\.\d\b/;
     const passed =
       coordSnap.luaErrors.length === 0 &&
       coordCards.length > 0 &&
-      !coordPattern.test(coordText) &&
+      !COORD_TEXT_PATTERN.test(coordText) &&
       coordText.includes('[定位]') &&
       coordText.includes('石爪山脉') &&
       coordText.includes('摸石过河');
     if (!passed) {
       console.error(
-        `[Assert Failed] Coordinate link regression failed (errors=${coordSnap.luaErrors.length}, cards=${coordCards.length}, hasRaw=${coordPattern.test(coordText)}, hasLink=${coordText.includes('[定位]')})`
+        `[Assert Failed] Coordinate link regression failed (errors=${coordSnap.luaErrors.length}, cards=${coordCards.length}, hasRaw=${COORD_TEXT_PATTERN.test(coordText)}, hasLink=${coordText.includes('[定位]')})`
       );
       assertionFailed = true;
     } else {
