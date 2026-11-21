@@ -2806,6 +2806,51 @@ function annotateDatasetPrereqs(dataset, questiePrereqs) {
   return dataset;
 }
 
+const BUILTIN_DUNGEON_QUEST_SUPPLEMENTS = {
+  'wailing-caverns': [
+    { id: 914, name: '变异皮革', level: 22, minLevel: 15, faction: 'both', npc: '纳尔帕克', zone: '贫瘠之地', x: 45.8, y: 35.8 },
+    { id: 1487, name: '清除变异者', level: 21, minLevel: 15, faction: 'both', npc: '厄布鲁', zone: '贫瘠之地', x: 45.8, y: 35.8 },
+    { id: 6981, name: '发光的碎片', level: 25, minLevel: 18, faction: 'both', inside: true, zone: '哀嚎洞穴' },
+  ],
+  'razorfen-kraul': [
+    { id: 1101, name: '卡尔加·刺肋', level: 34, minLevel: 29, faction: 'alliance', npc: '法芬德尔', zone: '菲拉斯', x: 89.6, y: 46.6 },
+    { id: 1144, name: '进口商威利克斯', level: 30, minLevel: 22, faction: 'both', inside: true, npc: '进口商威利克斯', zone: '剃刀沼泽' },
+    { id: 1221, name: '蓝叶薯', level: 26, minLevel: 20, faction: 'both', npc: '麦伯克·米希瑞克斯', zone: '贫瘠之地', x: 62.4, y: 37.6 },
+  ],
+  'scarlet-monastery-library': [
+    { id: 1050, name: '泰坦神话', level: 38, minLevel: 28, faction: 'alliance', npc: '图书馆员麦伊·苍尘', zone: '铁炉堡', x: 74.6, y: 12.6 },
+  ],
+  'scarlet-monastery-armory': [
+    { id: 1053, name: '以圣光之名', level: 40, minLevel: 34, faction: 'alliance', npc: '虔诚的莱雷恩', zone: '希尔斯布莱德丘陵', x: 51.5, y: 58.2 },
+  ],
+  'scarlet-monastery-cathedral': [
+    { id: 1053, name: '以圣光之名', level: 40, minLevel: 34, faction: 'alliance', npc: '虔诚的莱雷恩', zone: '希尔斯布莱德丘陵', x: 51.5, y: 58.2 },
+  ],
+  'razorfen-downs': [
+    { id: 3636, name: '带来光明', level: 42, minLevel: 35, faction: 'alliance', npc: '大主教本尼迪塔斯', zone: '暴风城', x: 39.6, y: 27.4 },
+    { id: 3341, name: '寒冰之王', level: 42, minLevel: 37, faction: 'both', inside: true, zone: '剃刀高地' },
+  ],
+};
+
+function applyDungeonQuestFallbackSupplements(dungeonMap, targetIds) {
+  for (const dId of targetIds) {
+    const supps = BUILTIN_DUNGEON_QUEST_SUPPLEMENTS[dId];
+    const dungeon = dungeonMap.get(dId);
+    if (!supps || !dungeon) continue;
+    dungeon.quests = Array.isArray(dungeon.quests) ? dungeon.quests : [];
+    for (const sq of supps) {
+      const idx = dungeon.quests.findIndex(q => Number(q?.id) === sq.id);
+      if (idx >= 0) {
+        if (sq.faction === 'both' && dungeon.quests[idx].faction !== 'both') {
+          dungeon.quests[idx] = { ...dungeon.quests[idx], faction: 'both' };
+        }
+      } else {
+        dungeon.quests.push({ ...sq });
+      }
+    }
+  }
+}
+
 /**
  * 从 wowf.io/zh/dungeons/<id> 与 /zh/quests/<id> 补全所有副本的双阵营任务与前置任务链
  */
@@ -2901,15 +2946,21 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       const rqIdx = full.indexOf('"rewardQuests":[');
       const collected = [];
       const seen = new Set();
+      let parsedValidStruct = false;
       for (const [labelIdx, offset] of [
         [qIdx, 9],
         [rqIdx, 15],
       ]) {
         if (labelIdx < 0) continue;
         const arrStr = extractBalancedJson(full, labelIdx + offset);
-        if (!arrStr) continue;
+        if (!arrStr) {
+          failedDungeonIds.add(dId);
+          hasWebEnrichFailure = true;
+          continue;
+        }
         try {
           const arr = JSON.parse(arrStr);
+          if (Array.isArray(arr)) parsedValidStruct = true;
           for (const item of arr) {
             const qid = Number(item?.id);
             if (qid && !seen.has(qid)) {
@@ -2922,6 +2973,10 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
           failedDungeonIds.add(dId);
           hasWebEnrichFailure = true;
         }
+      }
+      if (!parsedValidStruct) {
+        failedDungeonIds.add(dId);
+        hasWebEnrichFailure = true;
       }
       if (collected.length > 0) {
         dungeonQuestIdsMap.set(dId, collected);
@@ -2940,6 +2995,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
         failedDungeonIds.add(dId);
         restoreCachedQuestsForDungeon(dId);
       }
+      applyDungeonQuestFallbackSupplements(dungeonMap, dungeonIds);
     }
     return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
   }
@@ -3118,6 +3174,9 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
   }
   for (const dId of failedDungeonIds) {
     restoreCachedQuestsForDungeon(dId);
+  }
+  if (failedDungeonIds.size > 0) {
+    applyDungeonQuestFallbackSupplements(dungeonMap, failedDungeonIds);
   }
   console.log(`[WoWF] Enriched ${dungeonQuestIdsMap.size} dungeons with ${Object.keys(questCache).length} web quests.`);
   return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
