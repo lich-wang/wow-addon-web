@@ -2813,7 +2813,7 @@ const BUILTIN_DUNGEON_QUEST_SUPPLEMENTS = {
     { id: 6981, name: '发光的碎片', level: 25, minLevel: 18, faction: 'both', inside: true, zone: '哀嚎洞穴' },
   ],
   'razorfen-kraul': [
-    { id: 1101, name: '圣洁之书', level: 34, minLevel: 26, faction: 'alliance', npc: '赫尔拉斯·静水', zone: '达纳苏斯', x: 38.4, y: 80.2 },
+    { id: 1101, name: '卡尔加·刺肋', level: 34, minLevel: 29, faction: 'alliance', npc: '法芬德尔', zone: '菲拉斯', x: 89.6, y: 46.6 },
     { id: 1144, name: '进口商威利克斯', level: 30, minLevel: 22, faction: 'both', inside: true, npc: '进口商威利克斯', zone: '剃刀沼泽' },
     { id: 1221, name: '蓝叶薯', level: 26, minLevel: 20, faction: 'both', npc: '麦伯克·米希瑞克斯', zone: '贫瘠之地', x: 62.4, y: 37.6 },
   ],
@@ -2946,15 +2946,21 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       const rqIdx = full.indexOf('"rewardQuests":[');
       const collected = [];
       const seen = new Set();
+      let parsedValidStruct = false;
       for (const [labelIdx, offset] of [
         [qIdx, 9],
         [rqIdx, 15],
       ]) {
         if (labelIdx < 0) continue;
         const arrStr = extractBalancedJson(full, labelIdx + offset);
-        if (!arrStr) continue;
+        if (!arrStr) {
+          failedDungeonIds.add(dId);
+          hasWebEnrichFailure = true;
+          continue;
+        }
         try {
           const arr = JSON.parse(arrStr);
+          if (Array.isArray(arr)) parsedValidStruct = true;
           for (const item of arr) {
             const qid = Number(item?.id);
             if (qid && !seen.has(qid)) {
@@ -2967,6 +2973,10 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
           failedDungeonIds.add(dId);
           hasWebEnrichFailure = true;
         }
+      }
+      if (!parsedValidStruct) {
+        failedDungeonIds.add(dId);
+        hasWebEnrichFailure = true;
       }
       if (collected.length > 0) {
         dungeonQuestIdsMap.set(dId, collected);
