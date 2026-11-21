@@ -258,7 +258,7 @@ function Arb.Items(itemID)
     end
     return { id = id }
   end
-  -- GetItemInfo 经典返回值顺序：name, link, quality, iLevel, reqLevel, class, subClass,
+  -- GetItemInfo 返回值顺序：name, link, quality, iLevel, reqLevel, class, subClass,
   -- maxStack, equipLoc, texture, sellPrice（C_Item.GetItemInfo 前若干项一致）
   local info = {
     id = id, loaded = true, name = values[1], link = values[2],
@@ -648,7 +648,7 @@ local function ownRecipeSet(owner)
   local all = WoWFDB.recipeCache
   if type(all) ~= "table" then return nil end
   local cache = all[owner]
-  -- 旧版本把配方直接平铺在 recipeCache 上，归属无法确认，不迁移到当前角色
+  -- 早期版本把配方直接平铺在 recipeCache 上，归属无法确认，不迁移到当前角色
   if type(cache) ~= "table" then return nil end
   local recipes = {}
   for _, raw in pairs(cache) do
@@ -852,7 +852,7 @@ function Arb.Harvest()
 end
 
 -- ============================================================================
--- 5. 分解收益（1.60.1 经典分解表，按装等 + 品质 + 护甲/武器）
+-- 5. 分解收益（1.60.1 分解表，按装等 + 品质 + 护甲/武器）
 -- 数据参考 Warcraft Wiki「Disenchanting tables」，超过表中最高档时沿用最后一档
 -- ============================================================================
 

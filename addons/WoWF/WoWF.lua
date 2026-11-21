@@ -15,100 +15,122 @@ local ROUTE_ORDER = {
   "orc", "undead", "tauren", "troll", "skyborne-horde"
 }
 
--- 无限服常用游戏命令/控制台变量速查表（仅收录在无限服客户端可用的命令）
+-- 无限服实用命令 / 客户端 CVar 速查表
+-- 只收录在《魔兽世界：无限服》里真正用得上的内容：无限服客户端专属设置、本百科与配套插件入口。
 -- 每条: { title, category, code, desc, note }
 -- code 为可直接粘贴到聊天框执行的命令；note 标注无限服下的注意事项。
 local COMMON_COMMANDS = {
   {
-    title = "最大镜头距离",
-    category = "画面 / 镜头",
-    code = "/console cameraDistanceMaxZoomFactor 4",
-    desc = "把镜头拉到最远（无限服上限约 50 码），视野更开阔，做任务与副本走位更舒服。",
-    note = "无限服客户端使用 4（上限 50 码）；若该条无效，可改用下方旧版命令 cameraDistanceMax 50。",
+    title = "世界内任务导航（无限服自带）",
+    category = "客户端 / 导航",
+    code = "/console showInGameNavigation 1",
+    desc = "在游戏世界里给追踪中的任务目标打上黄色菱形标记，交任务时标在任务发布人头上并显示距离；目标在山洞、楼上或另一层时比平面地图更好用，不需要安装插件。",
+    note = "无限服客户端自带功能；关闭改 0。它与描边、任务高亮是独立开关，可按习惯叠加。",
   },
   {
-    title = "旧版镜头距离上限 (1.12)",
-    category = "画面 / 镜头",
-    code = "/console cameraDistanceMax 50",
-    desc = "旧版（7.0 以前）客户端直接设置镜头最远距离 50 码。",
-    note = "无限服 1.12 客户端可用，作为上一条无效时的备用命令。",
-  },
-  {
-    title = "物品/任务目标闪光高亮",
-    category = "物品 / 拾取",
+    title = "关闭描边时的任务物品闪光",
+    category = "客户端 / 导航",
     code = "/console outlineModeShowLootEffectWhenDisabled 1",
-    desc = "关闭轮廓模式时，用闪光特效标出地上的拾取物与可交互目标。",
-    note = "无限服专属 CVar；需先关闭轮廓模式（/console outlineMode 0）才会生效。",
+    desc = "关闭「描边模式」后，任务物品与可交互目标会重新出现闪光，不会融进场景里。",
+    note = "无限服专属 CVar；需先关闭描边模式（/console outlineMode 0）才生效。",
   },
   {
-    title = "自动拾取",
-    category = "物品 / 拾取",
-    code = "/console autoLootDefault 1",
-    desc = "默认开启自动拾取，拾取尸体不再逐个点选；按住 Shift 可临时关闭。",
-    note = "无限服可用。",
+    title = "镜头拉到最远",
+    category = "客户端 / 画面",
+    code = "/console cameraDistanceMaxZoomFactor 4",
+    desc = "把镜头拉到无限服客户端的最远档位（4 档，约 50 码），练级、副本走位与观察远处目标都更舒服。",
+    note = "想恢复默认改 2；低配机器建议 2.5~3。",
   },
   {
-    title = "关闭全屏泛光（提帧）",
-    category = "画面 / 性能",
-    code = "/console ffxGlow 0",
-    desc = "关闭屏幕泛光特效，低配机器或团本掉帧时可明显提升帧数。",
-    note = "无限服可用；想恢复改为 1。",
+    title = "关闭体积雾",
+    category = "客户端 / 画面",
+    code = "/console volumeFog 0",
+    desc = "去掉无限服在部分地区和副本加入的飘散雾气，远处目标更清楚，旧显卡也能提帧。",
+    note = "恢复改 1；设置界面只有「计算效果」滑块，没有这个开关。",
   },
   {
-    title = "解除帧数上限",
-    category = "画面 / 性能",
-    code = "/console maxFPS 0",
-    desc = "取消帧率硬性上限（0 = 使用软上限），也可设为 60 / 144 等固定值。",
-    note = "无限服可用；0 表示不限制，设 60/144 可固定帧率。",
+    title = "团本 / 主城一键性能宏",
+    category = "客户端 / 性能",
+    code = "/console volumeFog 0\n/console graphicsShadowQuality 0\n/console waterDetail 0\n/console farclip 777",
+    desc = "把雾气、阴影、水面、视距四项一起压低：画面损失小、帧数提升最明显，40 人团本和主城人多时按一下即可。",
+    note = "逐行粘贴到聊天框回车，或点「复制命令」后做成游戏宏；恢复时先用 /console volumeFog 1 打开雾气，再把阴影、水面、视距拖回原来的画面滑块档位。",
   },
   {
-    title = "镜头平滑关闭",
-    category = "画面 / 镜头",
-    code = "/console cameraSmoothStyle 0",
-    desc = "关闭镜头平滑跟随，旋转视角更跟手，PvP 与走位更精准。",
-    note = "无限服可用。",
+    title = "姓名板显示到 41 码",
+    category = "客户端 / 画面",
+    code = "/console nameplateMaxDistance 41",
+    desc = "把姓名板显示距离拉到 41 码，野外与战场能更早发现敌人；与 TAB 选怪距离配合更顺手。",
+    note = "客户端可能限制上限；可用 /dump GetCVar(\"nameplateMaxDistance\") 确认是否生效。",
   },
   {
-    title = "角色环境光（旧版）",
-    category = "画面 / 镜头",
-    code = "/console characterAmbient",
-    desc = "切换角色模型的环境光照，让人物颜色更自然；再输入一次可切回。",
-    note = "无限服 1.12/经典客户端可用；该命令不要带数值，直接输入即可切换。",
+    title = "死亡后保留色彩",
+    category = "客户端 / 画面",
+    code = "/console ffxDeath 0",
+    desc = "灵魂状态下屏幕不再变灰，跑尸时更容易看清地标、道路与自己的尸体位置。",
+    note = "想恢复灰色死亡画面改 1。",
   },
   {
-    title = "显示 Lua 报错",
-    category = "调试 / 其他",
-    code = "/console scriptErrors 1",
-    desc = "开启 Lua 错误弹窗，排查插件报错与兼容性问题时必备。",
-    note = "无限服可用；查完问题建议改回 0。",
+    title = "百科首页（智能匹配）",
+    category = "本百科 / 快捷入口",
+    code = "/wowf",
+    desc = "打开巫妖王的无限百科并回到智能匹配仪表盘，按当前角色等级、职业、专精、种族与阵营自动匹配攻略。",
+    note = "等同点击小地图图标；输入 /wowf help 可查看全部子命令。",
   },
   {
-    title = "重置界面设置",
-    category = "调试 / 其他",
-    code = "/console cvar_default",
-    desc = "把所有界面控制台变量恢复为默认值，界面错乱时的终极自救。",
-    note = "会重置所有 CVar 改动，包括上面这些设置；单独重置某项用 /console cvar_default 变量名。",
+    title = "升级路线",
+    category = "本百科 / 快捷入口",
+    code = "/wowf route",
+    desc = "直达升级路线页：当前等级段该去哪张地图、做哪些任务、走哪条任务链，并带坐标与地图标记。",
+    note = "等同点击顶部「升级路线」页签。",
   },
   {
-    title = "重载界面",
-    category = "调试 / 其他",
-    code = "/reload",
-    desc = "重载游戏界面（等价于 /rl），安装或更新插件后使其生效。",
-    note = "无限服通用斜杠命令。",
+    title = "地下城百科",
+    category = "本百科 / 快捷入口",
+    code = "/wowf dungeon",
+    desc = "直达地下城百科：无限服新本与原有副本的入口、首领、必接任务与掉落，按当前等级筛选。",
+    note = "等同点击顶部「地下城百科」页签。",
   },
   {
-    title = "清理聊天窗口",
-    category = "调试 / 其他",
-    code = "/clearChat",
-    desc = "清空当前聊天窗口的文字，刷屏或截屏前整理界面时使用。",
-    note = "无限服通用斜杠命令。",
+    title = "制造套利",
+    category = "本百科 / 快捷入口",
+    code = "/wowf arb",
+    desc = "直达制造套利页：读取拍卖行行情与角色专业等级，递归折算中间产物后筛出当前能赚钱的配方。",
+    note = "需要启用 EasyAuction 或黑石交易技能并提供行情数据；附魔角色可切换「分解套利」模式。",
   },
   {
-    title = "暂离 / 请勿打扰",
-    category = "调试 / 其他",
-    code = "/afk",
-    desc = "标记自己为暂离（自动回复），再输入一次或移动即取消；/dnd 则为请勿打扰。",
-    note = "无限服通用斜杠命令。",
+    title = "Questie 任务雷达设置",
+    category = "配套插件",
+    code = "/questie",
+    desc = "打开 Questie 设置窗口；/questie toggle 可快速开关地图与小地图上的任务显示，/questie tracker show 恢复任务追踪框。",
+    note = "需安装 Questie（本站「Questie Forever」）。",
+  },
+  {
+    title = "无限副本手册",
+    category = "配套插件",
+    code = "/df",
+    desc = "打开 DungeonsForever 无限副本手册，查看首领掉落、副本任务与地图标记。",
+    note = "需安装 DungeonsForever；客户端语言异常时可用 /dfcn 强制切换简中。",
+  },
+  {
+    title = "世界地图航线",
+    category = "配套插件",
+    code = "/ft",
+    desc = "切换 ForeverTransit 世界地图航线显示；/ft auto、/ft all、/ft labels、/ft tram 可细分阵营过滤、站点文字与矿道地铁。",
+    note = "需安装 ForeverTransit。",
+  },
+  {
+    title = "黑石交易技能窗口",
+    category = "配套插件",
+    code = "/bts",
+    desc = "打开 Blackthorne's 交易技能窗口：扫描拍卖行算利润、排队制造、购物清单与防亏损上架。",
+    note = "需安装 Blackthorne's Tradeskills；制造套利页的行情也会参考它。",
+  },
+  {
+    title = "鼠标提示跟随",
+    category = "配套插件",
+    code = "/fmt on",
+    desc = "开启 ForeverMouseTooltip 的鼠标提示实时跟随；/fmt off 关闭并回右下角，/fmt combat on 让战斗中保持默认位置。",
+    note = "需安装 Forever Mouse Tooltip；/fmt offset <x> <y> 可微调偏移。",
   },
 }
 
@@ -3211,7 +3233,7 @@ end
 
 -- 判断任务名是否包含非 ASCII 字符（中文/韩文/俄文等本地化名称）。
 -- 中文客户端里，客户端已不存在的任务只能回落到 QuestieDB 的英文名，
--- 这类记录往往是经典任务与无限服替换任务并存造成的重复项（如 1203 / 81570「加尔的剑」）。
+-- 这类记录往往是原版任务与无限服替换任务并存造成的重复项（如 1203 / 81570「加尔的剑」）。
 local function QuestNameHasLocalizedText(name)
   if type(name) ~= "string" or name == "" then return false end
   for i = 1, #name do
@@ -3220,7 +3242,7 @@ local function QuestNameHasLocalizedText(name)
   return false
 end
 
--- 区域任务链去重：同一任务在 QuestieDB 中可能同时存在互斥的经典版与无限服替换版。
+-- 区域任务链去重：同一任务在 QuestieDB 中可能同时存在互斥的原版与无限服替换版。
 -- 仅当两条记录发布者、任务等级、区域完全一致，且只有一条能取到本地化名称时，
 -- 才丢弃无法本地化的那一条，避免误伤真正的互斥分支（如二选一任务）。
 local function PruneExclusiveDuplicateCandidates(candidates)
@@ -4926,13 +4948,13 @@ local function RenderTabMacros()
   list:Finish()
 end
 
--- 常用命令速查：分类整理 /console 控制台变量与斜杠命令，支持搜索与一键复制
+-- 无限服速查：只收录无限服客户端专属 CVar、本百科页签直达与配套插件入口，支持搜索与一键复制
 local function RenderTabCommands()
   local list = CreateCardList(6)
 
   list:Add({
-    title = "|cff00ffcc[常用命令] 魔兽世界通用命令 / 控制台变量速查|r",
-    body = "面向《魔兽世界：无限服》整理、均可在无限服客户端使用的常用命令。每条命令都可点击右上角 |cff00ff00[复制命令]|r 按钮，或直接把命令粘贴到聊天框回车执行。|cffff8800注意：/console 属于客户端设置，请在非战斗中执行。|r",
+    title = "|cff00ffcc[无限服速查] 客户端 CVar 与百科 / 配套插件命令|r",
+    body = "只收录在《魔兽世界：无限服》里真正用得上的命令：无限服客户端专属画面/导航设置、本百科页签直达，以及本站精选配套插件的入口。每条都可点击右上角 |cff00ff00[复制命令]|r 后粘贴到聊天框回车执行。|cffff8800注意：/console 属于客户端设置，请在非战斗中执行；改动前可先用 /dump GetCVar(\"变量名\") 记录原值。|r",
     theme = "cmdHeader",
     badge = "共 " .. tostring(#COMMON_COMMANDS) .. " 条",
   })
@@ -5026,7 +5048,10 @@ local function RenderTabDungeons()
           local stripped = string.match(summary, "^" .. z:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1") .. "%s*%b()%s*(.*)$")
           if stripped and stripped ~= "" then summary = stripped end
         end
-        if summary ~= "" and summary ~= "经典地下城。" and summary ~= "经典地下城" then
+        -- 旧版打包的 Data.lua 兜底简介仍是「经典地下城。」，升级前的缓存也要一并过滤
+        local isGenericSummary = summary == "原有地下城。" or summary == "原有地下城"
+          or summary == "经典地下城。" or summary == "经典地下城"
+        if summary ~= "" and not isGenericSummary then
           table.insert(lines, "|cff99e6ff简介:|r " .. LinkifyInlineCoords(summary, d.entranceZone or d.zone or "", d.name))
         end
       end
@@ -5085,7 +5110,7 @@ local function RenderTabDungeons()
         body = table.concat(lines, "\n"),
         theme = d.isNew and "dunNew" or (isLevelMatch and "dunMatch" or "info"),
         -- 等级区间已写在标题里，角标改为类型标识，避免同一串 Lv 信息出现两遍
-        badge = d.isNew and "无限服新副本" or "经典地下城",
+        badge = d.isNew and "无限服新副本" or "原有副本",
       })
     end
   end
@@ -5862,7 +5887,7 @@ local TAB_DEFS = {
   { id = 4, label = "一键宏库",     render = RenderTabMacros,          slash = { "macro", "macros" }, searchable = true },
   { id = 5, label = "地下城百科",   render = RenderTabDungeons,        slash = { "dungeon", "dungeons" }, searchable = true },
   { id = 6, label = "专业&无限特色", render = RenderTabForeverAndNews, slash = { "news", "forever", "prof", "professions" }, onSlash = function() state.featureFilter = "MATCH" end, searchable = true },
-  { id = 7, label = "常用命令",     render = RenderTabCommands,        slash = { "cmd", "commands", "console" }, searchable = true },
+  { id = 7, label = "无限服速查",     render = RenderTabCommands,        slash = { "cmd", "commands", "console", "quick" }, searchable = true },
   { id = 8, label = "制造套利",     render = RenderTabCraftArb,        slash = { "arb", "craft", "crafting", "profit", "auction" }, searchable = true },
 }
 local TAB_BY_ID = {}
@@ -6525,7 +6550,7 @@ SlashCmdList["WOWF"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 可用斜杠子命令:")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf|r — 打开智能匹配仪表盘")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf route|r — 升级路线   |cffffd100/wowf class|r — 职业与天赋   |cffffd100/wowf macro|r — 一键宏库")
-    DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf dungeon|r — 地下城百科   |cffffd100/wowf news|r — 专业&无限特色   |cffffd100/wowf cmd|r — 常用命令   |cffffd100/wowf arb|r — 制造套利")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf dungeon|r — 地下城百科   |cffffd100/wowf news|r — 专业&无限特色   |cffffd100/wowf cmd|r — 无限服速查   |cffffd100/wowf arb|r — 制造套利")
     return
   end
   local def = SLASH_TO_TAB[cmd] or TAB_DEFS[1]

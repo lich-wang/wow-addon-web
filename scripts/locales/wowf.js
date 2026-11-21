@@ -1768,7 +1768,7 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
       entranceY: ent?.y ?? null,
       isNew,
       bosses: newMeta?.bosses || [],
-      summary: newMeta?.summary || `${zone} (${minLevel}-${maxLevel}级) 经典地下城。`,
+      summary: newMeta?.summary || `${zone} (${minLevel}-${maxLevel}级) 原有地下城。`,
       quests: incomingQuests,
     });
   } else {
