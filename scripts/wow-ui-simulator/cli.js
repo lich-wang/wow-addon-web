@@ -133,23 +133,55 @@ function summarizeCards(snapshot) {
   return cards;
 }
 
-// 职业任务链标签：里程碑卡「Lv.N …·法师职业任务]」与 FormatClassRunLine 默认「Lv.N …·法师专属任务链]」
-const CHAIN_TAG_RE = /\[Lv\.(\d+) ([^\]\n]*?)(?:职业任务|专属任务链)\]/g;
+// 职业任务链标签：里程碑卡「Lv.N …·法师职业任务]」，阶段卡「★Lv.N 法师专属职业任务链]」
+// 以及 FormatClassRunLine 默认「Lv.N …·法师专属任务链]」
+const CHAIN_TAG_RE = /\[★?Lv\.(\d+) ([^\]\n]*?)(?:专属职业任务链|专属任务链|职业任务)\]/g;
+
+// 同一任务链在里程碑卡与阶段卡里的标签前缀不同（「天裔 (联盟)·法师」vs「法师」），
+// 因此链身份用「等级 + 归一化职业名」：取标签最后一个「·」后的部分，忽略种族/路线前缀。
+function normalizeChainOwner(label) {
+  const parts = String(label || '').split('·');
+  return parts[parts.length - 1].replace(/专属$/, '').trim();
+}
 
 function analyzeRouteDedupe(cards) {
-  const chainLevels = new Map();
+  // key = `${等级}|${职业}`，value = 出现过的卡片下标集合
+  const chainKeys = new Map();
   cards.forEach((c, idx) => {
     for (const m of c.body.matchAll(CHAIN_TAG_RE)) {
-      const level = m[1];
-      if (!chainLevels.has(level)) chainLevels.set(level, new Set());
-      chainLevels.get(level).add(idx);
+      const key = `${m[1]}|${normalizeChainOwner(m[2])}`;
+      if (!chainKeys.has(key)) chainKeys.set(key, new Set());
+      chainKeys.get(key).add(idx);
     }
   });
   return {
-    chainLevels,
-    dupChains: [...chainLevels.entries()].filter(([, set]) => set.size > 1),
+    chainKeys,
+    dupChains: [...chainKeys.entries()].filter(([, set]) => set.size > 1),
     zoneBlockCards: cards.filter((c) => c.body.includes('本阶段适龄练级区域')),
   };
+}
+
+// 自检：确保「重复链 → 报错」「同等级但不同职业 → 不报错」两个方向都被覆盖
+function selfTestRouteDedupe() {
+  const cases = [
+    {
+      name: '同一任务链跨卡重复',
+      cards: [{ body: '[Lv.20 人类·法师职业任务]' }, { body: '[★Lv.20 法师专属职业任务链]' }],
+      expectDup: true,
+    },
+    {
+      name: '同等级但不同职业的两条链',
+      cards: [{ body: '[Lv.20 人类·法师职业任务]' }, { body: '[Lv.20 人类·战士职业任务]' }],
+      expectDup: false,
+    },
+  ];
+  for (const c of cases) {
+    const dup = analyzeRouteDedupe(c.cards).dupChains.length > 0;
+    if (dup !== c.expectDup) {
+      return `去重自检失败：${c.name}（期望 ${c.expectDup ? '判定重复' : '不判定重复'}）`;
+    }
+  }
+  return null;
 }
 
 async function main() {
@@ -293,6 +325,11 @@ async function main() {
   // 与「本阶段适龄练级区域只渲染一次」确实被覆盖（内置演示数据含 classRunsByClass 与 altZones）。
   // 放在独立回归里，避免 --level / --faction 等自定义参数下（样例数据可能没有对应内容）误报。
   if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const selfTestErr = selfTestRouteDedupe();
+    if (selfTestErr) {
+      console.error(`[Assert Failed] ${selfTestErr}`);
+      assertionFailed = true;
+    }
     const sampleFiles = [
       { filename: 'Data.lua (sample)', content: SAMPLE_WOWF_DATA_LUA },
       ...files.filter((f) => !isDataLuaFile(f)),
@@ -313,16 +350,16 @@ async function main() {
       srt.runSlashCommand('/wowf route');
       const snap = srt.getSnapshot();
       const cards = summarizeCards(snap);
-      const { chainLevels, dupChains, zoneBlockCards } = analyzeRouteDedupe(cards);
+      const { chainKeys, dupChains, zoneBlockCards } = analyzeRouteDedupe(cards);
       if (
         snap.luaErrors.length > 0 ||
-        chainLevels.size === 0 ||
+        chainKeys.size === 0 ||
         dupChains.length > 0 ||
         zoneBlockCards.length !== 1
       ) {
         sampleFail = true;
         console.error(
-          `[Assert Failed] 样例去重回归 (${c.label}) failed (errors=${snap.luaErrors.length}, chains=${chainLevels.size}, dup=${dupChains.length}, zoneBlocks=${zoneBlockCards.length})`
+          `[Assert Failed] 样例去重回归 (${c.label}) failed (errors=${snap.luaErrors.length}, chains=${chainKeys.size}, dup=${dupChains.length}, zoneBlocks=${zoneBlockCards.length})`
         );
       }
       srt.destroy();
