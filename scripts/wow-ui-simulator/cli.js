@@ -241,6 +241,98 @@ async function main() {
     lv40Rt.destroy();
   }
 
+  // QuestieDB-only runtime test: verify WoWF.lua resolves quest names, NPCs, zones, and prereqs purely from _G.QuestDB / _G.NpcDB
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const qdbRt = new WoWSimulatorRuntime({
+      level: 40,
+      classKey: 'MAGE',
+      raceKey: '人类',
+      faction: 'Alliance',
+    });
+    const questieMockLua = `
+      NpcDB = {
+        name = function(id)
+          local t = { [3979] = "图书馆员麦伊·苍尘", [3980] = "虔诚的莱雷恩" }
+          return t[id]
+        end,
+        zoneID = function(id)
+          local t = { [3979] = 1537, [3980] = 267 }
+          return t[id]
+        end,
+        spawns = function(id)
+          local t = { [3979] = { [1537] = { { 74.6, 12.6 } } }, [3980] = { [267] = { { 51.5, 58.2 } } } }
+          return t[id]
+        end,
+      }
+      QuestDB = {
+        name = function(id)
+          local t = { [1050] = "泰坦神话", [1052] = "血色十字军之路", [1053] = "以圣光之名" }
+          return t[id]
+        end,
+        questLevel = function(id)
+          local t = { [1050] = 38, [1052] = 34, [1053] = 40 }
+          return t[id]
+        end,
+        requiredLevel = function(id)
+          local t = { [1050] = 28, [1052] = 34, [1053] = 34 }
+          return t[id]
+        end,
+        startedBy = function(id)
+          local t = { [1050] = { { 3979 } }, [1052] = { { 3980 } }, [1053] = { { 3980 } } }
+          return t[id]
+        end,
+        finishedBy = function(id)
+          local t = { [1050] = { { 3979 } }, [1052] = { { 3980 } }, [1053] = { { 3980 } } }
+          return t[id]
+        end,
+        preQuestSingle = function(id)
+          if id == 1053 then return { 1052 } end
+          return nil
+        end,
+      }
+      WoWF_Data = {
+        meta = { version = "questiedb-only-test" },
+        dungeons = {
+          {
+            id = "scarlet-monastery-library",
+            name = "血色修道院图书馆",
+            zone = "提瑞斯法林地",
+            entranceZone = "提瑞斯法林地",
+            entranceX = 85.2,
+            entranceY = 32.1,
+            minLevel = 34,
+            maxLevel = 37,
+            visit = 37,
+            quests = {
+              { id = 1050, faction = "alliance" },
+              { id = 1053, faction = "alliance" },
+            },
+          },
+        },
+        routes = {},
+        classes = { MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精" } } } },
+        macros = {},
+        professions = {},
+      }
+    `;
+    const coreFiles = files.filter((f) => !path.basename(f.filename).toLowerCase().startsWith('data.lua'));
+    qdbRt.loadAddon(addonName, [{ filename: 'QuestieDBMock.lua', content: questieMockLua }, ...coreFiles]);
+    qdbRt.runSlashCommand('/wowf dungeon');
+    const qdbSnap = qdbRt.getSnapshot();
+    const smCard = summarizeCards(qdbSnap).find((c) => c.title.includes('血色修道院图书馆'));
+    const hasQ1050 = smCard && smCard.body.includes('泰坦神话') && smCard.body.includes('图书馆员麦伊·苍尘');
+    const hasQ1053 = smCard && smCard.body.includes('以圣光之名') && smCard.body.includes('血色十字军之路') && smCard.body.includes('虔诚的莱雷恩');
+    if (qdbSnap.luaErrors.length > 0 || !hasQ1050 || !hasQ1053) {
+      console.error(
+        `[Assert Failed] QuestieDB-only runtime test failed (errors=${qdbSnap.luaErrors.length}, hasQ1050=${Boolean(hasQ1050)}, hasQ1053=${Boolean(hasQ1053)})`
+      );
+      assertionFailed = true;
+    } else {
+      console.log('[✓] QuestieDB-only runtime resolution test passed (1050 + 1053 chain resolved from QuestDB/NpcDB).');
+    }
+    qdbRt.destroy();
+  }
+
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
     process.exit(1);
   }

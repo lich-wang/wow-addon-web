@@ -575,6 +575,10 @@ function GetQuestDifficultyColor() return { r = 1, g = 0.82, b = 0 } end
 C_Map = {
   GetBestMapForUnit = function() return 1411 end,
   GetMapInfo = function(id) return { mapID = id, name = __WOW_BRIDGE__:getCharField("zone") } end,
+  GetAreaInfo = function(areaId)
+    local areas = { [1537] = "铁炉堡", [267] = "希尔斯布莱德丘陵", [796] = "血色修道院", [1519] = "暴风城", [1637] = "奥格瑞玛" }
+    return areas[tonumber(areaId) or 0] or ""
+  end,
   SetUserWaypoint = function(pt)
     if type(pt) == "table" and pt.position then
       __WOW_BRIDGE__:addWaypoint(__WOW_BRIDGE__:getCharField("zone"), "标记点", (pt.position.x or 0) * 100, (pt.position.y or 0) * 100)
