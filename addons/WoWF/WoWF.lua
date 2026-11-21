@@ -3274,9 +3274,11 @@ local function PruneExclusiveDuplicateCandidates(candidates)
               local locA = QuestNameHasLocalizedText(infoA.name)
               local locB = QuestNameHasLocalizedText(infoB.name)
               if locA ~= locB
+                and type(infoA.level) == "number" and type(infoB.level) == "number"
+                and type(infoA.minLevel) == "number" and type(infoB.minLevel) == "number"
                 and (infoA.npc or "") ~= "" and (infoA.npc or "") == (infoB.npc or "")
-                and (infoA.level or 0) == (infoB.level or 0)
-                and (infoA.minLevel or 0) == (infoB.minLevel or 0)
+                and infoA.level == infoB.level
+                and infoA.minLevel == infoB.minLevel
                 and (infoA.zone or "") == (infoB.zone or "") then
                 if locA then drop[eid] = true else drop[cid] = true end
                 break
