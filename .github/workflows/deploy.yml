@@ -48,6 +48,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify WoWF UI Rendering with WoW UI Simulator
+        run: npm run sim:wowf -- --no-html --strict-data
+
       - name: Fetch Latest Desktop Client Release to public/downloads
         run: node scripts/fetch-client.js
         env:
