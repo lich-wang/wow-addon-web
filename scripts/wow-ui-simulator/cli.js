@@ -189,13 +189,9 @@ async function main() {
       }
     }
     if (opts.assert && cmd === '/wowf news') {
-      const hasNewsCard = cards.some((c) => c.title.includes('公告'));
-      const hasCoordLink = cards.some((c) => c.body.includes('[定位]'));
-      if (!hasNewsCard) {
+      // 普通数据只要求公告卡片存在；坐标链接化由下方已知含坐标的 coordMockLua 回归专门验证
+      if (!cards.some((c) => c.title.includes('公告'))) {
         console.error('[Assert Failed] /wowf news 未渲染出公告卡片（检查样例/真实 Data.news）!');
-        assertionFailed = true;
-      } else if (!hasCoordLink) {
-        console.error('[Assert Failed] /wowf news 公告正文未生成 [定位] 链接!');
         assertionFailed = true;
       }
     }
@@ -348,7 +344,7 @@ async function main() {
         professions = {},
       }
     `;
-    const coreFiles = files.filter((f) => !path.basename(f.filename).toLowerCase().startsWith('data.lua'));
+    const coreFiles = files.filter((f) => !/^data\.lua/i.test(f.filename));
     qdbRt.loadAddon(addonName, [{ filename: 'QuestieDBMock.lua', content: questieMockLua }, ...coreFiles]);
     qdbRt.runSlashCommand('/wowf dungeon');
     const qdbSnap = qdbRt.getSnapshot();
@@ -426,7 +422,7 @@ async function main() {
                 coord = { x = 39.7, y = 50.0 },
                 altCoord = { zone = "石爪山脉", x = 50.8, y = 52.7 },
                 title = "第二步：石爪山脉背包 (39.7, 50.0 → 50.8, 52.7)",
-                detail = "先到 (39.7, 50.0) 接取，再前往 (50.8, 52.7) 点击背包；艾尔文森林（营地 47, 56）、艾尔文森林（47.8，56.3）与艾尔文森林（营地 47.85, 56.35）也要覆盖。",
+                detail = "先到 (39.7, 50.0) 接取，再前往 (50.8, 52.7) 点击背包；艾尔文森林（营地 47, 56）、艾尔文森林（47.8，56.3）与艾尔文森林（营地 47.85, 56.35）也要覆盖。艾尔文森林 (47.8, 56.3)，营地 48, 57 需要沿用区域上下文。",
               },
             },
           },
@@ -436,22 +432,33 @@ async function main() {
         },
       }
     `;
-    const coordCoreFiles = files.filter((f) => !path.basename(f.filename).toLowerCase().startsWith('data.lua'));
+    const coordCoreFiles = files.filter((f) => !/^data\.lua/i.test(f.filename));
     coordRt.loadAddon(addonName, [{ filename: 'CoordLinkMockData.lua', content: coordMockLua }, ...coordCoreFiles]);
     coordRt.runSlashCommand('/wowf news');
     const coordSnap = coordRt.getSnapshot();
     const coordCards = summarizeCards(coordSnap);
     const coordText = coordCards.map((c) => `${c.title}\n${c.body}`).join('\n');
+    const coordRawText = Object.values(coordSnap.fontStrings).map((fs) => fs.text || '').join('\n');
+    const coordNewsCard = coordCards.find((c) => c.title.includes('公告'));
+    const coordNewsOk = Boolean(coordNewsCard) &&
+      coordNewsCard.body.includes('藏宝海湾') &&
+      coordNewsCard.body.includes('[定位]');
+    // 链接后的 “营地 48, 57” 应沿用前文“艾尔文森林”的地图 ID(1429)，而不是回退到默认的石爪山脉(1442)
+    const crossContextOk =
+      coordRawText.includes('|Hwowfmap:1429:47.8:56.3') &&
+      coordRawText.includes('|Hwowfmap:1429:48.0:57.0');
     const passed =
       coordSnap.luaErrors.length === 0 &&
       coordCards.length > 0 &&
       !COORD_TEXT_PATTERN.test(coordText) &&
       coordText.includes('[定位]') &&
       coordText.includes('石爪山脉') &&
-      coordText.includes('摸石过河');
+      coordText.includes('摸石过河') &&
+      coordNewsOk &&
+      crossContextOk;
     if (!passed) {
       console.error(
-        `[Assert Failed] Coordinate link regression failed (errors=${coordSnap.luaErrors.length}, cards=${coordCards.length}, hasRaw=${COORD_TEXT_PATTERN.test(coordText)}, hasLink=${coordText.includes('[定位]')})`
+        `[Assert Failed] Coordinate link regression failed (errors=${coordSnap.luaErrors.length}, cards=${coordCards.length}, hasRaw=${COORD_TEXT_PATTERN.test(coordText)}, hasLink=${coordText.includes('[定位]')}, news=${coordNewsOk}, context=${crossContextOk})`
       );
       assertionFailed = true;
     } else {

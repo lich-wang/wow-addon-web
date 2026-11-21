@@ -1031,9 +1031,10 @@ local function HasNpcDelimiter(s)
 end
 
 -- 补漏：处理 “(瑟根石 47.8, 56.3)” 这类括号内带地名、以及箭头多坐标等首轮正则覆盖不到的坐标对
-local function LinkifyPlainCoordPairs(text, defaultZone, defaultLabel)
+-- startPos 之前的文本只作为区域推断上下文，不参与输出
+local function LinkifyPlainCoordPairs(text, defaultZone, defaultLabel, startPos)
   local result = {}
-  local lastPos = 1
+  local lastPos = startPos or 1
   while true do
     local s, e, xStr, yStr = string.find(text, "(%d+%.?%d+)%s*,%s*(%d+%.?%d+)", lastPos)
     if not s then
@@ -1058,17 +1059,22 @@ local function LinkifyPlainCoordPairs(text, defaultZone, defaultLabel)
 end
 
 -- 跳过已有的 |H...|h...|h 链接，只对普通文本片段执行坐标补漏，避免二次链接化破坏链接载荷
+-- context 保留此前片段（含链接载荷/显示名），让后续坐标仍能沿用最近的区域上下文
 local function LinkifyRemainingCoordPairs(text, defaultZone, defaultLabel)
   local result = {}
   local cursor = 1
+  local context = ""
   while true do
     local ls, le = string.find(text, "|H.-|h.-|h", cursor)
-    if not ls then
-      table.insert(result, LinkifyPlainCoordPairs(string.sub(text, cursor), defaultZone, defaultLabel))
-      break
-    end
-    table.insert(result, LinkifyPlainCoordPairs(string.sub(text, cursor, ls - 1), defaultZone, defaultLabel))
-    table.insert(result, string.sub(text, ls, le))
+    local plainEnd = ls and (ls - 1) or #text
+    local plain = string.sub(text, cursor, plainEnd)
+    table.insert(result, LinkifyPlainCoordPairs(context .. plain, defaultZone, defaultLabel, #context + 1))
+    if not ls then break end
+    local linkSeg = string.sub(text, ls, le)
+    table.insert(result, linkSeg)
+    -- 只保留链接的可见文本作为上下文，避免链接载荷中的 label 区域名污染后续坐标的地图推断
+    local linkDisplay = string.match(linkSeg, "|h(%b[])|h") or ""
+    context = context .. plain .. " " .. linkDisplay
     cursor = le + 1
   end
   return table.concat(result, "")
