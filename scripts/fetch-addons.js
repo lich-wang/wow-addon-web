@@ -828,16 +828,12 @@ async function processForeverMouseTooltip() {
 // 9. OpenMap (Seamless World Map for WoW Forever)
 // ---------------------------------------------------------------------------
 async function processOpenMap() {
-  let tag = 'v0.8.11';
-  let url = 'https://github.com/openmap-world/openmap/releases/download/v0.8.11/OpenMap-v0.8.11-forever.zip';
+  const fallbackTag = 'v0.8.11';
+  const fallbackUrl = 'https://github.com/openmap-world/openmap/releases/download/v0.8.11/OpenMap-v0.8.11-forever.zip';
   const latest = await getLatestGitHubRelease(
     'openmap-world/openmap',
     name => /^OpenMap-.*-forever\.zip$/i.test(name)
   );
-  if (latest?.url) {
-    tag = latest.tag || tag;
-    url = latest.url;
-  }
 
   // OpenMap-forever.zip (~195 MB) 超过 Cloudflare Pages 单文件 25 MiB 限制，
   // 因此不写入 public/addons/，仅同步最新版本号与 Release 下载地址至版本清单。
@@ -845,8 +841,28 @@ async function processOpenMap() {
   if (fs.existsSync(legacyOutPath)) {
     fs.unlinkSync(legacyOutPath);
   }
-  recordBundledVersion('openmap', tag, url);
-  console.log(`[✓] openmap => ${tag} (external release: ${url})`);
+
+  if (latest?.url) {
+    const tag = latest.tag || fallbackTag;
+    recordBundledVersion('openmap', tag, latest.url);
+    console.log(`[✓] openmap => ${tag} (external release: ${latest.url})`);
+    return;
+  }
+
+  if (fs.existsSync(BUNDLED_VERSIONS_PATH)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(BUNDLED_VERSIONS_PATH, 'utf-8'));
+      if (existing?.openmap?.version && existing?.openmap?.source) {
+        console.warn(`[Warn] Failed to query latest OpenMap release, keeping existing manifest entry: ${existing.openmap.version}`);
+        return;
+      }
+    } catch {
+      // fall through to hardcoded fallback when manifest cannot be read
+    }
+  }
+
+  recordBundledVersion('openmap', fallbackTag, fallbackUrl);
+  console.log(`[✓] openmap => ${fallbackTag} (fallback external release: ${fallbackUrl})`);
 }
 
 // ---------------------------------------------------------------------------
