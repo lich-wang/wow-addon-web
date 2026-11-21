@@ -2834,6 +2834,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       const ids = entry.steps && entry.steps.length > 0 ? entry.steps.map(s => s.id) : [entry.id];
       return !list.some((other, oIdx) => {
         if (oIdx === idx || !other) return false;
+        if (entry.id && other.id && entry.id !== other.id) return false;
         if (other.faction !== entry.faction && other.faction !== 'both') return false;
         const oIds = other.steps && other.steps.length > 0 ? other.steps.map(s => s.id) : [other.id];
         if (oIds.length >= ids.length) return false;
@@ -3062,6 +3063,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
           ? { endNpc: singleEndNpc, endZone: singleEndZone, endX: singleEndX, endY: singleEndY }
           : {}),
         finalObjective: sideData?.objective || '',
+        ...(steps ? { steps } : {}),
       };
     };
 
@@ -3761,13 +3763,28 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
 
   const professionsList = [...professionsMap.values()];
 
-  // 如果完全断网导致没有抓到实时路由数据，返回已有完整缓存并补齐新增的内置专业与无限服特色指南字段
+  // 如果路由接口离线导致没有抓到实时路由数据，加载已有完整缓存并仍尝试从 wowf.io 副本/任务页补全最新双阵营副本任务
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
+    const offlineDungeonMap = new Map(
+      (Array.isArray(cachedDataset.dungeons) ? cachedDataset.dungeons : [])
+        .filter(d => d && d.id != null)
+        .map(d => [d.id, { ...d, quests: Array.isArray(d.quests) ? [...d.quests] : [] }])
+    );
+    await enrichDungeonsWithWebQuests(
+      offlineDungeonMap,
+      cacheDir,
+      getHeaders,
+      cachedDataset.dungeons
+    );
+    const enrichedDungeons = [...offlineDungeonMap.values()].sort(
+      (a, b) => a.minLevel - b.minLevel || a.visit - b.visit
+    );
     const cachedDbVersion = cachedDataset.meta?.dbVersion || '2026.11.15';
     const offlinePrereqs = await loadQuestiePrereqs(cacheDir);
     return annotateDatasetPrereqs({
       ...cachedDataset,
+      dungeons: enrichedDungeons.length > 0 ? enrichedDungeons : cachedDataset.dungeons,
       meta: {
         ...cachedDataset.meta,
         version: `${WOWF_VERSION} + DB v${cachedDbVersion}`,
