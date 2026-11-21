@@ -16,6 +16,7 @@ function parseArgs(argv) {
     slash: ['/wowf', '/wowf route', '/wowf dungeon', '/wowf class', '/wowf macro', '/wowf arb'],
     html: path.resolve('.cache/wow-ui-sim-report.html'),
     assert: false,
+    strictData: false,
   };
   let customSlash = [];
   for (let i = 0; i < argv.length; i++) {
@@ -29,6 +30,7 @@ function parseArgs(argv) {
     else if (a === '--html' && argv[i + 1]) opts.html = path.resolve(argv[++i]);
     else if (a === '--no-html') opts.html = '';
     else if (a === '--assert') opts.assert = true;
+    else if (a === '--strict-data') opts.strictData = true;
   }
   if (customSlash.length > 0) opts.slash = customSlash;
   return opts;
@@ -59,9 +61,11 @@ async function resolveAddonFiles(opts) {
     const tocText = fs.readFileSync(path.join(targetDir, tocPath), 'utf8');
     for (const rel of parseTocLuaOrder(tocText)) {
       const full = path.join(targetDir, rel);
-      if (fs.existsSync(full)) {
-        files.push({ filename: rel, content: fs.readFileSync(full, 'utf8') });
+      if (!fs.existsSync(full)) {
+        if (path.basename(rel).toLowerCase() === 'data.lua' && !opts.strictData) continue;
+        throw new Error(`TOC 中声明的文件不存在：${rel}`);
       }
+      files.push({ filename: rel, content: fs.readFileSync(full, 'utf8') });
     }
   } else {
     for (const f of fs.readdirSync(targetDir)) {
@@ -74,20 +78,23 @@ async function resolveAddonFiles(opts) {
   // If loading repo addons/WoWF without Data.lua, check public/addons/wowf.zip or fallback to SAMPLE_WOWF_DATA_LUA
   const hasDataLua = files.some((f) => path.basename(f.filename).toLowerCase() === 'data.lua');
   if (!hasDataLua && addonName.toLowerCase() === 'wowf') {
-    let dataLua = SAMPLE_WOWF_DATA_LUA;
-    let source = '内置演示 Data.lua';
+    let dataLua = '';
+    let source = '';
     const zipPath = path.resolve('public/addons/wowf.zip');
     if (fs.existsSync(zipPath)) {
-      try {
-        const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
-        const entry = zip.file('WoWF/Data.lua');
-        if (entry) {
-          dataLua = await entry.async('string');
-          source = 'public/addons/wowf.zip';
-        }
-      } catch {
-        // fallback to sample
+      const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
+      const entry = zip.file('WoWF/Data.lua');
+      if (entry) {
+        dataLua = await entry.async('string');
+        source = 'public/addons/wowf.zip';
       }
+    }
+    if (!dataLua) {
+      if (opts.strictData) {
+        throw new Error(`--strict-data 模式下缺少真实的 WoWF/Data.lua（未在 ${zipPath} 中找到）`);
+      }
+      dataLua = SAMPLE_WOWF_DATA_LUA;
+      source = '内置演示 Data.lua';
     }
     files.unshift({ filename: `Data.lua (${source})`, content: dataLua });
   }
@@ -95,10 +102,19 @@ async function resolveAddonFiles(opts) {
   return { addonName, targetDir, files };
 }
 
+function isFrameTreeShown(frame, frames) {
+  let cur = frame;
+  while (cur) {
+    if (!cur.shown) return false;
+    cur = cur.parentId ? frames[cur.parentId] : null;
+  }
+  return true;
+}
+
 function summarizeCards(snapshot) {
   const cards = [];
   for (const f of Object.values(snapshot.frames)) {
-    if (!f.shown || f.frameType !== 'Frame' || !f.backdrop) continue;
+    if (!isFrameTreeShown(f, snapshot.frames) || f.frameType !== 'Frame' || !f.backdrop) continue;
     if (f.name === 'WoWFMainFrame') continue;
     const texts = f.fontStrings
       .map((id) => snapshot.fontStrings[id])

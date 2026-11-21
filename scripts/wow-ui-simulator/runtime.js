@@ -382,15 +382,53 @@ export class WoWSimulatorRuntime {
   }
 
   getSnapshot() {
+    const frames = {};
+    for (const [k, f] of this.frames.entries()) {
+      frames[k] = {
+        ...f,
+        points: f.points.map((p) => ({ ...p })),
+        fontStrings: [...f.fontStrings],
+        textures: [...f.textures],
+        childrenIds: [...f.childrenIds],
+        backdrop: f.backdrop
+          ? {
+              ...f.backdrop,
+              insets: f.backdrop.insets ? { ...f.backdrop.insets } : undefined,
+              bgColor: f.backdrop.bgColor ? [...f.backdrop.bgColor] : undefined,
+              borderColor: f.backdrop.borderColor ? [...f.backdrop.borderColor] : undefined,
+            }
+          : null,
+      };
+    }
+
+    const fontStrings = {};
+    for (const [k, fs] of this.fontStrings.entries()) {
+      fontStrings[k] = {
+        ...fs,
+        points: fs.points.map((p) => ({ ...p })),
+        color: [...fs.color],
+      };
+    }
+
+    const textures = {};
+    for (const [k, tex] of this.textures.entries()) {
+      textures[k] = {
+        ...tex,
+        points: tex.points.map((p) => ({ ...p })),
+        colorTexture: tex.colorTexture ? [...tex.colorTexture] : null,
+        vertexColor: tex.vertexColor ? [...tex.vertexColor] : null,
+      };
+    }
+
     return {
-      frames: Object.fromEntries(this.frames),
-      fontStrings: Object.fromEntries(this.fontStrings),
-      textures: Object.fromEntries(this.textures),
+      frames,
+      fontStrings,
+      textures,
       rootFrameIds: [...this.rootFrameIds],
-      tooltip: { ...this.tooltip, lines: [...this.tooltip.lines] },
-      dropdown: { ...this.dropdown, items: [...this.dropdown.items] },
-      chatMessages: [...this.chatMessages],
-      luaErrors: [...this.luaErrors],
+      tooltip: { ...this.tooltip, lines: this.tooltip.lines.map((l) => ({ ...l })) },
+      dropdown: { ...this.dropdown, items: this.dropdown.items.map((i) => ({ ...i })) },
+      chatMessages: this.chatMessages.map((m) => ({ ...m })),
+      luaErrors: this.luaErrors.map((e) => ({ ...e })),
       charState: { ...this.charState },
       loadedFiles: [...this.loadedFiles],
     };
