@@ -1278,67 +1278,50 @@ local function BuildLegacyRecommendationLines(lvl, profs, compact)
   local hasDualHerbMine = HasPlayerProfession(profs, "采矿", "Mining") and HasPlayerProfession(profs, "草药学", "Herbalism")
   local isMax = (lvl or 1) >= 60
 
-  local planTitle, planDesc, steps
+  local planTitle, steps
   if isMax then
-    planTitle = "满级综合推荐 (充裕 9 点 + 专业 5 点 + 冒险 2 点)"
-    planDesc = "60 级以声望外交、材料节省与双采/制造效率为核心，优先点出【充裕树】与【专业树】关键节点。"
+    planTitle = "满级综合（充裕 9 · 专业 5 · 冒险 2）"
     steps = {
-      { fromPt = 1, toPt = 5, pts = "第 1–5 点", tree = "充裕", text = "外交官（声望加成）& 材料节省（冲声望与降低施法/消耗品开销必点）" },
-      { fromPt = 6, toPt = 9, pts = "第 6–9 点", tree = "充裕", text = "恒久（食物/药水持续）& 美食家（降低日常与团本补给开销）" },
-      { fromPt = 10, toPt = 14, pts = "第 10–14 点", tree = "专业", text = hasDualHerbMine and "加班加点（采集/制造技能提升）& 专研 / 讨价还价（已学双采高收益）" or "加班加点（专业技能提升）& 专研 / 讨价还价（提高制造效率与商人折扣）" },
-      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 战地医疗（日常赶路与续航便利）" },
+      { fromPt = 1, toPt = 9, tree = "充裕", text = "外交官 + 材料节省，再补恒久 / 美食家" },
+      { fromPt = 10, toPt = 14, tree = "专业", text = "加班加点 + 专研 / 讨价还价" },
+      { fromPt = 15, toPt = 16, tree = "冒险", text = "常客（飞行加速）" },
     }
   elseif hasGather then
-    planTitle = "练级+采集推荐 (冒险 10 点 + 专业 4 点 + 充裕 2 点)"
-    planDesc = "当前角色已学采集专业，推荐优先点出【冒险树】休息经验与续航节点，并搭配【专业树】提升采集与制造技能增长。"
+    planTitle = "练级+采集（冒险 10 · 专业 4 · 充裕 2）"
     steps = {
-      { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
-      { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
-      { fromPt = 8, toPt = 10, pts = "第 8–10 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快跨图赶路与战斗能力）" },
-      { fromPt = 11, toPt = 14, pts = "第 11–14 点", tree = "专业", text = hasDualHerbMine and "加班加点 & 专研 / 讨价还价（提升采矿/草药技能点获取与商人折扣）" or "加班加点 & 专研 / 讨价还价（提升采集/制造技能点获取与商人折扣）" },
-      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "材料节省 & 恒久（减少技能材料与食物药水补给开销）" },
+      { fromPt = 1, toPt = 10, tree = "冒险", text = "充分休息 / 冒险刺激 / 常客（续航与赶路）" },
+      { fromPt = 11, toPt = 14, tree = "专业", text = hasDualHerbMine and "加班加点 + 专研（采矿/草药双收）" or "加班加点 + 专研 / 讨价还价" },
+      { fromPt = 15, toPt = 16, tree = "充裕", text = "材料节省 + 恒久" },
     }
   else
-    planTitle = "纯练级通用推荐 (冒险 11 点 + 充裕 5 点)"
-    planDesc = "练级期休息经验、战后恢复与飞行加速收益最高，推荐优先投入【冒险树】，剩余点数投入【充裕树】节省消耗并铺垫声望。"
+    planTitle = "纯练级通用（冒险 11 · 充裕 5）"
     steps = {
-      { fromPt = 1, toPt = 4, pts = "第 1–4 点", tree = "冒险", text = "充分休息（休息经验加成）& 冒险刺激（战斗后恢复，提升练级续航）" },
-      { fromPt = 5, toPt = 7, pts = "第 5–7 点", tree = "冒险", text = "野外指南（露营设施冷却缩减）& 战地医疗（绷带虚弱时间减免）" },
-      { fromPt = 8, toPt = 11, pts = "第 8–11 点", tree = "冒险", text = "常客（飞行加速）& 高度警戒 / 天赋点解锁（加快鸟点飞行并强化实战）" },
-      { fromPt = 12, toPt = 14, pts = "第 12–14 点", tree = "充裕", text = "材料节省 & 恒久（降低技能/施法材料与补给开销）" },
-      { fromPt = 15, toPt = 16, pts = "第 15–16 点", tree = "充裕", text = "外交官（声望获取加成，为满级声望提前铺垫）" },
+      { fromPt = 1, toPt = 11, tree = "冒险", text = "充分休息 / 冒险刺激 / 常客（续航与赶路）" },
+      { fromPt = 12, toPt = 16, tree = "充裕", text = "材料节省 + 恒久，再补外交官" },
     }
   end
 
   if compact then
-    local merged = {}
-    for _, st in ipairs(steps) do
-      local last = merged[#merged]
-      if last and last.tree == st.tree then
-        last.toPt = st.toPt
-      else
-        table.insert(merged, { tree = st.tree, fromPt = st.fromPt, toPt = st.toPt })
-      end
-    end
     local seqParts = {}
-    for _, m in ipairs(merged) do
-      table.insert(seqParts, string.format("[%s] 第 %d–%d 点", m.tree, m.fromPt, m.toPt))
+    for _, st in ipairs(steps) do
+      table.insert(seqParts, string.format("%s %d–%d", st.tree, st.fromPt, st.toPt))
     end
     return {
-      string.format(">> |cff00ff00当前推荐方案:|r |cffffd100%s|r", planTitle),
-      "|cff99e6ff加点顺序:|r " .. table.concat(seqParts, " -> "),
-      "|cffaaaaaa(详细 1–16 点逐阶分配方案见 [专业&无限特色] 页)|r",
+      string.format("推荐方案:|r |cffffd100%s|r", planTitle),
+      "|cff99e6ff加点顺序:|r " .. table.concat(seqParts, " -> ") .. "  |cffaaaaaa(逐阶明细见「专业&无限特色」页)|r",
     }
   end
 
+  -- 详表只保留一套信息：方案标题 + 点数区间 + 关键节点，不再重复描述整棵树
   local lines = {
     string.format("|cff00ff96>> 当前角色推荐方案 (Lv.%d):|r |cffffd100%s|r", lvl or 1, planTitle),
-    planDesc,
-    "",
-    "|cffffd100★ 1–16 点逐阶推荐加点顺序（单角色上限 16 点）:|r",
+    "|cffffd100★ 加点顺序:|r",
   }
   for _, st in ipairs(steps) do
-    table.insert(lines, string.format("  |cff00ff00%s|r  |cffffd100[%s]|r %s", st.pts, st.tree, st.text))
+    table.insert(lines, string.format(
+      "  |cff00ff00第 %d–%d 点|r  |cffffd100[%s]|r %s",
+      st.fromPt, st.toPt, st.tree, st.text
+    ))
   end
   return lines
 end
@@ -2873,61 +2856,50 @@ local function GetBandTimelineSteps(route, fromLvl, toLvl)
   return steps
 end
 
-local function FormatBandZonesTitle(band)
-  if not band then return "" end
-  local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
-  if not band.altZones or #band.altZones == 0 then
-    return string.format("|cff00ffcc%s|r (%s)", band.zone or "", hubName or "")
-  end
-  local names = {}
-  local seen = {}
+-- 汇总本阶段全部适龄区域（主区域 + altZones），统一去重，供区域块与概览行共用
+local function CollectBandZoneNames(band)
+  if not band then return {} end
+  local names, seen = {}, {}
   if band.zone and band.zone ~= "" then
     seen[band.zone] = true
     table.insert(names, band.zone)
   end
-  for _, az in ipairs(band.altZones) do
+  for _, az in ipairs(band.altZones or {}) do
     if az.zone and az.zone ~= "" and not seen[az.zone] then
       seen[az.zone] = true
       table.insert(names, az.zone)
     end
   end
-  return string.format("|cff00ffcc%s|r", table.concat(names, " / "))
+  return names
 end
 
+-- 区域块：每行一个适龄区域（区域名 + 营地链接 + 等级区间 + 备注）
 local function FormatBandZonesBlock(band, headerLabel)
-  if not band or not band.altZones or #band.altZones == 0 then
+  if not band then return nil end
+  if not band.altZones or #band.altZones == 0 then
     return nil
   end
-  local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or ""
-  local hubText = (hubName ~= "") and hubName or (band.zone or "")
-  local hubLink = (band.hub and band.hub.x and band.hub.y and hubText ~= "")
-    and FormatNpcMapLink(band.zone, hubText, band.hub.x, band.hub.y, { omitZone = true })
-    or ((hubText ~= "") and ("|cff00ffcc" .. hubText .. "|r") or "")
-  local hubPart = (hubLink ~= "") and (hubLink .. " ") or ""
+  local function zoneLine(zoneName, hubName, hubX, hubY, from, to, note)
+    local label = (hubName and hubName ~= "") and hubName or ""
+    -- 营地名与区域名相同时不再重复输出（否则会出现「尘泥沼泽 (尘泥沼泽 Lv.35-42)」）
+    if label == (zoneName or "") then label = "" end
+    local hubPart = ""
+    if label ~= "" then
+      local link = (hubX and hubY)
+        and FormatNpcMapLink(zoneName, label, hubX, hubY, { omitZone = true })
+        or ("|cff00ffcc" .. label .. "|r")
+      hubPart = link .. " "
+    end
+    local noteStr = (note and note ~= "") and (" — " .. LinkifyInlineCoords(note, zoneName or "", label ~= "" and label or (zoneName or ""))) or ""
+    return string.format("  · |cff00ffcc%s|r (%sLv.%d-%d)%s", zoneName or "", hubPart, from or 1, to or 60, noteStr)
+  end
   local zoneLines = {
-    string.format(
-      "  · |cff00ffcc%s|r (%sLv.%d-%d)",
-      band.zone or "",
-      hubPart,
-      band.from or 1,
-      band.to or 60
-    )
+    zoneLine(band.zone, (band.hub and band.hub.name) or "", band.hub and band.hub.x, band.hub and band.hub.y,
+      band.from, band.to, nil)
   }
-  for _, az in ipairs(band.altZones) do
-    local azLabel = (az.hub and az.hub ~= "") and az.hub or az.zone or ""
-    local ac = (az.x and az.y and azLabel ~= "")
-      and FormatNpcMapLink(az.zone, azLabel, az.x, az.y, { omitZone = true })
-      or ((azLabel ~= "") and ("|cff00ffcc" .. azLabel .. "|r") or "")
-    local azHubPart = (ac ~= "") and (ac .. " ") or ""
-    local noteStr = (az.note and az.note ~= "") and (" — " .. LinkifyInlineCoords(az.note, az.zone or "", azLabel)) or ""
-    table.insert(zoneLines, string.format(
-      "  · |cff00ffcc%s|r (%sLv.%d-%d)%s",
-      az.zone or "",
-      azHubPart,
-      az.from or band.from or 1,
-      az.to or band.to or 60,
-      noteStr
-    ))
+  for _, az in ipairs(band.altZones or {}) do
+    table.insert(zoneLines, zoneLine(az.zone, az.hub, az.x, az.y,
+      az.from or band.from, az.to or band.to, az.note))
   end
   return string.format("|cffffd100%s:|r\n%s", headerLabel or "适龄练级区域 (可自由切换/穿插)", table.concat(zoneLines, "\n"))
 end
@@ -3993,6 +3965,20 @@ local function FormatClassRunLine(cr, opts)
   local teachStr = (cr.teaches and cr.teaches ~= "") and ((opts.teachArrow or " -> 学会 ") .. "|cff71d5ff[" .. cr.teaches .. "]|r") or ""
   local crLink, crTree = FormatQuestWithSteps(cr, cr.level, stepZone, opts.indent or "      ", opts.foldCompleted)
   local tag = opts.tag or string.format("|cff00ffcc[Lv.%d %s·%s专属任务链]|r", cr.level or 1, opts.routeName or "", opts.clsName or "")
+  -- 只有在调用方确实会把 crTree 渲染出来时，表头才压缩：
+  -- 否则「任务名 + 第一步 NPC」会和树的首行一模一样，看起来像任务被列了两遍。
+  if crTree and crTree ~= "" and opts.treeRendered ~= false then
+    local stepCount = (type(cr.steps) == "table") and #cr.steps or 0
+    return string.format("%s%s |cff8899aa· 任务链 %d 步|r%s", opts.prefix or "", tag, stepCount, teachStr), crTree
+  end
+  -- 摘要模式（不展开树）时用「第一步任务」作链接，与同一行给出的起始 NPC 保持一致；
+  -- 任务链名称（通常等于末步奖励任务）只在步数标注里体现。
+  if firstStep and opts.summaryStepLink then
+    local firstLink = FormatQuestLink(firstStep, cr.level, stepZone)
+    local stepCount = (type(cr.steps) == "table") and #cr.steps or 0
+    local chainTag = (stepCount > 1) and string.format(" |cff8899aa· 任务链 %d 步|r", stepCount) or ""
+    return string.format("%s%s %s%s%s%s", opts.prefix or "", tag, firstLink, chainTag, teachStr, npcInfo), nil
+  end
   return string.format("%s%s %s%s%s", opts.prefix or "", tag, crLink, teachStr, npcInfo), crTree
 end
 
@@ -4047,7 +4033,40 @@ local function BuildBandLines(band, opts)
   local hubLink = (band.hub and band.hub.x and band.hub.y and hubText ~= "")
     and FormatNpcMapLink(band.zone, hubText, band.hub.x, band.hub.y, { omitZone = true })
     or ("|cff00ffcc" .. hubText .. "|r")
-  local zonesBlock = FormatBandZonesBlock(band, opts.zonesHeader or "本阶段适龄练级区域 (平级推荐，可自由切换)")
+  local zonesBlock
+  if opts.compactZones then
+    -- 非当前阶段只需一行区域概览；完整营地/等级/备注留给当前阶段卡，避免多张卡重复同一批区域
+    local names = CollectBandZoneNames(band)
+    if #names > 0 then
+      -- 相邻阶段区域高度重叠，只列「本阶段新增」的区域，其余用数量带过
+      local shownZones = opts.shownZones
+      local listed = names
+      local carried = 0
+      if shownZones then
+        listed = {}
+        for _, z in ipairs(names) do
+          if shownZones[z] then
+            carried = carried + 1
+          else
+            table.insert(listed, z)
+            shownZones[z] = true
+          end
+        end
+        if #listed == 0 then
+          -- 全是延续区域：不再重复列名
+          zonesBlock = string.format("|cffffd100适龄区域:|r |cff8899aa沿用上阶段的 %d 个区域|r", carried)
+        end
+      end
+      if not zonesBlock then
+        zonesBlock = string.format("|cffffd100适龄区域:|r |cff00ffcc%s|r", table.concat(listed, " / "))
+        if carried > 0 then
+          zonesBlock = zonesBlock .. string.format("  |cff8899aa(另含上阶段 %d 区域)|r", carried)
+        end
+      end
+    end
+  else
+    zonesBlock = FormatBandZonesBlock(band, opts.zonesHeader or "本阶段适龄练级区域 (平级推荐，可自由切换)")
+  end
   if zonesBlock then
     table.insert(lines, zonesBlock)
   elseif opts.isSmartMatch then
@@ -4108,31 +4127,8 @@ local function BuildBandLines(band, opts)
     end
   end
 
-  if opts.includeClassRuns and opts.matchedClassRuns then
-    for _, cr in ipairs(opts.matchedClassRuns) do
-      local crTo = cr.to or cr.level or 60
-      if cr.level >= band.from and cr.level <= band.to and (not opts.isMatchMode or crTo >= lvl - 2) then
-        local crLine, crTree = FormatClassRunLine(cr, {
-          fallbackZone = band.zone,
-          clsName = cls and cls.name or "",
-          tag = string.format("|cff00ffcc[★Lv.%d %s专属职业任务链]|r", cr.level, cls and cls.name or ""),
-          indent = "    ",
-          foldCompleted = true,
-        })
-        table.insert(lines, crLine)
-        if crTree then table.insert(lines, crTree) end
-      end
-    end
-  end
-
-  if opts.includeSpecMusts and spec and spec.musts then
-    for _, m in ipairs(spec.musts) do
-      local mLvl = m.level or 1
-      if mLvl >= band.from and mLvl <= band.to and (not opts.isMatchMode or mLvl >= lvl - 2) then
-        table.insert(lines, string.format("|cff00ff96[★Lv.%d %s专精要点]|r %s", mLvl, spec.name or "", LinkifyInlineCoords(m.text or "", band.zone, spec.name or "要点")))
-      end
-    end
-  end
+  -- 注意：职业任务链与专精要点不在阶段卡里渲染 —— 它们统一由「升级路线」页顶部的
+  -- 「核心职业任务与专精里程碑」卡展示，否则同一批职业任务会在同一页出现两遍。
 
   if band.professions and #band.professions > 0 then
     local pList = {}
@@ -4199,12 +4195,14 @@ local function RenderTabSmartMatch()
     local hubLink = (band.hub and band.hub.x and band.hub.y)
       and FormatNpcMapLink(band.zone, hubText, band.hub.x, band.hub.y, { omitZone = true })
       or ("|cff00ffcc" .. hubText .. "|r")
-    local zonesBlock = FormatBandZonesBlock(band, "当前适龄练级区域")
-    if zonesBlock then
-      table.insert(bandLines, zonesBlock)
+    -- 仪表盘只给一行区域概览；完整营地/等级/备注在「升级路线」页展开，避免同一份区域清单在两页各铺一遍
+    local zoneNames = CollectBandZoneNames(band)
+    if #zoneNames > 0 then
+      table.insert(bandLines, string.format("|cffffd100适龄练级区域:|r |cff00ffcc%s|r", table.concat(zoneNames, " / ")))
     else
       table.insert(bandLines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r  ·  |cffffd100核心据点:|r %s", band.zone or "未知", hubLink))
     end
+    table.insert(bandLines, string.format("|cffffd100当前营地/据点:|r %s", hubLink))
     local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
     if matchedTrainer and matchedTrainer.name ~= "" then
       local tZone = PickZone(matchedTrainer, matchedTrainer.place, band.zone)
@@ -4217,7 +4215,8 @@ local function RenderTabSmartMatch()
     end
 
     list:Add({
-      title = string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d · |r%s|cffffd100)|r", band.from, band.to, FormatBandZonesTitle(band)),
+      -- 区域名在正文首行已给出，标题只保留等级区间
+      title = string.format("|cffffd100[路线] 当前角色升级导航 (Lv.%d-%d)|r", band.from, band.to),
       body = table.concat(bandLines, "\n"),
       theme = "route",
       action = {
@@ -4317,6 +4316,8 @@ local function RenderTabSmartMatch()
         npcPrefix = "起始: ",
         teachArrow = " -> 奖励技能: ",
         indent = "      ",
+        treeRendered = false, -- 智能匹配页只放一行摘要，完整树在「升级路线」页
+        summaryStepLink = true, -- 摘要行链接用「第一步任务」，与同一行的起始 NPC 对应
       })
       table.insert(milestoneLines, crLine)
     end
@@ -4394,13 +4395,10 @@ local function RenderTabRoutes()
     },
   })
 
+  -- 标题里已写明「路线 · 职业(专精) · 当前等级」，正文不再重复同一串身份信息
   local headerLines = {
     string.format(
-      "|cff00ffcc当前匹配角色:|r |cffffd100Lv.%d %s · %s (%s)|r  ·  |cff99e6ff阵营:|r %s%s",
-      lvl,
-      route.name or state.routeId,
-      cls and cls.name or state.classKey,
-      spec and spec.name or "默认专精",
+      "|cff99e6ff阵营:|r %s%s",
       FactionTag(route.faction),
       (state.zone and state.zone ~= "") and ("  ·  |cff00ff96当前区域:|r " .. state.zone) or ""
     ),
@@ -4418,6 +4416,9 @@ local function RenderTabRoutes()
   })
 
   -- 角色专属职业任务链与当前阶段手法/专精里程碑摘要卡
+  -- 这里也承载「后续阶段才会出现的职业任务」：该窗口必须与下方阶段卡的展示范围
+  -- （当前等级起 16 级内）保持一致，否则这些任务会从整页消失。
+  local LOOKAHEAD = 16
   local charGuideLines = {}
   if phase then
     table.insert(charGuideLines, string.format(
@@ -4428,7 +4429,7 @@ local function RenderTabRoutes()
   if #matchedClassRuns > 0 then
     for _, cr in ipairs(matchedClassRuns) do
       local crTo = cr.to or cr.level or 60
-      if not isMatchMode or (cr.level <= lvl + 15 and crTo >= lvl - 2) then
+      if not isMatchMode or (cr.level <= lvl + LOOKAHEAD and crTo >= lvl - 2) then
         local activeTag = (lvl >= cr.level and lvl <= crTo + 2) and "|cff00ff00★[当前可做]|r " or ""
         local crLine, crTree = FormatClassRunLine(cr, {
           prefix = "  - " .. activeTag,
@@ -4444,7 +4445,7 @@ local function RenderTabRoutes()
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
       local mLvl = m.level or 1
-      if not isMatchMode or (mLvl >= lvl - 2 and mLvl <= lvl + 15) then
+      if not isMatchMode or (mLvl >= lvl - 2 and mLvl <= lvl + LOOKAHEAD) then
         local activeTag = (mLvl == lvl) and "|cff00ff00★[本级必做]|r " or ""
         table.insert(charGuideLines, string.format("  - %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, mLvl, spec.name or "专精", LinkifyInlineCoords(m.text or "", "", spec.name or "要点")))
       end
@@ -4452,7 +4453,8 @@ local function RenderTabRoutes()
   end
   if #charGuideLines > 0 then
     list:Add({
-      title = string.format("|cff00ff96★ %s · %s (%s) 升级路线核心职业任务与专精里程碑|r", route.name, cls and cls.name or "", spec and spec.name or ""),
+      -- 上一张卡已经写明「路线 · 职业(专精)」，这里只说明本卡内容，不再重复同一串身份信息
+      title = "|cff00ff96★ 核心职业任务与专精里程碑|r",
       body = table.concat(charGuideLines, "\n"),
       theme = "milestone",
       badge = "角色专属匹配",
@@ -4467,7 +4469,7 @@ local function RenderTabRoutes()
     for idx, b in ipairs(route.bands) do
       if lvl >= b.from and lvl <= b.to then
         table.insert(currentBands, { idx = idx, band = b })
-      elseif b.from > lvl and b.from <= lvl + 16 then
+      elseif b.from > lvl and b.from <= lvl + LOOKAHEAD then
         table.insert(upcomingBands, { idx = idx, band = b })
       end
     end
@@ -4486,6 +4488,23 @@ local function RenderTabRoutes()
 
   local shownZoneCards = 0
   local shownZoneNames = {}
+  -- 跨阶段去重：同一任务（如「尖啸者的灵魂」同时挂在多个副本名下）只在本页展示一次
+  local shownQuestKeys = {}
+  -- 这些集合提到循环外：同一航线/同一副本/同一主城备战跨阶段只出现一次，避免逐阶段复读
+  local pageSeenDungeon = {}
+  local pageSeenCity = {}
+  local pageSeenTravel = {}
+  -- 区域名也跨阶段去重：只有「本阶段新出现的区域」才在卡片里逐个列出
+  local pageSeenZones = {}
+  -- 当前阶段卡会完整列出它覆盖的区域，先记为已出现，后续阶段只补新增区域
+  for _, item in ipairs(orderedBands) do
+    local cb = item.band
+    if lvl >= cb.from and lvl <= cb.to then
+      for _, z in ipairs(CollectBandZoneNames(cb)) do
+        pageSeenZones[z] = true
+      end
+    end
+  end
   for _, entry in ipairs(orderedBands) do
     local b = entry.band
     local stepIdx = entry.idx
@@ -4500,6 +4519,8 @@ local function RenderTabRoutes()
     end
 
     if MatchesSearch(searchBlob) then
+      -- 职业任务链与专精要点统一由上方「核心职业任务与专精里程碑」卡展示，
+      -- 这里不再重复渲染，避免同一批职业任务在路线页出现两遍。
       local lines = BuildBandLines(b, {
         level = lvl,
         cls = cls,
@@ -4508,16 +4529,12 @@ local function RenderTabRoutes()
         skipCompletedQuests = isMatchMode,
         foldQuestSteps = true,
         questIndent = "    ",
-        includeClassRuns = true,
-        matchedClassRuns = matchedClassRuns,
-        includeSpecMusts = true,
+        compactZones = not isCurrent,
+        shownZones = pageSeenZones,
       })
 
       -- 穿插本阶段主城副本任务备战、跨区交通航线与推荐进本节点 (timelineSteps)
       local tlSteps = GetBandTimelineSteps(route, b.from, b.to)
-      local seenDungeonVisit = {}
-      local seenCityVisit = {}
-      local seenTravelVisit = {}
       local VIA_LABELS = {
         tram = "矿道地铁",
         boat = "跨海轮船",
@@ -4528,28 +4545,37 @@ local function RenderTabRoutes()
       for _, tl in ipairs(tlSteps) do
         if tl.kind == "city" and tl.city and tl.quests and #tl.quests > 0 then
           local cKey = tl.city .. ":" .. tostring(tl.level)
-          if not seenCityVisit[cKey] then
-            seenCityVisit[cKey] = true
+          if not pageSeenCity[cKey] then
+            pageSeenCity[cKey] = true
             local qNames = {}
             for _, cq in ipairs(tl.quests) do
               local cqZone = PickZone(cq, tl.city)
               local cqLink = FormatQuestLink(cq, tl.level or b.from, cqZone)
               local npcInfo = FormatStepNpcInfo(cq, cqZone)
               local npcPart = (npcInfo ~= "") and (" · " .. npcInfo) or ""
-              table.insert(qNames, string.format("%s (%s%s)", cqLink, cq.dungeon or "", npcPart))
+              local qKey = tostring(cq.id or cq.name)
+              if not shownQuestKeys[qKey] then
+                shownQuestKeys[qKey] = true
+                table.insert(qNames, string.format("%s (%s%s)", cqLink, cq.dungeon or "", npcPart))
+              end
             end
-            table.insert(lines, string.format("|cffffa500[主城备战] [Lv.%d %s 副本任务]|r %s", tl.level or b.from, tl.city, table.concat(qNames, " / ")))
+            if #qNames > 0 then
+              table.insert(lines, string.format("|cffffa500[主城备战] [Lv.%d %s 副本任务]|r %s", tl.level or b.from, tl.city, table.concat(qNames, " / ")))
+            end
           end
-        elseif tl.kind == "dungeon" and tl.name and not seenDungeonVisit[tl.name] then
-          seenDungeonVisit[tl.name] = true
+        elseif tl.kind == "dungeon" and tl.name and not pageSeenDungeon[tl.name] then
+          pageSeenDungeon[tl.name] = true
           local dObj = GetDungeonByIdOrName(tl.dungeonId, tl.name)
           local dEnt = (dObj and dObj.entranceX and dObj.entranceY)
             and FormatNpcMapLink(dObj.entranceZone or dObj.zone, "副本入口", dObj.entranceX, dObj.entranceY, { omitZone = true }) or ""
           table.insert(lines, string.format("|cffff8000[推荐进本] [Lv.%d %s]|r 适龄 Lv.%d-%d (%s%s)", tl.level or b.from, tl.name, tl.minLevel or b.from, tl.maxLevel or b.to, tl.zone or "", dEnt))
         elseif tl.kind == "travel" and (tl.from ~= "" or tl.to ~= "") then
-          local tKey = tostring(tl.level) .. ":" .. (tl.from or "") .. "->" .. (tl.to or "") .. ":" .. (tl.via or "")
-          if not seenTravelVisit[tKey] then
-            seenTravelVisit[tKey] = true
+          -- 同一段航线（含反向）只保留第一次出现，跨阶段往返不重复列
+          local f, t = tl.from or "", tl.to or ""
+          if f > t then f, t = t, f end
+          local tKey = f .. "->" .. t .. ":" .. (tl.via or "")
+          if not pageSeenTravel[tKey] then
+            pageSeenTravel[tKey] = true
             local viaText = VIA_LABELS[tl.via or "walk"] or (tl.via or "转场")
             local destText = (tl.place and tl.place ~= "" and tl.place ~= tl.to) and (tl.to .. "·" .. tl.place) or (tl.to or "")
             local flText = (tl.flightNpc and tl.flightNpc ~= "")
@@ -4562,20 +4588,26 @@ local function RenderTabRoutes()
 
       if b.dungeonQuests and #b.dungeonQuests > 0 then
         for _, dq in ipairs(b.dungeonQuests) do
-          local dqZone = PickZone(dq, dq.place, b.zone)
-          local dqLink = FormatQuestLink(dq, dq.level or b.from, dqZone)
-          local npcInfo = FormatStepNpcInfo(dq, dqZone)
-          local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
-          table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r %s%s", dq.dungeon, dqLink, npcSuffix))
+          local qKey = tostring(dq.id or dq.name)
+          if not shownQuestKeys[qKey] then
+            shownQuestKeys[qKey] = true
+            local dqZone = PickZone(dq, dq.place, b.zone)
+            local dqLink = FormatQuestLink(dq, dq.level or b.from, dqZone)
+            local npcInfo = FormatStepNpcInfo(dq, dqZone)
+            local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
+            table.insert(lines, string.format("|cffff8000[本区副本任务 · %s]|r %s%s", dq.dungeon, dqLink, npcSuffix))
+          end
         end
       end
 
       local titlePrefix = isCurrent and "|cff00ff00▶ [当前角色所在阶段]|r " or string.format("|cff8899aa[第%d步]|r ", stepIdx)
       list:Add({
-        title = string.format("%s|cffffd100Lv.%d – %d|r  ·  %s", titlePrefix, b.from, b.to, FormatBandZonesTitle(b)),
+        -- 区域清单交给正文（当前阶段给详细营地，其余阶段给一行），标题只留阶段与等级区间
+        title = string.format("%s|cffffd100Lv.%d – %d|r", titlePrefix, b.from, b.to),
         body = table.concat(lines, "\n"),
         theme = isCurrent and "routeCur" or "routeIdle",
-        badge = string.format("Lv.%d-%d", b.from, b.to),
+        -- 等级区间已在标题里，角标改为区域数量，避免同一行信息重复两遍
+        badge = string.format("%d 个适龄区域", #CollectBandZoneNames(b)),
         action = (b.hub and b.hub.x) and {
           label = "标记营地到地图",
           fn = function() SetWaypointOrPrint(b.zone, b.hub.name, b.hub.x, b.hub.y) end,
@@ -4671,25 +4703,112 @@ local function RenderTabClassAndTalents()
   })
 
   -- 1. 专精循环各阶段
-  for _, p in ipairs(spec.phases or {}) do
-    local isCurrent = (lvl >= p.from and lvl <= p.to)
-    local passLevel = (not isMatchMode) or ((p.to or 60) >= lvl)
-    local textBlob = (p.keep or "") .. " " .. (p.open or "") .. " " .. (p.cycle or "") .. " " .. (p.note or "")
-    if passLevel and MatchesSearch(textBlob) then
-      local lines = {
-        "|cff00ff96【常驻保持】|r " .. (p.keep or "无"),
-        "|cffffa500【起手技能】|r " .. (p.open or "无"),
-        "|cff71d5ff【核心循环】|r " .. (p.cycle or "无"),
-      }
-      if p.note and p.note ~= "" then
-        table.insert(lines, "\n" .. LinkifyInlineCoords(p.note, "", spec.name or "要点"))
+  -- 匹配模式下：当前阶段展开完整循环，后续阶段不再各自占一张大卡（内容高度重复），
+  -- 合并为一张「后续循环变化」卡，只列出相对上一阶段发生变化的部分。
+  local phases = spec.phases or {}
+  local currentPhase, futurePhases = nil, {}
+  for _, p in ipairs(phases) do
+    if lvl >= (p.from or 1) and lvl <= (p.to or 60) then
+      currentPhase = p
+    elseif (p.from or 1) > lvl then
+      table.insert(futurePhases, p)
+    end
+  end
+
+  local function PhaseLines(p, includeNote)
+    local lines = {
+      "|cff00ff96【常驻保持】|r " .. (p.keep or "无"),
+      "|cffffa500【起手技能】|r " .. (p.open or "无"),
+      "|cff71d5ff【核心循环】|r " .. (p.cycle or "无"),
+    }
+    if includeNote and p.note and p.note ~= "" then
+      table.insert(lines, "\n" .. LinkifyInlineCoords(p.note, "", spec.name or "要点"))
+    end
+    return lines
+  end
+
+  local function AddPhaseCard(p, isCurrent)
+    list:Add({
+      title = string.format("%s|cff71d5ff[战斗] %s·%s 野外循环 (Lv.%d - %d)|r", isCurrent and "|cff00ff00▶ [当前阶段]|r " or "", cls.name, spec.name, p.from, p.to),
+      body = table.concat(PhaseLines(p, true), "\n"),
+      theme = isCurrent and "combatCur" or "combatSub",
+      -- 标题已带 Lv 区间，角标只标阶段身份
+      badge = isCurrent and "当前循环" or "后续阶段",
+    })
+  end
+
+  -- 取「相对上一阶段新增」的说明句子，避免同一段循环说明在每个阶段复述
+  local function NewSentences(prevNote, curNote, maxCount)
+    if not curNote or curNote == "" then return {}, false end
+    local out, truncated = {}, false
+    local startAt = 1
+    while startAt <= #curNote do
+      local p = string.find(curNote, "。", startAt, true)
+      local sentence = string.sub(curNote, startAt, (p and (p + 2)) or #curNote)
+      sentence = string.gsub(sentence, "^%s+", "")
+      if sentence ~= "" and (not prevNote or not string.find(prevNote, sentence, 1, true)) then
+        if maxCount and #out >= maxCount then
+          truncated = true
+          break
+        end
+        table.insert(out, sentence)
       end
-      list:Add({
-        title = string.format("%s|cff71d5ff[战斗] %s·%s 野外循环 (Lv.%d - %d)|r", isCurrent and "|cff00ff00▶ [当前阶段]|r " or "", cls.name, spec.name, p.from, p.to),
-        body = table.concat(lines, "\n"),
-        theme = isCurrent and "combatCur" or "combatSub",
-        badge = string.format("Lv.%d-%d", p.from, p.to),
-      })
+      if not p then break end
+      startAt = p + 3 -- 「。」占 3 字节
+    end
+    return out, truncated
+  end
+
+  if isMatchMode then
+    if currentPhase and MatchesSearch((currentPhase.keep or "") .. " " .. (currentPhase.open or "") .. " " .. (currentPhase.cycle or "") .. " " .. (currentPhase.note or "")) then
+      AddPhaseCard(currentPhase, true)
+    end
+    if #futurePhases > 0 then
+      local fLines = {}
+      local prev = currentPhase
+      for _, p in ipairs(futurePhases) do
+        local changes = {}
+        -- 没有「上一阶段」时（当前等级低于所有阶段）就完整列出三项基础信息
+        if not prev or (p.keep or "") ~= (prev.keep or "") then
+          table.insert(changes, string.format("|cff00ff96常驻|r %s", p.keep or "无"))
+        end
+        if not prev or (p.open or "") ~= (prev.open or "") then
+          table.insert(changes, string.format("|cffffa500起手|r %s", p.open or "无"))
+        end
+        if not prev or (p.cycle or "") ~= (prev.cycle or "") then
+          table.insert(changes, string.format("|cff71d5ff循环|r %s", p.cycle or "无"))
+        end
+        local newNotes, notesTruncated = NewSentences(prev and prev.note or nil, p.note, 2)
+        local line = string.format("|cffffd100Lv.%d-%d|r ", p.from or 1, p.to or 60)
+        if #changes > 0 then
+          line = line .. table.concat(changes, "  ")
+        else
+          line = line .. "|cff8899aa循环不变|r"
+        end
+        if #newNotes > 0 then
+          local noteText = table.concat(newNotes, "")
+          if notesTruncated then noteText = noteText .. "…" end
+          line = line .. "  |cffaaaabb" .. LinkifyInlineCoords(noteText, "", spec.name or "要点") .. "|r"
+        end
+        table.insert(fLines, line)
+        prev = p
+      end
+      if #fLines > 0 then
+        list:Add({
+          title = string.format("|cffffd100★ %s·%s 后续循环阶段变化|r", cls.name, spec.name),
+          body = "|cff99e6ff仅列出相对上一阶段有变化的技能与新增说明，完整循环路径可点上角按钮查看全程。|r\n\n" .. table.concat(fLines, "\n"),
+          theme = "combatSub",
+          badge = string.format("%d 个后续阶段", #futurePhases),
+        })
+      end
+    end
+  else
+    for _, p in ipairs(phases) do
+      local isCurrent = (lvl >= (p.from or 1) and lvl <= (p.to or 60))
+      local textBlob = (p.keep or "") .. " " .. (p.open or "") .. " " .. (p.cycle or "") .. " " .. (p.note or "")
+      if MatchesSearch(textBlob) then
+        AddPhaseCard(p, isCurrent)
+      end
     end
   end
 
@@ -4726,9 +4845,13 @@ local function RenderTabClassAndTalents()
         local fTag = FactionTag(cr.faction, true)
         local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
         local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-        local firstZone = (cr.steps and cr.steps[1] and cr.steps[1].zone) or ""
-        local crLink = FormatQuestLink(cr, cr.level, firstZone, nil, IsQuestCompleted(cr))
-        table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, crLink, teachTag))
+        local stepCount = (type(cr.steps) == "table") and #cr.steps or 0
+        -- 标题写成「任务链 N 步」而不是再放一个与末步同名的任务链接，避免同一任务在卡内出现两次
+        local chainName = (cr.name and cr.name ~= "") and tostring(cr.name) or "职业任务链"
+        local chainLabel = stepCount > 1
+          and string.format("|cffffd100%s|r |cff8899aa任务链 %d 步|r", chainName, stepCount)
+          or FormatQuestLink(cr, cr.level, (cr.steps and cr.steps[1] and cr.steps[1].zone) or "", nil, IsQuestCompleted(cr))
+        table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, chainLabel, teachTag))
         for idx, st in ipairs(cr.steps or {}) do
           local stZone = PickZone(st, st.place)
           local stLink = FormatQuestLink(st, cr.level, stZone)
@@ -4740,7 +4863,7 @@ local function RenderTabClassAndTalents()
     end
     if #crLines > 0 then
       list:Add({
-        title = string.format("|cff00ffcc[任务链] %s · %s 专属职业任务链与坐标指引|r", route and route.name or "", cls.name),
+        title = string.format("|cff00ffcc[任务链] %s·%s 职业任务链与坐标指引|r", cls.name, spec and spec.name or ""),
         body = table.concat(crLines, "\n"),
         theme = "legacy",
       })
@@ -4863,6 +4986,8 @@ local function RenderTabDungeons()
   local shownCount = 0
   local levelMatchedCount = 0
   local hiddenCompletedCount = 0
+  -- 副本分区之间常有共享任务（血色军械库/大教堂都挂「以圣光之名」），首个分区展开，其余只引用
+  local shownQuestDungeon = {}
   for _, d in ipairs(Data.dungeons or {}) do
     local passFilter = true
     local allDone = IsDungeonAllQuestsCompleted(d, state.faction)
@@ -4882,24 +5007,45 @@ local function RenderTabDungeons()
     if passFilter and MatchesSearch((d.name or "") .. " " .. (d.zone or "") .. " " .. (d.summary or "")) then
       shownCount = shownCount + 1
       local lines = {}
+      local zoneText = LinkifyInlineCoords(d.zone or "", d.entranceZone or d.zone or "", d.name)
       if d.entranceX and d.entranceY then
-        local entLink = FormatNpcMapLink(d.entranceZone or d.zone, "副本入口", d.entranceX, d.entranceY, { omitZone = true })
-        table.insert(lines, string.format("|cff00ffcc副本入口位置:|r %s%s", LinkifyInlineCoords(d.entranceZone or d.zone or "", d.entranceZone or d.zone or "", d.name), (entLink ~= "") and (" " .. entLink) or ""))
+        -- 区域名已出现在标题里，这里只给「入口」按钮本身，避免同一区域名连说两遍
+        local entLink = FormatNpcMapLink(d.entranceZone or d.zone, "入口", d.entranceX, d.entranceY, { omitZone = true })
+        table.insert(lines, string.format("|cff00ffcc副本入口位置:|r %s", (entLink ~= "") and entLink or zoneText))
       end
       if d.summary and d.summary ~= "" then
-        table.insert(lines, "|cff99e6ff简介:|r " .. LinkifyInlineCoords(d.summary, d.entranceZone or d.zone or "", d.name))
+        -- 自动生成的简介常以「区域名 (Lv.x-y级) 」开头，与卡片标题重复，这里剥掉该前缀
+        local summary = d.summary
+        local z = d.zone or ""
+        if z ~= "" then
+          local stripped = string.match(summary, "^" .. z:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1") .. "%s*%b()%s*(.*)$")
+          if stripped and stripped ~= "" then summary = stripped end
+        end
+        if summary ~= "" and summary ~= "经典地下城。" and summary ~= "经典地下城" then
+          table.insert(lines, "|cff99e6ff简介:|r " .. LinkifyInlineCoords(summary, d.entranceZone or d.zone or "", d.name))
+        end
       end
       if d.bosses and #d.bosses > 0 then
         table.insert(lines, "|cffff8000主要首领:|r " .. table.concat(d.bosses, "  ·  "))
       end
       if d.quests and #d.quests > 0 then
         local filteredQuests = {}
+        local sharedQuests = {}
         local otherFactionOrClassCount = 0
         for _, q in ipairs(DedupeQuestieQuests(d.quests)) do
           if not IsQuestCompleted(q) then
             local qFactionOk = (not q.faction or q.faction == "" or q.faction == "both" or q.faction == state.faction)
             if state.dungeonFilter ~= "MATCH" or (qFactionOk and MatchesQuestClass(q)) then
-              table.insert(filteredQuests, q)
+              -- 同一任务常同时挂在多个副本分区（如血色军械库/大教堂共享任务），
+              -- 后续分区只做引用提示，不再整条重复展开
+              local qKey = tostring(q.id or q.name)
+              local firstDungeon = shownQuestDungeon[qKey]
+              if firstDungeon and firstDungeon ~= d.name then
+                table.insert(sharedQuests, string.format("%s（见 %s）", FormatQuestLink(q, d.minLevel, d.entranceZone or d.zone or ""), firstDungeon))
+              else
+                shownQuestDungeon[qKey] = d.name
+                table.insert(filteredQuests, q)
+              end
             else
               otherFactionOrClassCount = otherFactionOrClassCount + 1
             end
@@ -4915,7 +5061,11 @@ local function RenderTabDungeons()
             insideLabel = "(副本内触发)",
             singleChainWord = "任务链",
           })
-        elseif otherFactionOrClassCount > 0 then
+        end
+        if #sharedQuests > 0 then
+          table.insert(lines, string.format("|cffffd100共享任务 (%d个):|r %s", #sharedQuests, table.concat(sharedQuests, " / ")))
+        end
+        if #filteredQuests == 0 and #sharedQuests == 0 and otherFactionOrClassCount > 0 then
           table.insert(lines, string.format("|cffffd100必接副本任务:|r |cff99aabb当前角色阵营/职业暂无未完成专属任务（另有 %d 个其他阵营或职业任务，切换上方「显示全部副本」可查看）|r", otherFactionOrClassCount))
         end
       end
@@ -4929,7 +5079,8 @@ local function RenderTabDungeons()
         title = string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, LinkifyInlineCoords(d.zone or "", d.entranceZone or d.zone or "", d.name), newBadge, matchBadge, doneBadge),
         body = table.concat(lines, "\n"),
         theme = d.isNew and "dunNew" or (isLevelMatch and "dunMatch" or "info"),
-        badge = string.format("Lv.%d-%d", d.minLevel, d.maxLevel),
+        -- 等级区间已写在标题里，角标改为类型标识，避免同一串 Lv 信息出现两遍
+        badge = d.isNew and "无限服新副本" or "经典地下城",
       })
     end
   end
@@ -5527,6 +5678,7 @@ local function RenderTabForeverAndNews()
     end
     if levelMatch and sysMatch and MatchesSearch((sys.title or "") .. " " .. (sys.summary or "")) then
       local lines = { LinkifyInlineCoords(sys.summary or "", "", sys.title or "") }
+      -- 传承树：先把「按角色等级的加点方案」放在最前，避免玩家先读三页分支说明
       if sys.id == "legacy-system" then
         local legacyRec = BuildLegacyRecommendationLines(state.level, playerProfs, false)
         table.insert(lines, "")
@@ -5535,6 +5687,7 @@ local function RenderTabForeverAndNews()
         end
       end
       local firstCoord = nil
+      local inlineBranches = (sys.id == "legacy-system")
       for _, st in ipairs(sys.steps or {}) do
         local stepTitle = st.title or ""
         local factionMatch = true
@@ -5546,41 +5699,83 @@ local function RenderTabForeverAndNews()
           end
         end
         if factionMatch then
-          local stepLabel = (st.questName and st.questName ~= "") and st.questName or StripCoordsFromText(stepTitle)
-          if stepLabel == "" then
-            stepLabel = (st.zone and st.zone ~= "") and st.zone or "起点"
-          end
-          if st.coord and not firstCoord then
-            firstCoord = { zone = st.zone, title = stepLabel, x = st.coord.x, y = st.coord.y }
-          end
-          local titleText = LinkifyInlineCoords(stepTitle, st.zone or "", stepLabel)
-          if not string.find(titleText, "|Hwowfmap:", 1, true) and not string.find(titleText, "|Hwowfnpc:", 1, true) then
-            if st.coord then
-              titleText = titleText .. FormatCoordLink(st.zone or "", stepLabel, st.coord.x, st.coord.y)
+          if inlineBranches then
+            -- 三条传承树分支各压成一行：标题本身已说明该树用途，说明只取第一短句，
+            -- 具体先点哪些节点由上面的「加点顺序」给出，避免同一段说明反复占行。
+            local branchLine = "  " .. LinkifyInlineCoords(stepTitle, st.zone or "", stepTitle)
+            local detail = st.detail or ""
+            if detail ~= "" then
+              -- 注意：不要用 Lua 的字符类匹配中文标点（按字节匹配会截断 UTF-8），
+              -- 一律用 find(..., true) 取字节位置再 sub，边界都在标点之前所以安全。
+              local firstClause = detail
+              local cutPos = nil
+              for _, sep in ipairs({ "。", "，", "；" }) do
+                local p = string.find(detail, sep, 1, true)
+                if p and (not cutPos or p < cutPos) then cutPos = p end
+              end
+              if cutPos and cutPos > 1 then
+                firstClause = string.sub(detail, 1, cutPos - 1)
+              end
+              -- 首句仍偏长（旧数据是「提供A、B、C…」长枚举）时，按顿号累加，够了就省略
+              if #firstClause > 90 then
+                local pieces, acc, startAt = {}, 0, 1
+                while true do
+                  local p = string.find(detail, "、", startAt, true)
+                  local piece = string.sub(detail, startAt, (p and (p - 1)) or #detail)
+                  if piece == "" then break end
+                  if #pieces > 0 and acc + #piece > 60 then break end
+                  table.insert(pieces, piece)
+                  acc = acc + #piece
+                  if not p then break end
+                  startAt = p + 3 -- 「、」在 UTF-8 里占 3 字节
+                  if acc > 60 then break end
+                end
+                if #pieces > 0 then
+                  firstClause = table.concat(pieces, "、") .. "…"
+                end
+              end
+              if firstClause ~= "" then
+                branchLine = branchLine .. "  |cffaabbcc" .. LinkifyInlineCoords(firstClause, st.zone or "", stepTitle) .. "|r"
+              end
             end
-            if st.altCoord then
-              titleText = titleText .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or stepLabel, st.altCoord.x, st.altCoord.y, false)
+            table.insert(lines, branchLine)
+          else
+            local stepLabel = (st.questName and st.questName ~= "") and st.questName or StripCoordsFromText(stepTitle)
+            if stepLabel == "" then
+              stepLabel = (st.zone and st.zone ~= "") and st.zone or "起点"
             end
-          elseif st.altCoord then
-            local altX = string.format("%.1f", tonumber(st.altCoord.x) or 0)
-            if not string.find(stepTitle, altX, 1, true) then
-              titleText = titleText .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or stepLabel, st.altCoord.x, st.altCoord.y, false)
+            if st.coord and not firstCoord then
+              firstCoord = { zone = st.zone, title = stepLabel, x = st.coord.x, y = st.coord.y }
             end
+            local titleText = LinkifyInlineCoords(stepTitle, st.zone or "", stepLabel)
+            if not string.find(titleText, "|Hwowfmap:", 1, true) and not string.find(titleText, "|Hwowfnpc:", 1, true) then
+              if st.coord then
+                titleText = titleText .. FormatCoordLink(st.zone or "", stepLabel, st.coord.x, st.coord.y)
+              end
+              if st.altCoord then
+                titleText = titleText .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or stepLabel, st.altCoord.x, st.altCoord.y, false)
+              end
+            elseif st.altCoord then
+              local altX = string.format("%.1f", tonumber(st.altCoord.x) or 0)
+              if not string.find(stepTitle, altX, 1, true) then
+                titleText = titleText .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or stepLabel, st.altCoord.x, st.altCoord.y, false)
+              end
+            end
+            local stepHeader = "|cffffd100" .. titleText .. "|r"
+            if st.questId and st.questName then
+              local qObj = {
+                id = st.questId,
+                name = st.questName,
+                level = st.questLevel or 14,
+                zone = st.zone or "",
+                x = st.coord and st.coord.x or nil,
+                y = st.coord and st.coord.y or nil,
+              }
+              stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
+            end
+            local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", stepLabel)
+            table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
           end
-          local stepHeader = "|cffffd100" .. titleText .. "|r"
-          if st.questId and st.questName then
-            local qObj = {
-              id = st.questId,
-              name = st.questName,
-              level = st.questLevel or 14,
-              zone = st.zone or "",
-              x = st.coord and st.coord.x or nil,
-              y = st.coord and st.coord.y or nil,
-            }
-            stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
-          end
-          local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", stepLabel)
-          table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
         end
       end
 

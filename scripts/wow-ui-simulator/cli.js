@@ -179,6 +179,25 @@ async function main() {
         }
       }
     }
+    if (opts.assert && cmd === '/wowf route') {
+      // 职业任务链与专精要点只允许在顶部「核心职业任务与专精里程碑」卡出现一次，
+      // 之前阶段卡也会各渲染一遍，页面上同一批职业任务看起来像是显示了两遍。
+      const classRunCards = cards.filter((c) => c.body.includes('职业任务]') || c.body.includes('专属职业任务链]'));
+      if (classRunCards.length > 1) {
+        console.error(
+          `[Assert Failed] /wowf route 职业任务链出现在 ${classRunCards.length} 张卡片里（应仅在里程碑卡出现一次）`
+        );
+        assertionFailed = true;
+      }
+      // 本阶段适龄练级区域详细清单只给当前阶段一张卡，避免每张阶段卡重复同一批区域
+      const zoneBlockCards = cards.filter((c) => c.body.includes('本阶段适龄练级区域'));
+      if (zoneBlockCards.length > 1) {
+        console.error(
+          `[Assert Failed] /wowf route 「本阶段适龄练级区域」出现在 ${zoneBlockCards.length} 张卡片里（应仅当前阶段卡）`
+        );
+        assertionFailed = true;
+      }
+    }
     if (opts.assert && cmd === '/wowf dungeon') {
       const dungeonCards = cards.filter((c) => c.body.includes('副本入口位置'));
       if (dungeonCards.length === 0) {
