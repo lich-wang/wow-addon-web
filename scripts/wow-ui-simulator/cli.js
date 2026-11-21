@@ -182,7 +182,10 @@ async function main() {
     if (opts.assert && cmd === '/wowf route') {
       // 职业任务链与专精要点只允许在顶部「核心职业任务与专精里程碑」卡出现一次，
       // 之前阶段卡也会各渲染一遍，页面上同一批职业任务看起来像是显示了两遍。
-      const classRunCards = cards.filter((c) => c.body.includes('职业任务]') || c.body.includes('专属职业任务链]'));
+      // 注意只统计里程碑卡那种「Lv.X …·法师职业任务]」标签，避免误伤阶段卡里
+      // 合法的「[★法师职业任务]」关键任务条目。
+      const milestoneTagRe = /Lv\.\d+ [^·\n]*·[^\n]*职业任务\]/;
+      const classRunCards = cards.filter((c) => milestoneTagRe.test(c.body));
       if (classRunCards.length > 1) {
         console.error(
           `[Assert Failed] /wowf route 职业任务链出现在 ${classRunCards.length} 张卡片里（应仅在里程碑卡出现一次）`
