@@ -2861,8 +2861,8 @@ const DUNGEON_ID_TO_QUESTIE_AREA_IDS = {
   'dire-maul-west': [2557, 10023, 10024, 10025],
   'dire-maul-north': [2557, 10022],
   scholomance: [2057, 10011, 10012, 10013],
-  'stratholme-main': [2017],
-  'stratholme-service': [2017],
+  'stratholme-main-gate': [2017],
+  'stratholme-service-gate': [2017],
 };
 
 function questieRacesToFaction(races) {
@@ -3593,16 +3593,29 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
 
   const professionsList = [...professionsMap.values()];
 
+  const useSnapshotOnly = Boolean(
+    questieSource && typeof questieSource === 'object' && !Buffer.isBuffer(questieSource) && questieSource.useSnapshotOnly
+  );
+  const prevalidatedSnapshot =
+    useSnapshotOnly && questieSource && typeof questieSource === 'object' ? questieSource.snapshot || null : null;
+  const questieDbBuf = Buffer.isBuffer(questieSource)
+    ? questieSource
+    : questieSource && typeof questieSource === 'object'
+      ? questieSource.questieDbBuf || null
+      : null;
+  const livePrereqs = useSnapshotOnly
+    ? null
+    : await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
+
   // 如果路由接口离线导致没有抓到实时路由数据，加载已有完整缓存并用 QuestieDB 补全所有副本任务
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
-    const offlinePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieSource);
     const offlineDungeonMap = new Map(
       (Array.isArray(cachedDataset.dungeons) ? cachedDataset.dungeons : [])
         .filter(d => d && d.id != null)
         .map(d => [d.id, { ...d, quests: Array.isArray(d.quests) ? [...d.quests] : [] }])
     );
-    enrichDungeonsWithQuestieDB(offlineDungeonMap, offlinePrereqs);
+    enrichDungeonsWithQuestieDB(offlineDungeonMap, livePrereqs);
     const enrichedDungeons = [...offlineDungeonMap.values()].sort(
       (a, b) => a.minLevel - b.minLevel || a.visit - b.visit
     );
@@ -3616,12 +3629,11 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
       },
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
-    }, offlinePrereqs);
+    }, livePrereqs);
   }
 
   // 4. 基于本地 QuestieDB（questie-db-forever.zip）补全全阵营副本任务，不再依赖 wowf.io 网页抓取
-  const dungeonQuestiePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieSource);
-  enrichDungeonsWithQuestieDB(dungeonMap, dungeonQuestiePrereqs);
+  enrichDungeonsWithQuestieDB(dungeonMap, livePrereqs);
 
   const dungeonsList = [...dungeonMap.values()].sort((a, b) => a.minLevel - b.minLevel || a.visit - b.visit);
   const itemsList = [...notableItemsMap.values()].sort((a, b) => a.reqLevel - b.reqLevel);
@@ -3657,14 +3669,6 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     foreverSystems: FOREVER_SYSTEMS_DATA,
     news,
   };
-  const useSnapshotOnly = Boolean(questieSource && typeof questieSource === 'object' && !Buffer.isBuffer(questieSource) && questieSource.useSnapshotOnly);
-  const prevalidatedSnapshot =
-    useSnapshotOnly && questieSource && typeof questieSource === 'object' ? questieSource.snapshot || null : null;
-  const questieDbBuf = Buffer.isBuffer(questieSource)
-    ? questieSource
-    : questieSource && typeof questieSource === 'object'
-      ? questieSource.questieDbBuf || null
-      : null;
   if (useSnapshotOnly && prevalidatedSnapshot) {
     dataset.zoneQuests = prevalidatedSnapshot.zoneQuests;
     dataset.zoneAreaIds = prevalidatedSnapshot.zoneAreaIds;
@@ -3675,7 +3679,6 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
       dataset.meta.questieDbVersion = prevalidatedSnapshot.questieDbVersion;
     }
   } else if (!useSnapshotOnly) {
-    const livePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
     annotateDatasetPrereqs(dataset, livePrereqs);
   }
   if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds) && cachedDataset?.zoneQuests && cachedDataset?.zoneAreaIds) {
