@@ -1988,7 +1988,8 @@ local function IsDungeonAllQuestsCompleted(d, faction, classKey)
   local f = faction or state.faction or "alliance"
   local total = 0
   for _, q in ipairs(d.quests) do
-    if (q.faction == "both" or q.faction == f) and MatchesQuestClass(q, classKey) then
+    local qFactionOk = (not q.faction or q.faction == "" or q.faction == "both" or q.faction == f)
+    if qFactionOk and MatchesQuestClass(q, classKey) then
       total = total + 1
       if not IsQuestCompleted(q) then
         return false
@@ -4705,9 +4706,15 @@ local function RenderTabDungeons()
       end
       if d.quests and #d.quests > 0 then
         local filteredQuests = {}
+        local otherFactionOrClassCount = 0
         for _, q in ipairs(DedupeQuestieQuests(d.quests)) do
-          if (not IsQuestCompleted(q)) and (state.dungeonFilter ~= "MATCH" or ((q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q))) then
-            table.insert(filteredQuests, q)
+          if not IsQuestCompleted(q) then
+            local qFactionOk = (not q.faction or q.faction == "" or q.faction == "both" or q.faction == state.faction)
+            if state.dungeonFilter ~= "MATCH" or (qFactionOk and MatchesQuestClass(q)) then
+              table.insert(filteredQuests, q)
+            else
+              otherFactionOrClassCount = otherFactionOrClassCount + 1
+            end
           end
         end
         if #filteredQuests > 0 then
@@ -4720,6 +4727,8 @@ local function RenderTabDungeons()
             insideLabel = "(副本内触发)",
             singleChainWord = "任务链",
           })
+        elseif otherFactionOrClassCount > 0 then
+          table.insert(lines, string.format("|cffffd100必接副本任务:|r |cff99aabb当前角色阵营/职业暂无未完成专属任务（另有 %d 个其他阵营或职业任务，切换上方「显示全部副本」可查看）|r", otherFactionOrClassCount))
         end
       end
 

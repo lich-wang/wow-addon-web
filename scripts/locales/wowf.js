@@ -1932,6 +1932,31 @@ function parseQuestSideData(sideObj) {
   };
 }
 
+async function fetchWithRetry(url, init, retries = 2, timeoutMs = 12000) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const attemptSignal = init?.signal
+        ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs);
+      const res = await fetch(url, { ...init, signal: attemptSignal });
+      if (res.ok || (res.status !== 502 && res.status !== 503 && res.status !== 429 && res.status !== 504)) {
+        return res;
+      }
+      await res.body?.cancel().catch(() => {});
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+      if (init?.signal?.aborted) throw err;
+    }
+    if (attempt < retries) {
+      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  if (lastErr) throw lastErr;
+  throw new Error(`Fetch failed for ${url}`);
+}
+
 /**
  * 抓取单个任务的详细信息（阵营、职业限定、起始/交付 NPC 与坐标、完整前置/后续任务链）
  */
@@ -1942,9 +1967,8 @@ async function fetchQuestDetail(questId, questCache, getHeaders) {
   }
   try {
     const url = `https://wowf.io/zh/quests/${questId}`;
-    const res = await fetch(url, {
+    const res = await fetchWithRetry(url, {
       headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-      signal: AbortSignal.timeout(12000),
     });
     if (!res.ok) return questCache[key] || null;
     const html = await res.text();
@@ -2859,12 +2883,11 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
   const failedDungeonIds = new Set();
   let hasWebEnrichFailure = false;
 
-  await runWithConcurrency(dungeonIds, 8, async dId => {
+  await runWithConcurrency(dungeonIds, 4, async dId => {
     try {
       const url = `https://wowf.io/zh/dungeons/${dId}`;
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-        signal: AbortSignal.timeout(12000),
       });
       if (!res.ok) {
         failedDungeonIds.add(dId);
@@ -2921,7 +2944,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
   }
 
   // 第一轮：抓取所有副本主任务详情
-  await runWithConcurrency([...allMainQuestIds], 12, async qid => {
+  await runWithConcurrency([...allMainQuestIds], 5, async qid => {
     const detail = await fetchQuestDetail(qid, questCache, getHeaders);
     if (!detail) hasWebEnrichFailure = true;
   });
@@ -2941,7 +2964,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
     }
   }
   if (stepQuestIds.size > 0) {
-    await runWithConcurrency([...stepQuestIds], 12, async qid => {
+    await runWithConcurrency([...stepQuestIds], 5, async qid => {
       const detail = await fetchQuestDetail(qid, questCache, getHeaders);
       if (!detail) hasWebEnrichFailure = true;
     });
