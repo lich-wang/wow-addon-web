@@ -2832,6 +2832,108 @@ const BUILTIN_DUNGEON_QUEST_SUPPLEMENTS = {
   ],
 };
 
+const DUNGEON_ID_TO_QUESTIE_AREA_IDS = {
+  'hall-of-thanes': [16919],
+  'ragefire-chasm': [2437],
+  'ruins-of-lordaeron': [16611],
+  deadmines: [1581, 10029],
+  'wailing-caverns': [718],
+  'shadowfang-keep': [209, 10014, 10015, 10016, 10017, 10018, 10019],
+  'blackfathom-deeps': [719, 10020, 10021],
+  stockade: [717],
+  'excavation-site': [16732],
+  dalaran: [16544],
+  'razorfen-kraul': [491, 1717],
+  gnomeregan: [721, 133, 10030, 10031, 10032],
+  'scarlet-monastery-graveyard': [796, 6109, 6386, 10008, 10009, 10010],
+  'scarlet-monastery-library': [796, 6109, 6386, 10008, 10009, 10010],
+  'scarlet-monastery-armory': [796, 6109, 6386, 10008, 10009, 10010],
+  'scarlet-monastery-cathedral': [796, 6109, 6386, 10008, 10009, 10010],
+  'razorfen-downs': [722],
+  uldaman: [1337, 1517, 10033],
+  'zul-farrak': [1176, 978],
+  maraudon: [2100, 10000],
+  'sunken-temple': [1477, 1417],
+  'blackrock-depths': [1584, 1585],
+  'lower-blackrock-spire': [1583, 10003, 10004, 10005, 10006, 10007],
+  'upper-blackrock-spire': [1583, 10003, 10004, 10005, 10006, 10007],
+  'dire-maul-east': [2557, 10026, 10027],
+  'dire-maul-west': [2557, 10023, 10024, 10025],
+  'dire-maul-north': [2557, 10022],
+  scholomance: [2057, 10011, 10012, 10013],
+  'stratholme-main': [2017],
+  'stratholme-service': [2017],
+};
+
+function questieRacesToFaction(races) {
+  if (!races) return 'both';
+  const ALLIANCE_MASK = 1n | 4n | 8n | 64n | 4294967296n;
+  const HORDE_MASK = 2n | 16n | 32n | 128n | 8589934592n;
+  const r = BigInt(races);
+  const hasA = (r & ALLIANCE_MASK) !== 0n;
+  const hasH = (r & HORDE_MASK) !== 0n;
+  if (hasA && !hasH) return 'alliance';
+  if (hasH && !hasA) return 'horde';
+  return 'both';
+}
+
+/**
+ * 完全基于本地 QuestieDB（questie-db-forever.zip）补全所有副本的双阵营任务、阵营标记与任务链，
+ * 不再依赖 wowf.io 网页抓取。
+ */
+function enrichDungeonsWithQuestieDB(dungeonMap, questiePrereqs) {
+  const allIds = [...dungeonMap.keys()];
+  applyDungeonQuestFallbackSupplements(dungeonMap, allIds);
+  if (!questiePrereqs || questiePrereqs.size === 0) return;
+
+  // 先建立“已被任意副本收录的 Questie 任务 ID”集合，避免血色/厄运/黑石等多区副本互相重复塞入已知任务
+  const assignedQuestIds = new Set();
+  for (const dungeon of dungeonMap.values()) {
+    for (const q of dungeon.quests || []) {
+      const qid = Number(q?.id);
+      if (qid) assignedQuestIds.add(qid);
+    }
+  }
+
+  for (const [dId, dungeon] of dungeonMap.entries()) {
+    dungeon.quests = Array.isArray(dungeon.quests) ? dungeon.quests : [];
+    // 1. 用 QuestieDB 权威字段（阵营位掩码、等级、最低等级）校准已有任务
+    for (let i = 0; i < dungeon.quests.length; i++) {
+      const q = dungeon.quests[i];
+      const qid = Number(q?.id);
+      if (!qid) continue;
+      const info = questiePrereqs.get(qid);
+      if (!info) continue;
+      const qFaction = questieRacesToFaction(info.races);
+      dungeon.quests[i] = {
+        ...q,
+        faction: qFaction,
+        level: info.level || q.level || dungeon.minLevel,
+        minLevel: info.minLevel || q.minLevel || dungeon.minLevel,
+      };
+    }
+
+    // 2. 补充 QuestieDB 中属于该副本 AreaID 但尚未收录的非重复任务
+    const areaIds = DUNGEON_ID_TO_QUESTIE_AREA_IDS[dId];
+    if (!areaIds || areaIds.length === 0) continue;
+    const areaSet = new Set(areaIds);
+    for (const [qid, info] of questiePrereqs.entries()) {
+      if (!areaSet.has(info.zoneOrSort) || info.repeatable || assignedQuestIds.has(qid)) continue;
+      assignedQuestIds.add(qid);
+      dungeon.quests.push({
+        id: qid,
+        name: info.name || `任务 #${qid}`,
+        level: info.level || dungeon.minLevel,
+        minLevel: info.minLevel || dungeon.minLevel,
+        faction: questieRacesToFaction(info.races),
+        npc: '',
+        zone: dungeon.entranceZone || dungeon.zone || '',
+        place: '',
+      });
+    }
+  }
+}
+
 function applyDungeonQuestFallbackSupplements(dungeonMap, targetIds) {
   for (const dId of targetIds) {
     const supps = BUILTIN_DUNGEON_QUEST_SUPPLEMENTS[dId];
@@ -2849,337 +2951,6 @@ function applyDungeonQuestFallbackSupplements(dungeonMap, targetIds) {
       }
     }
   }
-}
-
-/**
- * 从 wowf.io/zh/dungeons/<id> 与 /zh/quests/<id> 补全所有副本的双阵营任务与前置任务链
- */
-async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cachedDungeons = []) {
-  const questCacheFile = path.join(cacheDir, 'wowf-quests-cache.json');
-  let questCache = {};
-  if (fs.existsSync(questCacheFile)) {
-    try {
-      questCache = JSON.parse(fs.readFileSync(questCacheFile, 'utf-8')) || {};
-    } catch {
-      questCache = {};
-    }
-  }
-
-  const cachedDungeonMap = new Map(
-    (Array.isArray(cachedDungeons) ? cachedDungeons : [])
-      .filter(d => d && d.id != null)
-      .map(d => [d.id, d])
-  );
-  // 提前加载无限服 QuestieDB 前置与可重复任务标记，确保任何缓存恢复路径都能完整判定
-  const questiePrereqs = await loadQuestiePrereqs(cacheDir);
-  const dedupeDungeonQuests = quests => {
-    const list = Array.isArray(quests) ? quests : [];
-    return list.filter((entry, idx) => {
-      if (!entry) return false;
-      const ids = entry.steps && entry.steps.length > 0 ? entry.steps.map(s => s.id) : [entry.id];
-      return !list.some((other, oIdx) => {
-        if (oIdx === idx || !other) return false;
-        if (entry.id && other.id && entry.id !== other.id) return false;
-        if (other.faction !== entry.faction && other.faction !== 'both') return false;
-        const oIds = other.steps && other.steps.length > 0 ? other.steps.map(s => s.id) : [other.id];
-        if (oIds.length >= ids.length) return false;
-        const otherStartsRepeatable = (other.steps && other.steps[0]?.repeatable) || questiePrereqs?.get(oIds[0])?.repeatable;
-        if (otherStartsRepeatable) return false;
-        const offset = ids.length - oIds.length;
-        return oIds.every((id, k) => id === ids[offset + k]);
-      });
-    });
-  };
-
-  const webBuiltDungeonIds = new Set();
-  const restoreCachedQuestsForDungeon = dId => {
-    const dungeon = dungeonMap.get(dId);
-    const cachedDungeon = cachedDungeonMap.get(dId);
-    if (!dungeon || !Array.isArray(cachedDungeon?.quests) || cachedDungeon.quests.length === 0) return;
-    const questIdentityKey = q => `${q.id}:${q.faction || ''}`;
-    const preferCurrent = webBuiltDungeonIds.has(dId);
-    const primaryList = preferCurrent ? dungeon.quests || [] : cachedDungeon.quests;
-    const fallbackList = preferCurrent ? cachedDungeon.quests : dungeon.quests || [];
-    const merged = [...primaryList];
-    const seenKeys = new Set(merged.filter(q => q?.id).map(questIdentityKey));
-    for (const item of fallbackList) {
-      if (!item) continue;
-      if (item.id) {
-        if (seenKeys.has(questIdentityKey(item))) continue;
-        const inSteps = merged.some(
-          mq =>
-            (mq.faction === item.faction || mq.faction === 'both') &&
-            Array.isArray(mq.steps) &&
-            mq.steps.some(st => st.id === item.id)
-        );
-        if (!inSteps) {
-          merged.push(item);
-          seenKeys.add(questIdentityKey(item));
-        }
-      } else if (!merged.some(mq => mq.name === item.name && mq.faction === item.faction)) {
-        merged.push(item);
-      }
-    }
-    dungeon.quests = dedupeDungeonQuests(merged);
-  };
-
-  const dungeonIds = [...dungeonMap.keys()];
-  const dungeonQuestIdsMap = new Map();
-  const allMainQuestIds = new Set();
-  const failedDungeonIds = new Set();
-  let hasWebEnrichFailure = false;
-
-  await runWithConcurrency(dungeonIds, 4, async dId => {
-    try {
-      const url = `https://wowf.io/zh/dungeons/${dId}`;
-      const res = await fetchWithRetry(url, {
-        headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-      });
-      if (!res.ok) {
-        failedDungeonIds.add(dId);
-        hasWebEnrichFailure = true;
-        return;
-      }
-      const html = await res.text();
-      const full = extractNextFText(html);
-      const qIdx = full.indexOf('"quests":[');
-      const rqIdx = full.indexOf('"rewardQuests":[');
-      const collected = [];
-      const seen = new Set();
-      let parsedValidStruct = false;
-      for (const [labelIdx, offset] of [
-        [qIdx, 9],
-        [rqIdx, 15],
-      ]) {
-        if (labelIdx < 0) continue;
-        const arrStr = extractBalancedJson(full, labelIdx + offset);
-        if (!arrStr) {
-          failedDungeonIds.add(dId);
-          hasWebEnrichFailure = true;
-          continue;
-        }
-        try {
-          const arr = JSON.parse(arrStr);
-          if (Array.isArray(arr)) parsedValidStruct = true;
-          for (const item of arr) {
-            const qid = Number(item?.id);
-            if (qid && !seen.has(qid)) {
-              seen.add(qid);
-              collected.push(qid);
-              allMainQuestIds.add(qid);
-            }
-          }
-        } catch {
-          failedDungeonIds.add(dId);
-          hasWebEnrichFailure = true;
-        }
-      }
-      if (!parsedValidStruct) {
-        failedDungeonIds.add(dId);
-        hasWebEnrichFailure = true;
-      }
-      if (collected.length > 0) {
-        dungeonQuestIdsMap.set(dId, collected);
-      }
-    } catch {
-      // 单副本抓取失败时记录状态并保留已有快照数据
-      failedDungeonIds.add(dId);
-      hasWebEnrichFailure = true;
-    }
-  });
-
-  if (allMainQuestIds.size === 0) {
-    if (dungeonIds.length > 0) {
-      hasWebEnrichFailure = true;
-      for (const dId of dungeonIds) {
-        failedDungeonIds.add(dId);
-        restoreCachedQuestsForDungeon(dId);
-      }
-      applyDungeonQuestFallbackSupplements(dungeonMap, dungeonIds);
-    }
-    return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
-  }
-
-  // 第一轮：抓取所有副本主任务详情
-  await runWithConcurrency([...allMainQuestIds], 5, async qid => {
-    const detail = await fetchQuestDetail(qid, questCache, getHeaders);
-    if (!detail) hasWebEnrichFailure = true;
-  });
-
-  // 第二轮：抓取前置/后续任务链步骤的详情以补全各步 NPC 与坐标
-  const stepQuestIds = new Set();
-  for (const qid of allMainQuestIds) {
-    const q = questCache[String(qid)];
-    if (!q?.sides) continue;
-    for (const sideData of Object.values(q.sides)) {
-      const effectiveFlow = buildEffectiveFlow(q, sideData, questiePrereqs);
-      for (const st of effectiveFlow) {
-        if (st?.id && questCache[String(st.id)]?.v !== 3) {
-          stepQuestIds.add(st.id);
-        }
-      }
-    }
-  }
-  if (stepQuestIds.size > 0) {
-    await runWithConcurrency([...stepQuestIds], 5, async qid => {
-      const detail = await fetchQuestDetail(qid, questCache, getHeaders);
-      if (!detail) hasWebEnrichFailure = true;
-    });
-  }
-
-  // 落盘任务详情缓存
-  try {
-    fs.mkdirSync(cacheDir, { recursive: true });
-    fs.writeFileSync(questCacheFile, JSON.stringify(questCache), 'utf-8');
-  } catch {
-    // 忽略缓存写入异常
-  }
-
-  // 将完整任务与前置链合并回各副本
-  for (const [dId, qids] of dungeonQuestIdsMap.entries()) {
-    const dungeon = dungeonMap.get(dId);
-    if (!dungeon) continue;
-
-    const builtQuests = [];
-    const seenQuestKey = new Set();
-
-    const buildEntry = (q, sideData, factionOverride) => {
-      const flow = buildEffectiveFlow(q, sideData, questiePrereqs, questCache);
-      const selfIdx = flow.findIndex(st => st.self || st.id === q.id);
-      const hasPrereq = selfIdx > 0;
-
-      // 同一副本内仅对同一任务（同 ID + 同阵营）去重；
-      // 同属一条 wowf.io 任务链（flow）的并行分支任务需保留，交由 QuestieDB 解析与前缀分组展示。
-      const questKey = `${factionOverride}:${q.id}`;
-      if (seenQuestKey.has(questKey)) return null;
-      seenQuestKey.add(questKey);
-
-      const steps =
-        flow.length > 1
-          ? flow.map(st => {
-              const stDetail = questCache[String(st.id)];
-              const stSide = stDetail?.sides?.[factionOverride] || stDetail?.sides?.one || null;
-              const npc = stSide?.npc || '';
-              const zone = stSide?.zone || stDetail?.zone || '';
-              const x = stSide?.x ?? null;
-              const y = stSide?.y ?? null;
-              const endNpc = stSide?.endNpc || '';
-              const endZone = stSide?.endZone || '';
-              const endX = stSide?.endX ?? null;
-              const endY = stSide?.endY ?? null;
-              const hasDiffEnd =
-                endNpc &&
-                (endNpc !== npc || endZone !== zone || endX !== x || endY !== y);
-              return {
-                id: st.id,
-                name: stDetail?.name || st.name,
-                level: stDetail?.level || st.level || q.level,
-                npc,
-                zone,
-                place: '',
-                x,
-                y,
-                ...(hasDiffEnd ? { endNpc, endZone, endX, endY } : {}),
-                ...(questiePrereqs.get(st.id)?.repeatable ? { repeatable: true } : {}),
-              };
-            })
-          : undefined;
-
-      // 有前置任务时，将入口坐标与 NPC 指向任务链第一步，方便玩家直接前往起始点接取
-      const firstStep = steps && steps.length > 0 ? steps[0] : null;
-      const startDetail = firstStep ? questCache[String(firstStep.id)] : null;
-      const startSide = startDetail?.sides?.[factionOverride] || startDetail?.sides?.one || null;
-
-      const topNpc = (hasPrereq && firstStep?.npc) || sideData?.npc || '';
-      const topZone = (hasPrereq && firstStep?.zone) || sideData?.zone || q.zone || dungeon.entranceZone || dungeon.zone;
-      const topX = hasPrereq ? (firstStep?.x ?? null) : (sideData?.x ?? null);
-      const topY = hasPrereq ? (firstStep?.y ?? null) : (sideData?.y ?? null);
-      const singleEndNpc = !steps ? (sideData?.endNpc || '') : '';
-      const singleEndZone = !steps ? (sideData?.endZone || '') : '';
-      const singleEndX = !steps ? (sideData?.endX ?? null) : null;
-      const singleEndY = !steps ? (sideData?.endY ?? null) : null;
-      const hasSingleDiffEnd =
-        singleEndNpc &&
-        (singleEndNpc !== topNpc || singleEndZone !== topZone || singleEndX !== topX || singleEndY !== topY);
-
-      return {
-        id: q.id,
-        name: q.name,
-        level: q.level || dungeon.minLevel,
-        minLevel: (hasPrereq && startDetail?.minLevel) || q.minLevel || dungeon.minLevel,
-        inside: hasPrereq ? Boolean(startSide?.inside) : Boolean(sideData?.inside),
-        faction: factionOverride,
-        ...(q.classes ? { classes: q.classes } : {}),
-        npc: topNpc,
-        zone: topZone,
-        place: '',
-        x: topX,
-        y: topY,
-        ...(hasSingleDiffEnd
-          ? { endNpc: singleEndNpc, endZone: singleEndZone, endX: singleEndX, endY: singleEndY }
-          : {}),
-        finalObjective: sideData?.objective || '',
-        ...(steps ? { steps } : {}),
-      };
-    };
-
-    for (const qid of qids) {
-      const q = questCache[String(qid)];
-      if (!q || !q.name) {
-        failedDungeonIds.add(dId);
-        continue;
-      }
-      if (q.sides?.one) {
-        const entry = buildEntry(q, q.sides.one, q.faction);
-        if (entry) builtQuests.push(entry);
-      } else {
-        if (q.sides?.alliance) {
-          const entry = buildEntry(q, q.sides.alliance, 'alliance');
-          if (entry) builtQuests.push(entry);
-        }
-        if (q.sides?.horde) {
-          const entry = buildEntry(q, q.sides.horde, 'horde');
-          if (entry) builtQuests.push(entry);
-        }
-      }
-    }
-
-    // 去重：若同一阵营下存在另一条任务链（如剥离了可选引导前置后）恰好是某条链的严格后缀，则保留更精简的那条
-    const dedupedQuests = dedupeDungeonQuests(builtQuests);
-
-    if (dedupedQuests.length > 0) {
-      webBuiltDungeonIds.add(dId);
-      // 保留原有数据中按 ID 未被网页覆盖的补充任务（基于去重前的 builtQuests 判定，避免被剥离的引导任务被旧数据回填）
-      const seenKeys = new Set(builtQuests.filter(q => q?.id).map(q => `${q.id}:${q.faction || ''}`));
-      for (const prev of dungeon.quests || []) {
-        if (prev.id) {
-          if (seenKeys.has(`${prev.id}:${prev.faction || ''}`)) continue;
-          const inSteps = builtQuests.some(
-            bq =>
-              (bq.faction === prev.faction || bq.faction === 'both') &&
-              Array.isArray(bq.steps) &&
-              bq.steps.some(st => st.id === prev.id)
-          );
-          if (!inSteps) {
-            dedupedQuests.push(prev);
-          }
-        } else if (!builtQuests.some(bq => bq.name === prev.name && (bq.faction === prev.faction || bq.faction === 'both'))) {
-          dedupedQuests.push(prev);
-        }
-      }
-      dungeon.quests = dedupeDungeonQuests(dedupedQuests);
-    } else {
-      restoreCachedQuestsForDungeon(dId);
-    }
-  }
-  for (const dId of failedDungeonIds) {
-    restoreCachedQuestsForDungeon(dId);
-  }
-  if (failedDungeonIds.size > 0) {
-    applyDungeonQuestFallbackSupplements(dungeonMap, failedDungeonIds);
-  }
-  console.log(`[WoWF] Enriched ${dungeonQuestIdsMap.size} dungeons with ${Object.keys(questCache).length} web quests.`);
-  return { hasWebEnrichFailure, failedDungeonIds: [...failedDungeonIds] };
 }
 
 /**
@@ -3822,25 +3593,20 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
 
   const professionsList = [...professionsMap.values()];
 
-  // 如果路由接口离线导致没有抓到实时路由数据，加载已有完整缓存并仍尝试从 wowf.io 副本/任务页补全最新双阵营副本任务
+  // 如果路由接口离线导致没有抓到实时路由数据，加载已有完整缓存并用 QuestieDB 补全所有副本任务
   if (liveFetchCount === 0 && cachedDataset) {
     console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
+    const offlinePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieSource);
     const offlineDungeonMap = new Map(
       (Array.isArray(cachedDataset.dungeons) ? cachedDataset.dungeons : [])
         .filter(d => d && d.id != null)
         .map(d => [d.id, { ...d, quests: Array.isArray(d.quests) ? [...d.quests] : [] }])
     );
-    await enrichDungeonsWithWebQuests(
-      offlineDungeonMap,
-      cacheDir,
-      getHeaders,
-      cachedDataset.dungeons
-    );
+    enrichDungeonsWithQuestieDB(offlineDungeonMap, offlinePrereqs);
     const enrichedDungeons = [...offlineDungeonMap.values()].sort(
       (a, b) => a.minLevel - b.minLevel || a.visit - b.visit
     );
     const cachedDbVersion = cachedDataset.meta?.dbVersion || '2026.11.15';
-    const offlinePrereqs = await loadQuestiePrereqs(cacheDir);
     return annotateDatasetPrereqs({
       ...cachedDataset,
       dungeons: enrichedDungeons.length > 0 ? enrichedDungeons : cachedDataset.dungeons,
@@ -3853,16 +3619,9 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     }, offlinePrereqs);
   }
 
-  // 4. 从 wowf.io 副本与任务详情页补全全阵营副本任务与前置任务链
-  const webEnrichResult = await enrichDungeonsWithWebQuests(
-    dungeonMap,
-    cacheDir,
-    getHeaders,
-    cachedDataset?.dungeons
-  );
-  if (webEnrichResult?.hasWebEnrichFailure) {
-    hasPartialFailure = true;
-  }
+  // 4. 基于本地 QuestieDB（questie-db-forever.zip）补全全阵营副本任务，不再依赖 wowf.io 网页抓取
+  const dungeonQuestiePrereqs = await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieSource);
+  enrichDungeonsWithQuestieDB(dungeonMap, dungeonQuestiePrereqs);
 
   const dungeonsList = [...dungeonMap.values()].sort((a, b) => a.minLevel - b.minLevel || a.visit - b.visit);
   const itemsList = [...notableItemsMap.values()].sort((a, b) => a.reqLevel - b.reqLevel);
@@ -3958,6 +3717,7 @@ function generateWoWFToc(version, updatedAt, dataset) {
   return `## Interface: 16001
 ## Title: 巫妖王的无限百科
 ## Title-zhCN: |cff00ffcc[巫妖王的无限百科]|r 无限服动态指南
+## OptionalDeps: Questie, QuestieDB
 ## Notes: In-game smart companion for wowf.io on WoW Forever (16001). Dynamically matches leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
 ## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
 ## OptionalDeps: EasyAuction
