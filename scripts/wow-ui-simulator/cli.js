@@ -154,6 +154,24 @@ async function main() {
       console.error(`[Assert Failed] ${cmd} rendered 0 cards!`);
       assertionFailed = true;
     }
+    if (opts.assert && cmd === '/wowf dungeon') {
+      const dungeonCards = cards.filter((c) => c.body.includes('副本入口位置'));
+      if (dungeonCards.length === 0) {
+        console.error('[Assert Failed] /wowf dungeon rendered 0 dungeon cards!');
+        assertionFailed = true;
+      }
+      const withQuestSection = dungeonCards.filter((c) => c.body.includes('必接副本任务'));
+      if (withQuestSection.length === 0) {
+        console.error('[Assert Failed] /wowf dungeon rendered 0 cards with 必接副本任务!');
+        assertionFailed = true;
+      }
+      for (const dc of dungeonCards) {
+        if (!dc.body.includes('必接副本任务')) {
+          console.error(`[Assert Failed] Dungeon card missing 必接副本任务 section: ${dc.title.split('\n')[0]}`);
+          assertionFailed = true;
+        }
+      }
+    }
     for (const c of cards.slice(0, 6)) {
       console.log(`  [Card] ${c.title.split('\n')[0]}`);
       const previewLines = c.body.split('\n').filter(Boolean).slice(0, 4);
@@ -180,6 +198,30 @@ async function main() {
   }
 
   rt.destroy();
+
+  // Regression check: also verify Horde dungeon quests rendering
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const hordeRt = new WoWSimulatorRuntime({
+      level: opts.level,
+      classKey: opts.classKey,
+      raceKey: '兽人',
+      faction: 'Horde',
+    });
+    hordeRt.loadAddon(addonName, files);
+    hordeRt.runSlashCommand('/wowf dungeon');
+    const hordeSnap = hordeRt.getSnapshot();
+    const hordeCards = summarizeCards(hordeSnap).filter((c) => c.body.includes('副本入口位置'));
+    const hordeWithQuests = hordeCards.filter((c) => c.body.includes('必接副本任务 ('));
+    if (hordeSnap.luaErrors.length > 0 || hordeCards.length === 0 || hordeWithQuests.length === 0) {
+      console.error(
+        `[Assert Failed] Horde /wowf dungeon regression failed (errors=${hordeSnap.luaErrors.length}, cards=${hordeCards.length}, withQuests=${hordeWithQuests.length})`
+      );
+      assertionFailed = true;
+    } else {
+      console.log(`[✓] Horde regression check passed (${hordeWithQuests.length}/${hordeCards.length} dungeon cards with quests).`);
+    }
+    hordeRt.destroy();
+  }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
     process.exit(1);
