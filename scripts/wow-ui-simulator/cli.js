@@ -9,6 +9,9 @@ import { generateHtmlReport } from './html-report.js';
 // 坐标数值：兼容整点/多位小数、半角/全角逗号，用于校验可见文案中不得残留坐标
 const COORD_TEXT_PATTERN = /\b\d{1,3}(?:\.\d+)?\s*[,，]\s*\d{1,3}(?:\.\d+)?\b/;
 
+// 数据文件判定：兼容 Data.lua、Data/Data.lua 子目录以及 `Data.lua (source)` 合成文件名
+const isDataLuaFile = (f) => /^data\.lua/i.test(path.basename(f.filename)) || /^data\.lua/i.test(f.filename);
+
 function parseArgs(argv) {
   const opts = {
     addonDir: path.resolve('addons/WoWF'),
@@ -344,7 +347,7 @@ async function main() {
         professions = {},
       }
     `;
-    const coreFiles = files.filter((f) => !/^data\.lua/i.test(f.filename));
+    const coreFiles = files.filter((f) => !isDataLuaFile(f));
     qdbRt.loadAddon(addonName, [{ filename: 'QuestieDBMock.lua', content: questieMockLua }, ...coreFiles]);
     qdbRt.runSlashCommand('/wowf dungeon');
     const qdbSnap = qdbRt.getSnapshot();
@@ -422,7 +425,7 @@ async function main() {
                 coord = { x = 39.7, y = 50.0 },
                 altCoord = { zone = "石爪山脉", x = 50.8, y = 52.7 },
                 title = "第二步：石爪山脉背包 (39.7, 50.0 → 50.8, 52.7)",
-                detail = "先到 (39.7, 50.0) 接取，再前往 (50.8, 52.7) 点击背包；艾尔文森林（营地 47, 56）、艾尔文森林（47.8，56.3）与艾尔文森林（营地 47.85, 56.35）也要覆盖。艾尔文森林 (47.8, 56.3)，营地 48, 57 需要沿用区域上下文。",
+                detail = "先到 (39.7, 50.0) 接取，再前往 (50.8, 52.7) 点击背包；艾尔文森林（营地 47, 56）、艾尔文森林（47.8，56.3）与艾尔文森林（营地 47.85, 56.35）也要覆盖。艾尔文森林 (47.8, 56.3)，营地 48, 57 需要沿用区域上下文。艾尔文森林 |Hquest:123:1|h[西部荒野的人民]|h，营地 49, 58 不能误判。",
               },
             },
           },
@@ -432,7 +435,7 @@ async function main() {
         },
       }
     `;
-    const coordCoreFiles = files.filter((f) => !/^data\.lua/i.test(f.filename));
+    const coordCoreFiles = files.filter((f) => !isDataLuaFile(f));
     coordRt.loadAddon(addonName, [{ filename: 'CoordLinkMockData.lua', content: coordMockLua }, ...coordCoreFiles]);
     coordRt.runSlashCommand('/wowf news');
     const coordSnap = coordRt.getSnapshot();
@@ -446,7 +449,8 @@ async function main() {
     // 链接后的 “营地 48, 57” 应沿用前文“艾尔文森林”的地图 ID(1429)，而不是回退到默认的石爪山脉(1442)
     const crossContextOk =
       coordRawText.includes('|Hwowfmap:1429:47.8:56.3') &&
-      coordRawText.includes('|Hwowfmap:1429:48.0:57.0');
+      coordRawText.includes('|Hwowfmap:1429:48.0:57.0') &&
+      coordRawText.includes('|Hwowfmap:1429:49.0:58.0');
     const passed =
       coordSnap.luaErrors.length === 0 &&
       coordCards.length > 0 &&

@@ -1072,8 +1072,9 @@ local function LinkifyRemainingCoordPairs(text, defaultZone, defaultLabel)
     if not ls then break end
     local linkSeg = string.sub(text, ls, le)
     table.insert(result, linkSeg)
-    -- 只保留链接的可见文本作为上下文，避免链接载荷中的 label 区域名污染后续坐标的地图推断
-    local linkDisplay = string.match(linkSeg, "|h(%b[])|h") or ""
+    -- 只保留链接的可见文本作为上下文；任务链接的显示名可能包含其他区域名，不能参与后续坐标的地图推断
+    local isQuestLink = string.sub(linkSeg, 1, 7) == "|Hquest" or string.sub(linkSeg, 1, 11) == "|Hwowfquest"
+    local linkDisplay = (not isQuestLink and string.match(linkSeg, "|h(%b[])|h")) or ""
     context = context .. plain .. " " .. linkDisplay
     cursor = le + 1
   end
