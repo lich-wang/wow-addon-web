@@ -217,6 +217,30 @@ async function main() {
     hordeRt.destroy();
   }
 
+  // Strict-data regression check: verify Lv.40 Alliance Mage sees Scarlet Monastery quests in real Data.lua
+  if (opts.assert && opts.strictData && addonName.toLowerCase() === 'wowf') {
+    const lv40Rt = new WoWSimulatorRuntime({
+      level: 40,
+      classKey: 'MAGE',
+      raceKey: '人类',
+      faction: 'Alliance',
+    });
+    lv40Rt.loadAddon(addonName, files);
+    lv40Rt.runSlashCommand('/wowf dungeon');
+    const lv40Snap = lv40Rt.getSnapshot();
+    const smCards = summarizeCards(lv40Snap).filter((c) => c.title.includes('血色修道院'));
+    const smWithQuests = smCards.filter((c) => c.body.includes('必接副本任务 ('));
+    if (lv40Snap.luaErrors.length > 0 || smCards.length === 0 || smWithQuests.length === 0) {
+      console.error(
+        `[Assert Failed] Lv.40 Alliance Scarlet Monastery regression failed (errors=${lv40Snap.luaErrors.length}, smCards=${smCards.length}, smWithQuests=${smWithQuests.length})`
+      );
+      assertionFailed = true;
+    } else {
+      console.log(`[✓] Lv.40 Alliance Scarlet Monastery check passed (${smWithQuests.length}/${smCards.length} wings with quests).`);
+    }
+    lv40Rt.destroy();
+  }
+
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
     process.exit(1);
   }
