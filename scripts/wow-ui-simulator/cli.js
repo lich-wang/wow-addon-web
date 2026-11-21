@@ -19,7 +19,7 @@ function parseArgs(argv) {
     level: 25,
     classKey: 'MAGE',
     faction: 'Alliance',
-    slash: ['/wowf', '/wowf route', '/wowf dungeon', '/wowf class', '/wowf macro', '/wowf news', '/wowf arb'],
+    slash: ['/wowf', '/wowf route', '/wowf dungeon', '/wowf class', '/wowf macro', '/wowf news', '/wowf cmd', '/wowf arb'],
     html: path.resolve('.cache/wow-ui-sim-report.html'),
     assert: false,
     strictData: false,
@@ -267,6 +267,19 @@ async function main() {
       // 普通数据只要求公告卡片存在；坐标链接化由下方已知含坐标的 coordMockLua 回归专门验证
       if (!cards.some((c) => c.title.includes('公告'))) {
         console.error('[Assert Failed] /wowf news 未渲染出公告卡片（检查样例/真实 Data.news）!');
+        assertionFailed = true;
+      }
+    }
+    if (opts.assert && cmd === '/wowf cmd') {
+      // 速查页必须真的渲染出命令卡片，且不得回退到通用斜杠命令或旧版 1.12 命令
+      const withCommand = cards.filter((c) => c.body.includes('命令:'));
+      if (withCommand.length === 0) {
+        console.error('[Assert Failed] /wowf cmd 未渲染出任何命令卡片!');
+        assertionFailed = true;
+      }
+      const banned = cards.find((c) => /\/afk|\/dnd|\/clearChat|旧版镜头|1\.12/.test(`${c.title}\n${c.body}`));
+      if (banned) {
+        console.error(`[Assert Failed] /wowf cmd 仍包含通用/旧版内容: ${banned.title.slice(0, 80)}`);
         assertionFailed = true;
       }
     }
