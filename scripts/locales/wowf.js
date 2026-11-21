@@ -689,27 +689,27 @@ const FOREVER_SYSTEMS_DATA = [
   },
   {
     id: 'legacy-system',
-    category: '经典旧世树',
+    category: '账号成长线',
     minLevel: 1,
-    title: '★ 经典旧世专长（传承点数 · 单角色上限 16 点）',
-    summary: '职业首次达到 25/45/60 级、非采集类主专业达到熟练度或完成探索挑战均可获得传承点数（账号累计上限 65 点，15/25/40/55 点有里程碑奖励）；单角色最多分配 16 点，1 级小号即享全部加成。',
+    title: '★ 传承天赋（单角色上限 16 点）',
+    summary: '《魔兽世界：无限》新增的账号级成长线，独立于职业天赋树：职业首次达到 25/45/60 级、非采集类主专业达到熟练度或完成探索挑战均可获得传承点数（账号累计上限 65 点，15/25/40/55 点有里程碑奖励）；单角色最多分配 16 点，1 级小号即享全部加成。',
     steps: [
       {
         step: 1,
-        zone: '经典旧世树 · 冒险分支',
-        title: '[冒险] 冒险树 · 练级首选',
+        zone: '传承天赋 · 冒险分支',
+        title: '[冒险] 冒险分支 · 练级首选',
         detail: '休息经验、战后恢复、鸟点加速与露营冷却缩减，练级期收益最高。',
       },
       {
         step: 2,
-        zone: '经典旧世树 · 专业分支',
-        title: '[专业] 专业树 · 双采优先',
+        zone: '传承天赋 · 专业分支',
+        title: '[专业] 专业分支 · 双采优先',
         detail: '矿物草药双追踪、读条加速、采集暴击与制造技能点加成。',
       },
       {
         step: 3,
-        zone: '经典旧世树 · 充裕分支',
-        title: '[充裕] 充裕树 · 声望与金币',
+        zone: '传承天赋 · 充裕分支',
+        title: '[充裕] 充裕分支 · 声望与金币',
         detail: '声望/金币掉落提升、邮件即时到达与里程碑外观奖励。',
       },
     ],
@@ -3722,7 +3722,7 @@ function generateWoWFToc(version, updatedAt, dataset) {
 ## Title-zhCN: |cff00ffcc[巫妖王的无限百科]|r 无限服动态指南
 ## OptionalDeps: Questie, QuestieDB
 ## Notes: In-game smart companion for wowf.io on WoW Forever (16001). Dynamically matches leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
-## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/经典旧世树/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
+## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/传承天赋/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
 ## OptionalDeps: EasyAuction
 ## Author: lich.tech & wowf.io
 ## Version: ${version}
