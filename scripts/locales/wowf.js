@@ -3062,6 +3062,7 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
           ? { endNpc: singleEndNpc, endZone: singleEndZone, endX: singleEndX, endY: singleEndY }
           : {}),
         finalObjective: sideData?.objective || '',
+        ...(steps ? { steps } : {}),
       };
     };
 
