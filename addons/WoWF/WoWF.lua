@@ -4267,11 +4267,11 @@ local function RenderTabSmartMatch()
     })
   end
 
-  -- 3.5 经典旧世(传承)点数推荐 (单角色上限 16 点)
+  -- 3.5 传承天赋加点推荐 (单角色上限 16 点)
   do
     local legacyCompactLines = BuildLegacyRecommendationLines(lvl, playerProfs, true)
     list:Add({
-      title = string.format("|cff00ffcc★ Lv.%d 传承点数(经典旧世树)加点推荐 (单角色上限 16 点)|r", lvl),
+      title = string.format("|cff00ffcc★ Lv.%d 传承天赋加点推荐 (单角色上限 16 点)|r", lvl),
       body = table.concat(legacyCompactLines, "\n"),
       theme = "legacy",
       action = {
@@ -5665,12 +5665,12 @@ local function RenderTabForeverAndNews()
 
   list:Add({
     title = "|cff00ffcc[特色&专业] 无限服专属玩法与 1-300 专业指南 (" .. toggle.desc .. ")|r",
-    body = string.format("包含《魔兽世界：无限服》专属玩法（舒适睡袋、制皮营地帐篷、经典旧世传承点数推荐、遭劫的板条箱等）、%d 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营/专业且未完成的特色玩法（已完成睡袋或非制皮帐篷将自动隐藏），以及当前专精推荐专业。", profCount),
+    body = string.format("包含《魔兽世界：无限服》专属玩法（舒适睡袋、制皮营地帐篷、传承天赋加点推荐、遭劫的板条箱等）、%d 大专业 1-300 冲级指南与最新热修公告。默认仅显示适合当前等级/阵营/专业且未完成的特色玩法（已完成睡袋或非制皮帐篷将自动隐藏），以及当前专精推荐专业。", profCount),
     theme = "legacy",
     action = toggle.action,
   })
 
-  -- 1. 无限服专属玩法攻略（露营、睡袋、经典旧世之树、物资箱等）
+  -- 1. 无限服专属玩法攻略（露营、睡袋、传承天赋、物资箱等）
   for _, sys in ipairs(Data.foreverSystems or {}) do
     local levelMatch = (not isMatchMode) or (not sys.minLevel) or (state.level >= sys.minLevel)
     local sysMatch = true
