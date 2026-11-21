@@ -3279,7 +3279,7 @@ local function PruneExclusiveDuplicateCandidates(candidates)
                 and (infoA.npc or "") ~= "" and (infoA.npc or "") == (infoB.npc or "")
                 and infoA.level == infoB.level
                 and infoA.minLevel == infoB.minLevel
-                and (infoA.zone or "") == (infoB.zone or "") then
+                and (infoA.zone or "") ~= "" and (infoA.zone or "") == (infoB.zone or "") then
                 if locA then drop[eid] = true else drop[cid] = true end
                 break
               end
