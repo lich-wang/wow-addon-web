@@ -161,9 +161,32 @@ WoWF_Data = {
       key = "orc",
       name = "兽人 / 巨魔 (杜隆塔尔 -> 贫瘠之地)",
       faction = "horde",
+      classRunsByClass = {
+        MAGE = {
+          {
+            id = 99020,
+            level = 20,
+            to = 30,
+            faction = "horde",
+            raceName = "兽人",
+            name = "法师的试炼（部落）",
+            steps = {
+              { id = 99021, name = "法师的试炼：部族", level = 20, zone = "杜隆塔尔", npc = "法师训练师", x = 52.0, y = 43.5 },
+              { id = 99022, name = "法师的试炼：回响", level = 25, zone = "贫瘠之地", npc = "法师训练师", x = 51.9, y = 30.3 },
+            },
+          },
+        },
+      },
       bands = {
         { from = 1, to = 12, zone = "杜隆塔尔", hub = { name = "剃刀岭", x = 52.0, y = 43.5 }, quests = {} },
-        { from = 13, to = 28, zone = "贫瘠之地", hub = { name = "十字路口", x = 51.9, y = 30.3 }, quests = {} },
+        {
+          from = 13, to = 28, zone = "贫瘠之地",
+          hub = { name = "十字路口", x = 51.9, y = 30.3 },
+          altZones = {
+            { zone = "石爪山脉", hub = "石爪峰", from = 18, to = 25, x = 40.8, y = 28.1, note = "石爪峰任务线与黑暗深渊前置" },
+          },
+          quests = {},
+        },
       },
     },
   },
