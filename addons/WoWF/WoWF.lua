@@ -670,7 +670,7 @@ local function UpdateWorldMapHighlightPin()
 
   customMapPin:ClearAllPoints()
   customMapPin:SetPoint("CENTER", canvas, "TOPLEFT", (activePinState.x / 100) * w, -(activePinState.y / 100) * h)
-  customMapPin.label:SetText(string.format("|cff00ffcc★ %s|r |cffffd100(%.1f, %.1f)|r", activePinState.label or "目标点", activePinState.x, activePinState.y))
+  customMapPin.label:SetText(string.format("|cff00ffcc★ %s|r", activePinState.label or "目标点"))
   local lw = (customMapPin.label:GetStringWidth() or 80) + 10
   local lh = (customMapPin.label:GetStringHeight() or 14) + 4
   customMapPin.labelBg:ClearAllPoints()
@@ -731,6 +731,40 @@ local function InsertLinkToChat(chatLink)
     return true
   end
   return false
+end
+
+local function SanitizeLinkField(str)
+  if not str or str == "" then return "-" end
+  local s = string.gsub(tostring(str), "|c%x%x%x%x%x%x%x%x", "")
+  s = string.gsub(s, "|r", "")
+  s = string.gsub(s, "[|:hH%[%]\r\n]", " ")
+  s = string.gsub(s, "^%s*(.-)%s*$", "%1")
+  if s == "" then return "-" end
+  return s
+end
+
+-- 生成可在聊天框点击的原生世界地图链接：可见文本只显示区域/地点名称，坐标只保存在链接载荷中
+local function BuildChatWorldMapLink(mapID, x, y, zone, label)
+  local numX = tonumber(x)
+  local numY = tonumber(y)
+  if not numX or not numY then return "" end
+  local mid = tonumber(mapID) or 1429
+  local scaledX = math.floor(numX * 100 + 0.5)
+  local scaledY = math.floor(numY * 100 + 0.5)
+  local zText = (zone and zone ~= "" and zone ~= "-") and zone or ""
+  local lText = (label and label ~= "" and label ~= "-") and label or ""
+  local displayText
+  if zText ~= "" and lText ~= "" and lText ~= zText then
+    displayText = zText .. " · " .. lText
+  elseif lText ~= "" then
+    displayText = lText
+  elseif zText ~= "" then
+    displayText = zText
+  else
+    displayText = "地图"
+  end
+  displayText = SanitizeLinkField(displayText)
+  return string.format("|cffffff00|Hworldmap:%d:%d:%d|h[%s]|h|r", mid, scaledX, scaledY, displayText)
 end
 
 local function OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
@@ -820,25 +854,15 @@ local function OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
     pcall(SlashCmdList["TOMTOM_WAY"], string.format("%s %.1f %.1f %s", displayZone, numX, numY, displayLabel))
   end
 
-  -- 4. 在聊天框输出原生可点击的 |Hworldmap:...|h 坐标链接
-  local scaledX = math.floor(numX * 100 + 0.5)
-  local scaledY = math.floor(numY * 100 + 0.5)
-  local worldMapLink = string.format("|cffffff00|Hworldmap:%d:%d:%d|h[%s · %s (%.1f, %.1f)]|h|r", mapID or 1429, scaledX, scaledY, displayZone, displayLabel, numX, numY)
-  DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 已在世界地图标记坐标: " .. worldMapLink .. " |cffaaaaaa(Shift+点击坐标可直接发到聊天框)|r")
+  -- 4. 在聊天框输出原生可点击的 |Hworldmap:...|h 地图链接（可见文本不显示坐标）
+  local worldMapLink = BuildChatWorldMapLink(mapID, numX, numY, displayZone, displayLabel)
+  if worldMapLink ~= "" then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 已记录到世界地图: " .. worldMapLink .. " |cffaaaaaa(Shift+点击链接可直接发到聊天框)|r")
+  end
 end
 
 local function SetWaypointOrPrint(zone, name, x, y, explicitMapID)
   OpenMapAndSetWaypoint(zone, name, x, y, explicitMapID)
-end
-
-local function SanitizeLinkField(str)
-  if not str or str == "" then return "-" end
-  local s = string.gsub(tostring(str), "|c%x%x%x%x%x%x%x%x", "")
-  s = string.gsub(s, "|r", "")
-  s = string.gsub(s, "[|:hH%[%]\r\n]", " ")
-  s = string.gsub(s, "^%s*(.-)%s*$", "%1")
-  if s == "" then return "-" end
-  return s
 end
 
 local function FormatCoordLink(zone, label, x, y, prefixSpace)
@@ -851,8 +875,8 @@ local function FormatCoordLink(zone, label, x, y, prefixSpace)
   local safeLabel = SanitizeLinkField((label and label ~= "") and label or zone)
   local sp = (prefixSpace == false) and "" or " "
   return string.format(
-    "%s|cff00ffcc|Hwowfmap:%d:%.1f:%.1f:%s:%s|h[%.1f, %.1f]|h|r",
-    sp, mapID, numX, numY, safeZone, safeLabel, numX, numY
+    "%s|cff00ffcc|Hwowfmap:%d:%.1f:%.1f:%s:%s|h[定位]|h|r",
+    sp, mapID, numX, numY, safeZone, safeLabel
   )
 end
 
@@ -1006,12 +1030,48 @@ local function HasNpcDelimiter(s)
   return false
 end
 
+-- 补漏：处理 “(瑟根石 47.8, 56.3)” 这类括号内带地名、以及箭头多坐标等首轮正则覆盖不到的坐标对
+local function LinkifyRemainingCoordPairs(text, defaultZone, defaultLabel)
+  local result = {}
+  local lastPos = 1
+  while true do
+    local s, e, xStr, yStr = string.find(text, "(%d+%.%d+)%s*[,，]%s*(%d+%.?%d*)", lastPos)
+    if not s then
+      table.insert(result, string.sub(text, lastPos))
+      break
+    end
+    table.insert(result, string.sub(text, lastPos, s - 1))
+    local nx = tonumber(xStr)
+    local ny = tonumber(yStr)
+    if nx and ny and nx >= 1 and nx <= 99.9 and ny >= 1 and ny <= 99.9 then
+      local contextStart = math.max(1, s - 60)
+      local recentText = string.sub(text, contextStart, s - 1)
+      local inferredZone = DetectZoneInPrefix(recentText, defaultZone)
+      local link = FormatCoordLink(inferredZone, defaultLabel or inferredZone, nx, ny, false)
+      table.insert(result, (link ~= "") and link or string.sub(text, s, e))
+    else
+      table.insert(result, string.sub(text, s, e))
+    end
+    lastPos = e + 1
+  end
+  return table.concat(result, "")
+end
+
 local function LinkifyInlineCoords(text, defaultZone, defaultLabel, opts)
   if not text or text == "" then return "" end
   local linkifyNpc = opts and opts.linkifyNpc == true
   local out = tostring(text)
   -- 将中文全角括号内的坐标统一转为半角括号再替换为可点击地图链接
   out = string.gsub(out, "（(%d+%.?%d*)%s*[,，]%s*(%d+%.?%d*)）", "(%1, %2)")
+  -- 箭头/连字符多坐标（如 “(39.7, 50.0 → 50.8, 52.7)”）拆成两个独立坐标组，避免漏掉后一处坐标
+  local multiCoordPatterns = {
+    "%(%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*→%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*%)",
+    "%(%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*—%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*%)",
+    "%(%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*[~%-]%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*%)",
+  }
+  for _, pat in ipairs(multiCoordPatterns) do
+    out = string.gsub(out, pat, "(%1, %2) / (%3, %4)")
+  end
   local result = {}
   local lastPos = 1
   while true do
@@ -1053,7 +1113,7 @@ local function LinkifyInlineCoords(text, defaultZone, defaultLabel, opts)
     end
     lastPos = e + 1
   end
-  return table.concat(result, "")
+  return LinkifyRemainingCoordPairs(table.concat(result, ""), defaultZone, defaultLabel)
 end
 
 local questMetaById = {}
@@ -2798,29 +2858,33 @@ local function FormatBandZonesBlock(band, headerLabel)
     return nil
   end
   local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or ""
-  local hubCoord = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, (hubName ~= "") and hubName or band.zone, band.hub.x, band.hub.y) or ""
-  local hubPart = (hubName ~= "") and (hubName .. " ") or ""
+  local hubText = (hubName ~= "") and hubName or (band.zone or "")
+  local hubLink = (band.hub and band.hub.x and band.hub.y and hubText ~= "")
+    and FormatNpcMapLink(band.zone, hubText, band.hub.x, band.hub.y, { omitZone = true })
+    or ((hubText ~= "") and ("|cff00ffcc" .. hubText .. "|r") or "")
+  local hubPart = (hubLink ~= "") and (hubLink .. " ") or ""
   local zoneLines = {
     string.format(
-      "  · |cff00ffcc%s|r (%sLv.%d-%d)%s",
+      "  · |cff00ffcc%s|r (%sLv.%d-%d)",
       band.zone or "",
       hubPart,
       band.from or 1,
-      band.to or 60,
-      hubCoord
+      band.to or 60
     )
   }
   for _, az in ipairs(band.altZones) do
-    local ac = (az.x and az.y) and FormatCoordLink(az.zone, (az.hub and az.hub ~= "") and az.hub or az.zone, az.x, az.y) or ""
-    local azHubPart = (az.hub and az.hub ~= "") and (az.hub .. " ") or ""
-    local noteStr = (az.note and az.note ~= "") and (" — " .. az.note) or ""
+    local azLabel = (az.hub and az.hub ~= "") and az.hub or az.zone or ""
+    local ac = (az.x and az.y and azLabel ~= "")
+      and FormatNpcMapLink(az.zone, azLabel, az.x, az.y, { omitZone = true })
+      or ((azLabel ~= "") and ("|cff00ffcc" .. azLabel .. "|r") or "")
+    local azHubPart = (ac ~= "") and (ac .. " ") or ""
+    local noteStr = (az.note and az.note ~= "") and (" — " .. LinkifyInlineCoords(az.note, az.zone or "", azLabel)) or ""
     table.insert(zoneLines, string.format(
-      "  · |cff00ffcc%s|r (%sLv.%d-%d)%s%s",
+      "  · |cff00ffcc%s|r (%sLv.%d-%d)%s",
       az.zone or "",
       azHubPart,
       az.from or band.from or 1,
       az.to or band.to or 60,
-      ac,
       noteStr
     ))
   end
@@ -3399,16 +3463,17 @@ local function OnCardHyperlinkEnter(self, link)
     local nx = tonumber(xStr)
     local ny = tonumber(yStr)
     GameTooltip:ClearLines()
-    GameTooltip:AddLine(string.format("|cff00ffcc[坐标导航]|r %s", (label and label ~= "" and label ~= "-") and label or (zone or "目标点")))
+    GameTooltip:AddLine(string.format("|cff00ffcc[地图定位]|r %s", (label and label ~= "" and label ~= "-") and label or (zone or "目标点")))
     if zone and zone ~= "" and zone ~= "-" then
-      GameTooltip:AddLine(string.format("区域: |cffffd100%s|r (MapID: %s)", zone, mapID or "?"))
+      GameTooltip:AddLine(string.format("区域: |cffffd100%s|r", zone))
     end
     if nx and ny then
       GameTooltip:AddLine(string.format("坐标: |cff00ff00%.1f, %.1f|r", nx, ny))
     end
     GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("|cff00ff00左键点击:|r 打开世界地图并标记坐标")
-    GameTooltip:AddLine("|cff00ff00Shift+左键:|r 插入地图链接到聊天框")
+    GameTooltip:AddLine("|cff00ff00左键点击:|r 记录到世界地图并标点")
+    GameTooltip:AddLine("|cff00ff00右键点击:|r 发送地图链接到聊天框")
+    GameTooltip:AddLine("|cff00ff00Shift+左键:|r 发送地图链接到聊天框")
     GameTooltip:Show()
   elseif linkType == "quest" or linkType == "wowfquest" then
     local qidStr, lvlStr, fKey = string.match(payload or "", "^(%d+):?(%d*):?(.*)$")
@@ -3437,13 +3502,13 @@ local function OnCardHyperlinkEnter(self, link)
         GameTooltip:AddLine("接取地点: |cffffffff" .. loc .. "|r")
       end
       if meta.x and meta.y then
-        GameTooltip:AddLine(string.format("坐标: |cff00ff00%.1f, %.1f|r", meta.x, meta.y))
+        GameTooltip:AddLine(string.format("接取坐标: |cff00ff00%.1f, %.1f|r", meta.x, meta.y))
       end
     end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("|cff00ff00左键 / Shift+左键:|r 发送任务链接到聊天框")
     if meta and meta.x and meta.y then
-      GameTooltip:AddLine("|cff00ff00右键点击:|r 打开世界地图标记接取坐标")
+      GameTooltip:AddLine("|cff00ff00右键点击:|r 记录接取地点到世界地图")
     end
     GameTooltip:Show()
   elseif linkType == "wowfnpc" then
@@ -3502,11 +3567,12 @@ local function OnCardHyperlinkClick(self, link, text, button)
     local mid = tonumber(mapID)
     local zText = (zone and zone ~= "-") and zone or ""
     local lText = (label and label ~= "-") and label or zText
-    if IsShiftKeyDown and IsShiftKeyDown() and nx and ny then
-      local sx = math.floor(nx * 100 + 0.5)
-      local sy = math.floor(ny * 100 + 0.5)
-      local wmLink = string.format("|cffffff00|Hworldmap:%d:%d:%d|h[%s · %s (%.1f, %.1f)]|h|r", mid or 1429, sx, sy, zText ~= "" and zText or "地图", lText ~= "" and lText or "坐标", nx, ny)
-      InsertLinkToChat(wmLink)
+    local wantChat = (button == "RightButton") or (IsShiftKeyDown and IsShiftKeyDown())
+    if wantChat and nx and ny then
+      local wmLink = BuildChatWorldMapLink(mid, nx, ny, zText, lText)
+      if wmLink ~= "" then
+        InsertLinkToChat(wmLink)
+      end
     else
       OpenMapAndSetWaypoint(zText, lText, nx, ny, mid)
     end
@@ -3867,22 +3933,28 @@ local function BuildBandLines(band, opts)
   local lines = {}
 
   local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
-  local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
+  local hubText = (hubName and hubName ~= "") and hubName or "主营地"
+  local hubLink = (band.hub and band.hub.x and band.hub.y and hubText ~= "")
+    and FormatNpcMapLink(band.zone, hubText, band.hub.x, band.hub.y, { omitZone = true })
+    or ("|cff00ffcc" .. hubText .. "|r")
   local zonesBlock = FormatBandZonesBlock(band, opts.zonesHeader or "本阶段适龄练级区域 (平级推荐，可自由切换)")
   if zonesBlock then
     table.insert(lines, zonesBlock)
   elseif opts.isSmartMatch then
-    table.insert(lines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s%s", band.zone or "未知", hubName or "", coordStr))
+    table.insert(lines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r   ·   |cffffd100核心营地/城镇:|r %s", band.zone or "未知", hubLink))
   else
-    table.insert(lines, string.format("|cffffd100驻扎营地/城镇:|r |cff00ffcc%s|r%s", hubName or "主营地", coordStr))
+    table.insert(lines, string.format("|cffffd100驻扎营地/城镇:|r %s", hubLink))
   end
 
   if not zonesBlock and band.hubs and #band.hubs > 1 then
     local subHubs = {}
     for _, h in ipairs(band.hubs) do
-      local hc = (h.x and h.y) and FormatCoordLink(band.zone, h.name, h.x, h.y) or ""
+      local hName = h.name or ""
+      local hLink = (h.x and h.y and hName ~= "")
+        and FormatNpcMapLink(band.zone, hName, h.x, h.y, { omitZone = true })
+        or ((hName ~= "") and ("|cff00ffcc" .. hName .. "|r") or "")
       local activeMark = (opts.markActiveHub and lvl >= (h.from or 1) and lvl <= (h.to or 60)) and "|cff00ff00★|r" or ""
-      table.insert(subHubs, string.format("%s%s[Lv.%d-%d]%s", activeMark, h.name or "", h.from or band.from, h.to or band.to, hc))
+      table.insert(subHubs, string.format("%s%s[Lv.%d-%d]", activeMark, hLink, h.from or band.from, h.to or band.to))
     end
     table.insert(lines, (opts.subHubLabel or "|cff99e6ff分阶段据点:|r ") .. table.concat(subHubs, " -> "))
   end
@@ -3992,7 +4064,7 @@ local function RenderTabSmartMatch()
   if recProfs ~= "" then
     table.insert(overviewLines, "|cff00ff96专精推荐专业:|r " .. recProfs)
   end
-  table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc点击蓝绿 NPC/坐标|r 打开地图标点 (Shift+左键发聊天)；|cffffff00点击黄色任务|r 发聊天 (右键标点)；|cff1eff00物品链接|r 悬停看完整提示，Shift+左键发聊天。")
+  table.insert(overviewLines, "|cff99e6ff交互提示:|r |cff00ffcc青色 NPC/地点/定位链接|r 左键标点到地图、右键发聊天；|cffffff00黄色任务链接|r 左键发聊天、右键标点；|cff1eff00物品链接|r 悬停看完整提示，Shift+左键发聊天。")
   local playerProfs = GetPlayerProfessions()
   if lvl >= 14 and lvl < 60 and not IsQuestCompletedById(79975) then
     if HasPlayerProfession(playerProfs, "制皮", "Leatherworking") then
@@ -4013,12 +4085,15 @@ local function RenderTabSmartMatch()
   if band then
     local bandLines = {}
     local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
-    local coordStr = (band.hub and band.hub.x and band.hub.y) and FormatCoordLink(band.zone, hubName, band.hub.x, band.hub.y) or ""
+    local hubText = (hubName and hubName ~= "") and hubName or "未知"
+    local hubLink = (band.hub and band.hub.x and band.hub.y)
+      and FormatNpcMapLink(band.zone, hubText, band.hub.x, band.hub.y, { omitZone = true })
+      or ("|cff00ffcc" .. hubText .. "|r")
     local zonesBlock = FormatBandZonesBlock(band, "当前适龄练级区域")
     if zonesBlock then
       table.insert(bandLines, zonesBlock)
     else
-      table.insert(bandLines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r  ·  |cffffd100核心据点:|r %s%s", band.zone or "未知", hubName or "", coordStr))
+      table.insert(bandLines, string.format("|cffffd100当前练级区域:|r |cff00ffcc%s|r  ·  |cffffd100核心据点:|r %s", band.zone or "未知", hubLink))
     end
     local matchedTrainer = GetBandTrainer(band, state.classKey, state.faction)
     if matchedTrainer and matchedTrainer.name ~= "" then
@@ -4153,7 +4228,9 @@ local function RenderTabSmartMatch()
     local dLines = {}
     for _, d in ipairs(matchedDungeons) do
       local newTag = d.isNew and " |cff00ffcc[★无限服新增]|r" or ""
-      local entCoord = (d.entranceX and d.entranceY) and FormatCoordLink(d.entranceZone or d.zone, d.name .. "入口", d.entranceX, d.entranceY) or ""
+      local entLink = (d.entranceX and d.entranceY)
+        and FormatNpcMapLink(d.entranceZone or d.zone, "副本入口", d.entranceX, d.entranceY, { omitZone = true }) or ""
+      local zoneText = LinkifyInlineCoords(d.zone or "", d.entranceZone or d.zone or "", d.name)
       local pendingCount = 0
       for _, q in ipairs(DedupeQuestieQuests(d.quests or {})) do
         if (q.faction == "both" or q.faction == state.faction) and MatchesQuestClass(q) and (not IsQuestCompleted(q)) then
@@ -4162,7 +4239,7 @@ local function RenderTabSmartMatch()
       end
       table.insert(dLines, string.format(
         "|cffff8000[%s]|r (Lv.%d-%d · 推荐 %d 级 · %s%s) — 未完成任务 |cffffd100%d|r 个%s",
-        d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", entCoord, pendingCount, newTag
+        d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, zoneText, (entLink ~= "") and (" " .. entLink) or "", pendingCount, newTag
       ))
     end
     list:Add({
@@ -4356,7 +4433,8 @@ local function RenderTabRoutes()
         elseif tl.kind == "dungeon" and tl.name and not seenDungeonVisit[tl.name] then
           seenDungeonVisit[tl.name] = true
           local dObj = GetDungeonByIdOrName(tl.dungeonId, tl.name)
-          local dEnt = (dObj and dObj.entranceX and dObj.entranceY) and FormatCoordLink(dObj.entranceZone or dObj.zone, tl.name .. "入口", dObj.entranceX, dObj.entranceY) or ""
+          local dEnt = (dObj and dObj.entranceX and dObj.entranceY)
+            and FormatNpcMapLink(dObj.entranceZone or dObj.zone, "副本入口", dObj.entranceX, dObj.entranceY, { omitZone = true }) or ""
           table.insert(lines, string.format("|cffff8000[推荐进本] [Lv.%d %s]|r 适龄 Lv.%d-%d (%s%s)", tl.level or b.from, tl.name, tl.minLevel or b.from, tl.maxLevel or b.to, tl.zone or "", dEnt))
         elseif tl.kind == "travel" and (tl.from ~= "" or tl.to ~= "") then
           local tKey = tostring(tl.level) .. ":" .. (tl.from or "") .. "->" .. (tl.to or "") .. ":" .. (tl.via or "")
@@ -4389,7 +4467,7 @@ local function RenderTabRoutes()
         theme = isCurrent and "routeCur" or "routeIdle",
         badge = string.format("Lv.%d-%d", b.from, b.to),
         action = (b.hub and b.hub.x) and {
-          label = "标记营地坐标",
+          label = "标记营地到地图",
           fn = function() SetWaypointOrPrint(b.zone, b.hub.name, b.hub.x, b.hub.y) end,
         } or nil,
       })
@@ -4418,7 +4496,7 @@ local function RenderTabRoutes()
               shownZoneCards = shownZoneCards + 1
               local zLines = {}
               if zInfo.note and zInfo.note ~= "" then
-                table.insert(zLines, "|cff99e6ff区域指引:|r " .. zInfo.note)
+                table.insert(zLines, "|cff99e6ff区域指引:|r " .. LinkifyInlineCoords(zInfo.note, zInfo.zone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone)))
               end
               RenderQuestGroups(zLines, groups, {
                 useMatched = true,
@@ -4434,7 +4512,7 @@ local function RenderTabRoutes()
                 theme = "zone",
                 badge = string.format("可接 %d 条任务链", #groups),
                 action = (zInfo.x and zInfo.y) and {
-                  label = "标记营地坐标",
+                  label = "标记营地到地图",
                   fn = function()
                     SetWaypointOrPrint(zInfo.hubZone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone), zInfo.x, zInfo.y)
                   end,
@@ -4663,7 +4741,7 @@ local function RenderTabDungeons()
   list:Add({
     title = "|cffff8000[副本] 艾泽拉斯地下城与无限服新副本百科 (" .. toggle.desc .. ")|r",
     body = string.format(
-      "包含共 |cffffd100%d|r 个地下城与团本（含《魔兽世界：无限服》|cff00ffcc%d 个新增副本|r：%s）及必接副本任务坐标。点击蓝色坐标可直接在世界地图标点，点击黄色任务链接可发送至聊天框。",
+      "包含共 |cffffd100%d|r 个地下城与团本（含《魔兽世界：无限服》|cff00ffcc%d 个新增副本|r：%s）及必接副本任务与入口位置。点击 |cff00ffcc青色地点链接|r 可记录到世界地图（右键发送到聊天框），点击 |cffffff00黄色任务|r 发送任务链接到聊天框（右键标记任务地点）。",
       #allDungeons,
       newCount,
       #newDungeonNames > 0 and table.concat(newDungeonNames, "、") or "暂无"
@@ -4695,8 +4773,8 @@ local function RenderTabDungeons()
       shownCount = shownCount + 1
       local lines = {}
       if d.entranceX and d.entranceY then
-        local entLink = FormatCoordLink(d.entranceZone or d.zone, d.name .. "副本入口", d.entranceX, d.entranceY)
-        table.insert(lines, string.format("|cff00ffcc副本入口位置:|r %s%s", d.entranceZone or d.zone or "", entLink))
+        local entLink = FormatNpcMapLink(d.entranceZone or d.zone, "副本入口", d.entranceX, d.entranceY, { omitZone = true })
+        table.insert(lines, string.format("|cff00ffcc副本入口位置:|r %s%s", LinkifyInlineCoords(d.entranceZone or d.zone or "", d.entranceZone or d.zone or "", d.name), (entLink ~= "") and (" " .. entLink) or ""))
       end
       if d.summary and d.summary ~= "" then
         table.insert(lines, "|cff99e6ff简介:|r " .. LinkifyInlineCoords(d.summary, d.entranceZone or d.zone or "", d.name))
@@ -4738,7 +4816,7 @@ local function RenderTabDungeons()
       local doneBadge = allDone and " |cff00ff00[任务已全部完成]|r" or ""
 
       list:Add({
-        title = string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, d.zone or "", newBadge, matchBadge, doneBadge),
+        title = string.format("|cffff8000%s|r  |cffffd100(Lv.%d-%d · 推荐 %d 级)|r  —  %s%s%s%s", d.name, d.minLevel, d.maxLevel, d.visit or d.minLevel, LinkifyInlineCoords(d.zone or "", d.entranceZone or d.zone or "", d.name), newBadge, matchBadge, doneBadge),
         body = table.concat(lines, "\n"),
         theme = d.isNew and "dunNew" or (isLevelMatch and "dunMatch" or "info"),
         badge = string.format("Lv.%d-%d", d.minLevel, d.maxLevel),
@@ -5358,10 +5436,25 @@ local function RenderTabForeverAndNews()
           end
         end
         if factionMatch then
+          local stepLabel = (st.questName and st.questName ~= "") and st.questName or stepTitle
           if st.coord and not firstCoord then
-            firstCoord = { zone = st.zone, title = st.title, x = st.coord.x, y = st.coord.y }
+            firstCoord = { zone = st.zone, title = stepLabel, x = st.coord.x, y = st.coord.y }
           end
-          local stepHeader = "|cffffd100" .. stepTitle .. "|r"
+          local titleText = LinkifyInlineCoords(stepTitle, st.zone or "", stepLabel)
+          if not string.find(titleText, "|Hwowfmap:", 1, true) and not string.find(titleText, "|Hwowfnpc:", 1, true) then
+            if st.coord then
+              titleText = titleText .. FormatCoordLink(st.zone or "", stepLabel, st.coord.x, st.coord.y)
+            end
+            if st.altCoord then
+              titleText = titleText .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or stepLabel, st.altCoord.x, st.altCoord.y, false)
+            end
+          elseif st.altCoord then
+            local altX = string.format("%.1f", tonumber(st.altCoord.x) or 0)
+            if not string.find(stepTitle, altX, 1, true) then
+              titleText = titleText .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or stepLabel, st.altCoord.x, st.altCoord.y, false)
+            end
+          end
+          local stepHeader = "|cffffd100" .. titleText .. "|r"
           if st.questId and st.questName then
             local qObj = {
               id = st.questId,
@@ -5373,24 +5466,18 @@ local function RenderTabForeverAndNews()
             }
             stepHeader = stepHeader .. "  " .. FormatQuestLink(qObj, st.questLevel or 14, st.zone or "")
           end
-          if st.coord then
-            stepHeader = stepHeader .. FormatCoordLink(st.zone or "", st.title or "", st.coord.x, st.coord.y)
-          end
-          if st.altCoord then
-            stepHeader = stepHeader .. " / " .. FormatCoordLink(st.altCoord.zone or "", st.altCoord.label or st.title or "", st.altCoord.x, st.altCoord.y, false)
-          end
-          local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", st.title or "")
+          local stepDetail = LinkifyInlineCoords(st.detail or "", st.zone or "", stepLabel)
           table.insert(lines, string.format("\n%s\n%s", stepHeader, stepDetail))
         end
       end
 
       list:Add({
-        title = "|cff00ffcc" .. (sys.title or "") .. "|r",
+        title = "|cff00ffcc" .. LinkifyInlineCoords(sys.title or "", "", sys.title or "") .. "|r",
         body = table.concat(lines, "\n"),
         theme = "legacy",
         badge = sys.category or "无限服特色",
         action = firstCoord and {
-          label = "标记起始坐标",
+          label = "标记起点到地图",
           fn = function() SetWaypointOrPrint(firstCoord.zone, firstCoord.title, firstCoord.x, firstCoord.y) end,
         } or nil,
       })
@@ -5436,7 +5523,7 @@ local function RenderTabForeverAndNews()
   -- 3. wowf.io 最新热修公告
   local newsLines = {}
   for _, n in ipairs(Data.news or {}) do
-    table.insert(newsLines, string.format("- |cffffd100[%s] %s|r\n  %s", n.date or "", n.title or "", n.summary or ""))
+    table.insert(newsLines, string.format("- |cffffd100[%s] %s|r\n  %s", n.date or "", n.title or "", LinkifyInlineCoords(n.summary or "", "", n.title or "公告")))
   end
   if #newsLines > 0 then
     local meta = Data.meta or {}

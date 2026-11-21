@@ -13,7 +13,7 @@ function parseArgs(argv) {
     level: 25,
     classKey: 'MAGE',
     faction: 'Alliance',
-    slash: ['/wowf', '/wowf route', '/wowf dungeon', '/wowf class', '/wowf macro', '/wowf arb'],
+    slash: ['/wowf', '/wowf route', '/wowf dungeon', '/wowf class', '/wowf macro', '/wowf news', '/wowf arb'],
     html: path.resolve('.cache/wow-ui-sim-report.html'),
     assert: false,
     strictData: false,
@@ -154,6 +154,26 @@ async function main() {
       console.error(`[Assert Failed] ${cmd} rendered 0 cards!`);
       assertionFailed = true;
     }
+    // 坐标只允许存在于链接载荷与悬停 Tooltip 中；卡片标题/正文不得出现裸坐标数值
+    if (opts.assert) {
+      const coordPattern = /\b\d{1,2}\.\d\s*,\s*\d{1,2}\.\d\b/;
+      for (const c of cards) {
+        const leaked = [c.title, c.body].find((t) => coordPattern.test(t));
+        if (leaked) {
+          console.error(`[Assert Failed] ${cmd} 仍渲染出裸坐标: ${String(leaked).slice(0, 160)}`);
+          assertionFailed = true;
+          break;
+        }
+      }
+      for (const m of snap.chatMessages) {
+        const plain = stripWoWFormatting(m.text);
+        if (coordPattern.test(plain)) {
+          console.error(`[Assert Failed] ${cmd} 聊天框仍输出裸坐标: ${plain.slice(0, 160)}`);
+          assertionFailed = true;
+          break;
+        }
+      }
+    }
     if (opts.assert && cmd === '/wowf dungeon') {
       const dungeonCards = cards.filter((c) => c.body.includes('副本入口位置'));
       if (dungeonCards.length === 0) {
@@ -165,6 +185,10 @@ async function main() {
         console.error('[Assert Failed] /wowf dungeon rendered 0 cards with 必接副本任务!');
         assertionFailed = true;
       }
+    }
+    if (opts.assert && cmd === '/wowf news' && !cards.some((c) => c.body.includes('[定位]'))) {
+      console.error('[Assert Failed] /wowf news 未把正文坐标转换为 [定位] 链接!');
+      assertionFailed = true;
     }
     for (const c of cards.slice(0, 6)) {
       console.log(`  [Card] ${c.title.split('\n')[0]}`);
