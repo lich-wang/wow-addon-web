@@ -3232,6 +3232,71 @@ local function CloneZoneQuestCandidate(q)
   return copy
 end
 
+-- 判断任务名是否包含非 ASCII 字符（中文/韩文/俄文等本地化名称）。
+-- 中文客户端里，客户端已不存在的任务只能回落到 QuestieDB 的英文名，
+-- 这类记录往往是经典任务与无限服替换任务并存造成的重复项（如 1203 / 81570「加尔的剑」）。
+local function QuestNameHasLocalizedText(name)
+  if type(name) ~= "string" or name == "" then return false end
+  for i = 1, #name do
+    if string.byte(name, i) >= 128 then return true end
+  end
+  return false
+end
+
+-- 区域任务链去重：同一任务在 QuestieDB 中可能同时存在互斥的经典版与无限服替换版。
+-- 仅当两条记录发布者、任务等级、区域完全一致，且只有一条能取到本地化名称时，
+-- 才丢弃无法本地化的那一条，避免误伤真正的互斥分支（如二选一任务）。
+local function PruneExclusiveDuplicateCandidates(candidates)
+  if type(candidates) ~= "table" or #candidates == 0 then return candidates end
+  local locale = (GetLocale and GetLocale()) or ""
+  if type(locale) ~= "string" or not string.find(string.lower(locale), "zh", 1, true) then
+    return candidates
+  end
+  if not _G.QuestDB or not _G.QuestDB.exclusiveTo then return candidates end
+  local byId = {}
+  for _, cand in ipairs(candidates) do
+    local cid = tonumber(cand.id or cand.questId)
+    if cid then byId[cid] = cand end
+  end
+  if next(byId) == nil then return candidates end
+
+  local drop = {}
+  for cid in pairs(byId) do
+    if not drop[cid] then
+      local ex = _G.QuestDB.exclusiveTo(cid)
+      if type(ex) == "table" then
+        for _, rawEid in ipairs(ex) do
+          local eid = tonumber(rawEid)
+          if eid and byId[eid] and not drop[eid] then
+            local infoA = GetQuestieQuestInfo(cid)
+            local infoB = GetQuestieQuestInfo(eid)
+            if infoA and infoB then
+              local locA = QuestNameHasLocalizedText(infoA.name)
+              local locB = QuestNameHasLocalizedText(infoB.name)
+              if locA ~= locB
+                and (infoA.npc or "") ~= "" and (infoA.npc or "") == (infoB.npc or "")
+                and (infoA.level or 0) == (infoB.level or 0)
+                and (infoA.minLevel or 0) == (infoB.minLevel or 0)
+                and (infoA.zone or "") == (infoB.zone or "") then
+                if locA then drop[eid] = true else drop[cid] = true end
+                break
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  if next(drop) == nil then return candidates end
+
+  local kept = {}
+  for _, cand in ipairs(candidates) do
+    local cid = tonumber(cand.id or cand.questId)
+    if not (cid and drop[cid]) then table.insert(kept, cand) end
+  end
+  return kept
+end
+
 local function GetZoneSuitableQuestChains(zoneName, lvl)
   local pool = GetZoneQuestPool(zoneName)
   if not pool or #pool == 0 then return {} end
@@ -3422,6 +3487,8 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
     end
   end
 
+  if #candidates == 0 then return {} end
+  candidates = PruneExclusiveDuplicateCandidates(candidates)
   if #candidates == 0 then return {} end
   local exactUnique = {}
   local seenSeq = {}
