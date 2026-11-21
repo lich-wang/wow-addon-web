@@ -7,13 +7,11 @@ import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
 import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
-import { patchMapzeroth } from './locales/mapzeroth.js';
 import {
   buildWoWFAddon,
   hasValidZoneQuestsBuffer,
   isValidZoneQuestsData,
 } from './locales/wowf.js';
-import { buildForeverTransitAddon } from './locales/foreverTransit.js';
 
 const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -827,34 +825,44 @@ async function processForeverMouseTooltip() {
 }
 
 // ---------------------------------------------------------------------------
-// 9. Mapzeroth (Forever GPS Navigation)
+// 9. OpenMap (Seamless World Map for WoW Forever)
 // ---------------------------------------------------------------------------
-async function processMapzeroth() {
-  const url = 'https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip';
-  const outPath = path.join(OUTPUT_DIR, 'mapzeroth.zip');
-  const buf = await downloadBuffer(url, 'mapzeroth.zip');
-  const srcZip = await JSZip.loadAsync(buf);
+async function processOpenMap() {
+  const fallbackTag = 'v0.8.11';
+  const fallbackUrl = 'https://github.com/openmap-world/openmap/releases/download/v0.8.11/OpenMap-v0.8.11-forever.zip';
+  const latest = await getLatestGitHubRelease(
+    'openmap-world/openmap',
+    name => /^OpenMap-.*-forever\.zip$/i.test(name)
+  );
 
-  const zip = new JSZip();
-  for (const [p, file] of Object.entries(srcZip.files)) {
-    if (file.dir) continue;
-    // Mapzeroth-main/* -> Mapzeroth/* 并严格校验目录防路径穿越
-    const rel = p.replace(/^Mapzeroth-[^/]+\//, 'Mapzeroth/');
-    if (!rel.startsWith('Mapzeroth/') || rel.includes('..')) continue;
-    zip.file(rel, await file.async('nodebuffer'));
+  // OpenMap-forever.zip (~195 MB) 超过 Cloudflare Pages 单文件 25 MiB 限制，
+  // 因此不写入 public/addons/，仅同步最新版本号与 Release 下载地址至版本清单。
+  const legacyOutPath = path.join(OUTPUT_DIR, 'openmap.zip');
+  if (fs.existsSync(legacyOutPath)) {
+    fs.unlinkSync(legacyOutPath);
   }
 
-  console.log('Injecting 100% full zhCN localization for Mapzeroth...');
-  await patchMapzeroth(zip);
+  if (latest?.url) {
+    const tag = latest.tag || fallbackTag;
+    recordBundledVersion('openmap', tag, latest.url);
+    console.log(`[✓] openmap => ${tag} (external release: ${latest.url})`);
+    return;
+  }
 
-  const outBuf = await zip.generateAsync({
-    type: 'nodebuffer',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 9 },
-  });
-  fs.writeFileSync(outPath, outBuf);
-  recordBundledVersion('mapzeroth', await readTocVersion(zip, 'Mapzeroth/Mapzeroth.toc'), url);
-  console.log(`[✓] mapzeroth.zip generated (${(outBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  if (fs.existsSync(BUNDLED_VERSIONS_PATH)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(BUNDLED_VERSIONS_PATH, 'utf-8'));
+      if (existing?.openmap?.version && existing?.openmap?.source) {
+        console.warn(`[Warn] Failed to query latest OpenMap release, keeping existing manifest entry: ${existing.openmap.version}`);
+        return;
+      }
+    } catch {
+      // fall through to hardcoded fallback when manifest cannot be read
+    }
+  }
+
+  recordBundledVersion('openmap', fallbackTag, fallbackUrl);
+  console.log(`[✓] openmap => ${fallbackTag} (fallback external release: ${fallbackUrl})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -883,14 +891,6 @@ async function processSpellActivationOverlay() {
 async function processWoWF(questieDbBuf = null) {
   const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl, questieDbBuf);
   recordBundledVersion('wowf', await readTocVersion(zip, 'WoWF/WoWF.toc'), source);
-}
-
-// ---------------------------------------------------------------------------
-// 12. ForeverTransit (World Map Boat/Zeppelin/Tram Routes for WoW Forever)
-// ---------------------------------------------------------------------------
-async function processForeverTransit() {
-  const { zip, source } = await buildForeverTransitAddon(OUTPUT_DIR);
-  recordBundledVersion('forever-transit', await readTocVersion(zip, 'ForeverTransit/ForeverTransit.toc'), source);
 }
 
 async function ensureClientBinaries() {
@@ -937,8 +937,8 @@ async function main() {
     writeBundledVersions();
     return;
   }
-  if (onlyArg === 'forever-transit') {
-    await processForeverTransit();
+  if (onlyArg === 'openmap') {
+    await processOpenMap();
     writeBundledVersions();
     return;
   }
@@ -958,12 +958,11 @@ async function main() {
   await processLueur();
   const questieDbBuf = await processQuestieForever();
   await processForeverMouseTooltip();
-  await processMapzeroth();
+  await processOpenMap();
   await processSpellActivationOverlay();
   await processWoWF(questieDbBuf);
-  await processForeverTransit();
   writeBundledVersions();
-  console.log('=== All 12 Addons successfully bundled & localized into public/addons/ ===');
+  console.log('=== All 11 Addons successfully bundled & localized into public/addons/ ===');
 }
 
 main().catch(err => {

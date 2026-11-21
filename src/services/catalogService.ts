@@ -17,6 +17,13 @@ function bundledVersion(id: string, label: string): string {
   return version ? `${version} (${label})` : `未知版本 (${label})`;
 }
 
+/**
+ * 读取打包清单中记录的上游下载地址（用于体积超过 Pages 单文件限制、改为直连/代理分发的插件）
+ */
+function bundledSource(id: string, fallback: string): string {
+  return (bundledAddonVersions as BundledVersionManifest)[id]?.source || fallback;
+}
+
 export const POPULAR_ADDONS: CuratedAddon[] = [
   {
     id: 'sbf',
@@ -136,17 +143,20 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     isForeverRecommended: true,
   },
   {
-    id: 'mapzeroth',
-    name: 'Mapzeroth (艾泽拉斯智能导航 GPS)',
-    description: '魔兽世界公交换乘与智能 GPS 导航神器（Forever 无限服专版）！根据当前位置与已解锁飞行点/传送门，综合规划轮船、飞艇、矿道地铁、飞行管理员与炉石的最快路线，提供步进式指引与 100% 深度汉化。',
-    author: 'tr0tsky0',
+    id: 'openmap',
+    name: 'OpenMap (无缝拼接世界地图)',
+    description: '开源无缝世界地图插件（WoW Forever 专版）！将艾泽拉斯所有区域无缝拼接为一张连续地图，支持平滑缩放与拖拽浏览、航线与飞行点、路线导航、城镇NPC/副本/任务点标记，原生兼容暴雪地图与 Questie，内置简体中文支持。',
+    author: 'OpenMap contributors',
     category: 'QoL',
     icon: 'Compass',
-    defaultFolderName: 'Mapzeroth',
-    latestVersion: bundledVersion('mapzeroth', 'Forever 全汉化版'),
-    downloadUrl: '/addons/mapzeroth.zip',
-    githubRepo: 'tr0tsky0/Mapzeroth',
-    homeUrl: 'https://www.curseforge.com/wow/addons/mapzeroth',
+    defaultFolderName: 'OpenMap',
+    latestVersion: bundledVersion('openmap', 'Forever 中文版'),
+    downloadUrl: bundledSource(
+      'openmap',
+      'https://github.com/openmap-world/openmap/releases/download/v0.8.11/OpenMap-v0.8.11-forever.zip'
+    ),
+    githubRepo: 'openmap-world/openmap',
+    homeUrl: 'https://www.curseforge.com/wow/addons/openmap',
     gameFlavors: ['forever'],
     isForeverRecommended: true,
   },
@@ -179,20 +189,6 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     gameFlavors: ['forever'],
     isForeverRecommended: true,
   },
-  {
-    id: 'forever-transit',
-    name: 'ForeverTransit (无限服船只与飞艇航线图)',
-    description: '专为《魔兽世界：无限服》打造的船只、飞艇与矿道地铁大地图航线显示插件！在世界地图、大陆及区域地图直观绘制所有航线（含暴风城-奥伯丁、奥伯丁-米奈希尔-南海镇单向环线、热砂港-引信港、塞弗拉斯岛航线等），默认根据当前角色阵营自动过滤并保留中立航线，支持跨大陆出港方向标识与悬停详情。',
-    author: 'lich.tech',
-    category: 'QoL',
-    icon: 'MapPin',
-    defaultFolderName: 'ForeverTransit',
-    latestVersion: bundledVersion('forever-transit', 'v1.0.1'),
-    downloadUrl: '/addons/forever-transit.zip',
-    homeUrl: 'https://github.com/lich-wang/wow-addon-web',
-    gameFlavors: ['forever'],
-    isForeverRecommended: true,
-  },
 ];
 
 /**
@@ -214,6 +210,10 @@ export async function fetchCuratedAddonZip(
   const candidates: string[] = [];
   if (addon.downloadUrl.startsWith('http')) {
     candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
+    if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+      candidates.push(`/api/proxy?url=${encodeURIComponent(addon.downloadUrl)}`);
+    }
+    candidates.push(`https://wow.lich.tech/api/proxy?url=${encodeURIComponent(addon.downloadUrl)}`);
   } else {
     if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
       candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));

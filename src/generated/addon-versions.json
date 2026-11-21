@@ -15,10 +15,6 @@
     "version": "v0.2.0",
     "source": "https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip"
   },
-  "forever-transit": {
-    "version": "v1.0.5",
-    "source": "builtin://forever-transit"
-  },
   "icehud": {
     "version": "v1.17.30",
     "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.30/IceHUD-v1.17.30.zip"
@@ -27,9 +23,9 @@
     "version": "v2.0.0",
     "source": "https://edge.forgecdn.net/files/9661/950/Lueur-2.0.0.zip"
   },
-  "mapzeroth": {
-    "version": "v2.0.0-dev",
-    "source": "https://github.com/tr0tsky0/Mapzeroth/archive/refs/heads/main.zip"
+  "openmap": {
+    "version": "v0.8.11",
+    "source": "https://github.com/openmap-world/openmap/releases/download/v0.8.11/OpenMap-v0.8.11-forever.zip"
   },
   "questie-forever": {
     "version": "v12.11.0 + DB v1.1.3",
