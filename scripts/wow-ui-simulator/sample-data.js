@@ -104,10 +104,27 @@ WoWF_Data = {
     },
   },
   routes = {
-    {
+    human = {
+      id = "human",
       key = "human",
       name = "人类 (艾尔文 -> 西部荒野 -> 暮色森林)",
       faction = "alliance",
+      classRunsByClass = {
+        MAGE = {
+          {
+            id = 99010,
+            level = 20,
+            to = 30,
+            faction = "alliance",
+            raceName = "人类",
+            name = "法师的试炼",
+            steps = {
+              { id = 99011, name = "法师的试炼：起点", level = 20, zone = "艾尔文森林", npc = "詹妮亚·坎农", x = 42.1, y = 65.9 },
+              { id = 99012, name = "法师的试炼：验证", level = 25, zone = "暴风城", npc = "詹妮亚·坎农", x = 49.5, y = 50.6 },
+            },
+          },
+        },
+      },
       bands = {
         {
           from = 1, to = 12, zone = "艾尔文森林",
@@ -129,19 +146,47 @@ WoWF_Data = {
         {
           from = 23, to = 32, zone = "暮色森林 / 湿地",
           hub = { name = "夜色镇", x = 73.6, y = 46.1 },
+          -- 演示数据包含 altZones，便于回归「本阶段适龄练级区域」详细清单的去重断言
+          altZones = {
+            { zone = "赤脊山", hub = "湖畔镇", from = 20, to = 27, x = 26.4, y = 44.7, note = "湖畔镇任务线与死亡矿井前置" },
+          },
           quests = {
             { id = 173, name = "森林里的狼人", level = 24, place = "夜色镇", npc = "指挥官阿尔泰娅", x = 73.6, y = 45.9 },
           },
         },
       },
     },
-    {
+    orc = {
+      id = "orc",
       key = "orc",
       name = "兽人 / 巨魔 (杜隆塔尔 -> 贫瘠之地)",
       faction = "horde",
+      classRunsByClass = {
+        MAGE = {
+          {
+            id = 99020,
+            level = 20,
+            to = 30,
+            faction = "horde",
+            raceName = "兽人",
+            name = "法师的试炼（部落）",
+            steps = {
+              { id = 99021, name = "法师的试炼：部族", level = 20, zone = "杜隆塔尔", npc = "法师训练师", x = 52.0, y = 43.5 },
+              { id = 99022, name = "法师的试炼：回响", level = 25, zone = "贫瘠之地", npc = "法师训练师", x = 51.9, y = 30.3 },
+            },
+          },
+        },
+      },
       bands = {
         { from = 1, to = 12, zone = "杜隆塔尔", hub = { name = "剃刀岭", x = 52.0, y = 43.5 }, quests = {} },
-        { from = 13, to = 28, zone = "贫瘠之地", hub = { name = "十字路口", x = 51.9, y = 30.3 }, quests = {} },
+        {
+          from = 13, to = 28, zone = "贫瘠之地",
+          hub = { name = "十字路口", x = 51.9, y = 30.3 },
+          altZones = {
+            { zone = "石爪山脉", hub = "石爪峰", from = 18, to = 25, x = 40.8, y = 28.1, note = "石爪峰任务线与黑暗深渊前置" },
+          },
+          quests = {},
+        },
       },
     },
   },
