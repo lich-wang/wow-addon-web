@@ -1932,17 +1932,22 @@ function parseQuestSideData(sideObj) {
   };
 }
 
-async function fetchWithRetry(url, init, retries = 2) {
+async function fetchWithRetry(url, init, retries = 2, timeoutMs = 12000) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url, init);
+      const attemptSignal = init?.signal
+        ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs);
+      const res = await fetch(url, { ...init, signal: attemptSignal });
       if (res.ok || (res.status !== 502 && res.status !== 503 && res.status !== 429 && res.status !== 504)) {
         return res;
       }
+      await res.body?.cancel().catch(() => {});
       lastErr = new Error(`HTTP ${res.status}`);
     } catch (err) {
       lastErr = err;
+      if (init?.signal?.aborted) throw err;
     }
     if (attempt < retries) {
       await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
@@ -1964,7 +1969,6 @@ async function fetchQuestDetail(questId, questCache, getHeaders) {
     const url = `https://wowf.io/zh/quests/${questId}`;
     const res = await fetchWithRetry(url, {
       headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-      signal: AbortSignal.timeout(12000),
     });
     if (!res.ok) return questCache[key] || null;
     const html = await res.text();
@@ -2884,7 +2888,6 @@ async function enrichDungeonsWithWebQuests(dungeonMap, cacheDir, getHeaders, cac
       const url = `https://wowf.io/zh/dungeons/${dId}`;
       const res = await fetchWithRetry(url, {
         headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-        signal: AbortSignal.timeout(12000),
       });
       if (!res.ok) {
         failedDungeonIds.add(dId);
