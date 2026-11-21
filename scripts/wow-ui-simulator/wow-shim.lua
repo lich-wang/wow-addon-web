@@ -576,7 +576,7 @@ C_Map = {
   GetBestMapForUnit = function() return 1411 end,
   GetMapInfo = function(id) return { mapID = id, name = __WOW_BRIDGE__:getCharField("zone") } end,
   GetAreaInfo = function(areaId)
-    local areas = { [1537] = "铁炉堡", [267] = "希尔斯布莱德丘陵", [796] = "血色修道院", [1519] = "暴风城", [1637] = "奥格瑞玛" }
+    local areas = { [15] = "尘泥沼泽", [1537] = "铁炉堡", [267] = "希尔斯布莱德丘陵", [796] = "血色修道院", [1519] = "暴风城", [1637] = "奥格瑞玛" }
     return areas[tonumber(areaId) or 0] or ""
   end,
   SetUserWaypoint = function(pt)

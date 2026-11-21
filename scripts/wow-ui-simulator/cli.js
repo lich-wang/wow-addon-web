@@ -365,6 +365,97 @@ async function main() {
     qdbRt.destroy();
   }
 
+  // Exclusive duplicate quest regression: 1203「加尔的剑」与无限服替换任务 81570「Jarl Needs a Blade」
+  // 同时出现在尘泥沼泽区域任务链索引里，中文客户端只能取到 1203 的本地化名称，81570 会回落到英文名。
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const dupRt = new WoWSimulatorRuntime({
+      level: 40,
+      classKey: 'MAGE',
+      raceKey: '人类',
+      faction: 'Alliance',
+      zone: '尘泥沼泽',
+      completedQuests: [1218],
+    });
+    const dupMockLua = `
+      NpcDB = {
+        name = function(id) local t = { [4792] = '"沼泽之眼"加尔' } return t[id] end,
+        zoneID = function(id) local t = { [4792] = 15 } return t[id] end,
+        spawns = function(id) local t = { [4792] = { [15] = { { 46.0, 60.0 } } } } return t[id] end,
+      }
+      QuestDB = {
+        name = function(id)
+          local t = { [1218] = "安抚香料", [1206] = "加尔和蜘蛛眼", [1203] = "加尔的剑", [81570] = "Jarl Needs a Blade" }
+          return t[id]
+        end,
+        questLevel = function(id)
+          local t = { [1218] = 35, [1206] = 35, [1203] = 35, [81570] = 35 }
+          return t[id]
+        end,
+        requiredLevel = function(id)
+          local t = { [1218] = 30, [1206] = 30, [1203] = 30, [81570] = 30 }
+          return t[id]
+        end,
+        startedBy = function(id)
+          local t = { [1218] = { { 4792 } }, [1206] = { { 4792 } }, [1203] = { { 4792 } }, [81570] = { { 4792 } } }
+          return t[id]
+        end,
+        finishedBy = function(id) return { { 4792 } } end,
+        preQuestSingle = function(id)
+          local t = { [1206] = { 1218 }, [1203] = { 1206 } }
+          return t[id]
+        end,
+        nextQuestInChain = function(id)
+          local t = { [1218] = 1206, [1206] = 1203 }
+          return t[id]
+        end,
+        exclusiveTo = function(id)
+          local t = { [1203] = { 81570 }, [81570] = { 1203 } }
+          return t[id]
+        end,
+      }
+      WoWF_Data = {
+        meta = { version = "exclusive-duplicate-test" },
+        routes = {
+          human = {
+            name = "人类",
+            faction = "alliance",
+            bands = {
+              { from = 35, to = 42, zone = "尘泥沼泽", hub = { name = "塞拉摩", x = 66.1, y = 51.5 }, quests = {} },
+            },
+          },
+        },
+        classes = { MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精", recommendedProfs = "", phases = {}, musts = {} } } } },
+        dungeons = {},
+        macros = {},
+        professions = {},
+        zoneQuests = {
+          ["尘泥沼泽"] = {
+            { id = 1203, f = "b", min = 30, lv = 35, maxLv = 35 },
+            { id = 81570, f = "b", min = 30, lv = 35, maxLv = 35 },
+          },
+        },
+        zoneAreaIds = { ["尘泥沼泽"] = { 15 } },
+      }
+    `;
+    const dupCoreFiles = files.filter((f) => !isDataLuaFile(f));
+    dupRt.loadAddon(addonName, [{ filename: 'ExclusiveDuplicateMock.lua', content: dupMockLua }, ...dupCoreFiles]);
+    dupRt.runSlashCommand('/wowf route');
+    const dupSnap = dupRt.getSnapshot();
+    const zoneCard = summarizeCards(dupSnap).find((c) => c.title.includes('区域任务链') && c.title.includes('尘泥沼泽'));
+    const zoneBody = zoneCard ? zoneCard.body : '';
+    const hasLocalizedChain = zoneBody.includes('[加尔的剑]') && zoneBody.includes('加尔和蜘蛛眼');
+    const hasEnglishDuplicate = zoneBody.includes('Jarl Needs a Blade');
+    if (dupSnap.luaErrors.length > 0 || !zoneCard || !hasLocalizedChain || hasEnglishDuplicate) {
+      console.error(
+        `[Assert Failed] Exclusive duplicate quest pruning failed (errors=${dupSnap.luaErrors.length}, card=${Boolean(zoneCard)}, chain=${hasLocalizedChain}, englishDup=${hasEnglishDuplicate})`
+      );
+      assertionFailed = true;
+    } else {
+      console.log('[✓] Exclusive duplicate quest pruning passed (1203「加尔的剑」kept, 81570 English duplicate hidden).');
+    }
+    dupRt.destroy();
+  }
+
   // Coordinate link regression: mock data with普通坐标 / 箭头多坐标 / 全角括号 / 专业训练师 / 公告
   if (opts.assert && addonName.toLowerCase() === 'wowf') {
     const coordRt = new WoWSimulatorRuntime({
