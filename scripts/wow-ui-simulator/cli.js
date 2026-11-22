@@ -167,6 +167,25 @@ function analyzeRouteDedupe(cards) {
 }
 
 // 自检：确保「重复链 → 报错」「同等级但不同职业 → 不报错」两个方向都被覆盖
+// 自检：千位分组（声望/金币）不应被当成裸坐标，坐标格式仍要能命中
+function selfTestBareCoord() {
+  const cases = [
+    ['47, 56', true],
+    ['47.8,56.3', true],
+    ['47,56', true],
+    ['还差 5,750', false],
+    ['需友善 3,000 后交付', false],
+    ['9,000', false],
+    ['3,000,000', false],
+  ];
+  for (const [text, expected] of cases) {
+    if (hasBareCoord(text) !== expected) {
+      return `裸坐标检测自检失败：${text}（期望 ${expected ? '命中' : '不命中'}）`;
+    }
+  }
+  return null;
+}
+
 function selfTestRouteDedupe() {
   const cases = [
     {
@@ -346,6 +365,11 @@ async function main() {
     const selfTestErr = selfTestRouteDedupe();
     if (selfTestErr) {
       console.error(`[Assert Failed] ${selfTestErr}`);
+      assertionFailed = true;
+    }
+    const coordTestErr = selfTestBareCoord();
+    if (coordTestErr) {
+      console.error(`[Assert Failed] ${coordTestErr}`);
       assertionFailed = true;
     }
     const sampleFiles = [
