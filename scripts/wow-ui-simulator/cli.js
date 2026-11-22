@@ -1171,6 +1171,7 @@ async function main() {
         raceKey: tc.raceKey,
         faction: tc.faction,
         completedQuests: tc.completedQuests,
+        activeQuests: tc.activeQuests ?? [],
       });
       rt.loadAddon(addonName, [
         { filename: 'CentaurFactionMock.lua', content: buildCentaurMockLua(tc.rep92, tc.rep93) },
