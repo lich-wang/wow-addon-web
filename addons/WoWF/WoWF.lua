@@ -5559,7 +5559,8 @@ local function RenderTabCraftArb()
       table.insert(vendorLines, string.format(
         "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（对手最低价）",
         FormatMoney(row.vendorPrice), FormatMoney(row.price or 0)))
-      local stockText = (row.vendorStock and row.vendorStock > 0)
+      local stockText = (row.vendorStock == 0) and "|cffff8800已售罄|r"
+        or (row.vendorStock and row.vendorStock > 0)
         and (string.format("%d 件", row.vendorStock) .. (row.vendorTotalStock and row.vendorTotalStock > row.vendorStock and string.format("（该物品共可购 %d 件）", row.vendorTotalStock) or ""))
         or "|cffffd100无限库存|r"
       table.insert(vendorLines, string.format(
@@ -5584,17 +5585,16 @@ local function RenderTabCraftArb()
         table.insert(vendorLines, "|cffff8800提示:|r 该物品暂无拍卖行报价，不能算作可执行套利。")
       end
       local profitable = (row.profit or 0) > 0
-      list:Add({
-        title = string.format("%s  |cffffd100[商人→拍卖] %s|r", FormatItemLink(row.outputID, row.name), row.vendorNPC or "商人"),
-        body = table.concat(vendorLines, "\n"),
-        theme = profitable and "arbGood" or "arbBad",
-        badge = row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
-        action = {
-          label = row.vendorStock and row.vendorStock > 0 and "加入购物清单" or "加入购物清单(无限)",
+      -- 售罄商品不可采购，不提供「加入购物清单」动作（-1 表示无限库存）
+      local soldOut = row.vendorStock == 0
+      local vendorAction
+      if not soldOut then
+        vendorAction = {
+          label = (row.vendorStock and row.vendorStock > 0) and "加入购物清单" or "加入购物清单(无限)",
           fn = function()
             local api = arb.Market()
-            if not api or type(api.CreateShoppingList) ~= "function" then
-              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 未检测到 EasyAuction 购物清单接口。")
+            if not api or type(api.CreateShoppingList) ~= "function" or type(api.SetShoppingListItem) ~= "function" then
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 未检测到 EasyAuction 购物清单写入接口。")
               return
             end
             local qty = (row.vendorStock and row.vendorStock > 0) and row.vendorStock or 1
@@ -5603,15 +5603,24 @@ local function RenderTabCraftArb()
               DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 创建购物清单失败。")
               return
             end
-            if type(api.SetShoppingListItem) == "function" then
-              pcall(api.SetShoppingListItem, listID, row.outputID, qty, row.vendorPrice, row.name)
+            local wroteOK, wrote = pcall(api.SetShoppingListItem, listID, row.outputID, qty, row.vendorPrice, row.name)
+            if not wroteOK or wrote == false then
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 写入购物清单失败（清单 ID: " .. tostring(listID) .. "）。")
+              return
             end
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
               "|cff00ffcc[WoWF 商人套利]|r 已把 %s ×%d 写入购物清单（清单 ID: %s），买入价 %s、到 %s 找 %s。",
               FormatItemLink(row.outputID, row.name), qty, tostring(listID), FormatMoney(row.vendorPrice),
               row.vendorZone or "?", row.vendorNPC or "?"))
           end,
-        },
+        }
+      end
+      list:Add({
+        title = string.format("%s  |cffffd100[商人→拍卖] %s|r", FormatItemLink(row.outputID, row.name), row.vendorNPC or "商人"),
+        body = table.concat(vendorLines, "\n"),
+        theme = profitable and "arbGood" or "arbBad",
+        badge = row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
+        action = vendorAction,
       })
     else
     local bodyLines = {}

@@ -377,6 +377,8 @@ end
 local quoteCache, sellCache, recipeListCache, rowCache, vendorRowsCache
 -- 是否在本轮分析中把 NPC 商人价作为采购成本（由 Analyse 的 preferVendor 选项设置）
 local costPrefersVendor = false
+-- 每次成功采集商人商品都会 +1，纳入缓存签名（同一秒内改价也能让制造行/报价缓存失效）
+local vendorVersion = 0
 
 ---清空全部缓存（行情修订号变化、物品数据加载完成、拍卖行开关时调用）
 function Arb.Reset()
@@ -422,11 +424,26 @@ function Arb.PriceFor(itemID, quantity, options)
   local cached = quoteCache[key]
   if cached then return cached.unit, cached.source, cached end
 
+  -- 商人价优先：即使行情插件缺席/未就绪，只要已采集到商人报价就可给出采购成本
+  local vendorQuote
+  if preferVendor then vendorQuote = Arb.VendorBuyFor(id, wanted) end
   local api = Arb.Market()
   local btPrices = not api and blackthornesPriceTable() or nil
   local btApi = not api and blackthornesApi() or nil
-  if not api and not btPrices and not btApi then return nil, "no-api" end
   local unit, source, shortfall
+  if not api and not btPrices and not btApi then
+    if vendorQuote then
+      local entry = {
+        unit = vendorQuote.unit, source = "vendor", shortfall = vendorQuote.shortfall,
+        vendor = vendorQuote.vendor,
+      }
+      quoteCache[key] = entry
+      return entry.unit, entry.source, entry
+    end
+    local entry = { unit = nil, source = "no-api" }
+    quoteCache[key] = entry
+    return nil, entry.source, entry
+  end
 
   if api then
     if type(api.GetDepth) == "function" then
@@ -492,16 +509,13 @@ function Arb.PriceFor(itemID, quantity, options)
   end
 
   local entry = { unit = unit, source = source or (shortfall and "insufficient" or "no-data"), shortfall = shortfall }
-  -- NPC 商人价兜底：比行情更低时作为采购成本；有库存上限时做相应标记
-  local vendor = preferVendor and Arb.VendorBuyFor(id) or nil
-  if vendor and (not unit or vendor.price < unit) then
-    local vendorShort = vendor.totalStock and vendor.totalStock < wanted
+  -- NPC 商人价兜底：比行情更低时作为采购成本；按各商人价格档位逐段计价
+  if vendorQuote and (not unit or vendorQuote.unit < unit) then
     entry = {
-      unit = vendor.price, source = "vendor",
-      shortfall = vendorShort and { have = vendor.totalStock, need = wanted } or shortfall,
-      vendor = { npc = vendor.npc, zone = vendor.zone, stock = vendor.stock, totalStock = vendor.totalStock },
+      unit = vendorQuote.unit, source = "vendor", shortfall = vendorQuote.shortfall,
+      vendor = vendorQuote.vendor,
     }
-    unit = vendor.price
+    unit = vendorQuote.unit
   end
   quoteCache[key] = entry
   if unit then return unit, entry.source, entry end
@@ -876,7 +890,7 @@ end
 
 local function merchantName()
   if type(UnitName) ~= "function" then return nil end
-  local ok, name, realme = pcall(UnitName, "npc")
+  local ok, name = pcall(UnitName, "npc")
   if not ok or type(name) ~= "string" or name == "" then
     -- 部分客户端把商人放在 "target" 上
     local okTarget, target = pcall(UnitName, "target")
@@ -893,14 +907,33 @@ local function merchantZone()
 end
 
 ---在当前 NPC 商人窗口采集可售商品
----物品价格通过 GetMerchantItemInfo 的第 4 个返回值（price）取得；特殊货币商品（需求量 > 1
+---物品价格通过 GetMerchantItemInfo 的第 3 个返回值（price）取得；特殊货币商品（需求量 > 1
 ---且需要代币兑换）不可能是稳定「用金币买入 → 拍卖行卖出」的套利来源，直接跳过。
 ---@return number count 采集到的商品条数
 ---@return string|nil message 没有商人窗口时的说明
 function Arb.HarvestVendor()
   local countFn = type(GetMerchantNumItems) == "function" and GetMerchantNumItems or nil
-  local infoFn = type(GetMerchantItemInfo) == "function" and GetMerchantItemInfo or nil
-  if not countFn or not infoFn then
+  if not countFn then
+    return 0, "当前客户端没有提供商人商品接口"
+  end
+  -- 全局 GetMerchantItemInfo 优先；无限服 1.60.1 等客户端改用 C_MerchantFrame.GetItemInfo
+  local globalInfo = type(GetMerchantItemInfo) == "function" and GetMerchantItemInfo or nil
+  local cInfo = type(C_MerchantFrame) == "table" and type(C_MerchantFrame.GetItemInfo) == "function"
+    and C_MerchantFrame.GetItemInfo or nil
+  local function readInfo(slot)
+    if globalInfo then
+      -- name, texture, price, quantity, numAvailable, isPurchasable, isUsable, extendedCost
+      local name, texture, price, quantity, numAvailable, _, _, extendedCost = globalInfo(slot)
+      return name, texture, price, quantity, numAvailable, extendedCost
+    elseif cInfo then
+      local ok, data = pcall(cInfo, slot)
+      if ok and type(data) == "table" then
+        -- stackCount 与全局接口 quantity 语义一致（每「格」的商品件数）
+        return data.name, data.texture, data.price, data.stackCount, data.numAvailable, data.hasExtendedCost
+      end
+    end
+  end
+  if not globalInfo and not cInfo then
     return 0, "当前客户端没有提供商人商品接口"
   end
   local okCount, count = pcall(countFn)
@@ -918,8 +951,9 @@ function Arb.HarvestVendor()
 
   local stored, seen = 0, {}
   for i = 1, tonumber(count) do
-    local ok, name, texture, price, quantity, numAvailable = pcall(infoFn, i)
-    if ok and type(price) == "number" and price > 0 and quantity == 1 then
+    local ok, name, texture, price, quantity, numAvailable, extendedCost = pcall(readInfo, i)
+    -- 带额外成本（声望/代币）的商品无法按纯金币利润计算，跳过
+    if ok and type(price) == "number" and price > 0 and quantity == 1 and not extendedCost then
       local id
       if type(GetMerchantItemLink) == "function" then
         local okLink, link = pcall(GetMerchantItemLink, i)
@@ -949,6 +983,7 @@ function Arb.HarvestVendor()
   end
   if stored > 0 then
     WoWFDB.vendorCacheAt = now()
+    vendorVersion = vendorVersion + 1
     vendorRowsCache.stamp = nil
   end
   return stored
@@ -975,12 +1010,16 @@ function Arb.VendorOffers()
               }
               byItem[id] = row
             end
-            row.sources[#row.sources + 1] = {
-              npc = npc, zone = offer.zone or entry.zone, price = price,
-              stock = tonumber(offer.stock) or -1,
-            }
             local stock = tonumber(offer.stock) or -1
-            if stock > 0 then row.totalStock = row.totalStock + stock end
+            row.sources[#row.sources + 1] = {
+              npc = npc, zone = offer.zone or entry.zone, price = price, stock = stock,
+            }
+            -- 有限库存即使合计为 0 也要保留（售罄）；出现无限库存(-1)时单独标记且不受有限合计限制
+            if stock < 0 then
+              row.infinite = true
+            else
+              row.totalStock = row.totalStock + max(0, stock)
+            end
             if price < row.price then
               row.price, row.stock, row.stack = price, stock, tonumber(offer.stack) or 1
               row.npc, row.zone = npc, offer.zone or entry.zone
@@ -993,27 +1032,71 @@ function Arb.VendorOffers()
   end
   local offers = {}
   for _, row in pairs(byItem) do
-    if row.totalStock == 0 then row.totalStock = nil end
+    -- 有无限库存来源时，汇总的 finite 合计不再限制可购量
+    if row.infinite then row.totalStock = nil end
     offers[#offers + 1] = row
   end
   tsort(offers, function(a, b) return a.itemID < b.itemID end)
   return offers
 end
 
----取某物品当前最优（最低价）的商人采购方案
----@return table|nil offer
-function Arb.VendorBuyFor(itemID)
+---按价格档位逐段采购：先买完最低价的库存，再买下一价档，直到满足需求。
+---库存语义：-1 = 无限（永远买得到），0 = 售罄，>0 = 有限库存。
+---@param itemID number
+---@param quantity number 需要购买的数量
+---@return table|nil quote { unit, shortfall, vendor, total }
+function Arb.VendorBuyFor(itemID, quantity)
   local id = tonumber(itemID)
   if not id then return nil end
+  local wanted = max(1, ceil(tonumber(quantity) or 1))
+  local bestOffer
   for _, offer in ipairs(Arb.VendorOffers()) do
-    if offer.itemID == id then return offer end
+    if offer.itemID == id then
+      if not bestOffer or offer.price < bestOffer.price then bestOffer = offer end
+    end
   end
-  return nil
+  if not bestOffer then return nil end
+
+  -- 按单价从低到高排序各来源，逐档累加真实花费
+  local sources = {}
+  for _, source in ipairs(bestOffer.sources or {}) do
+    sources[#sources + 1] = source
+  end
+  tsort(sources, function(a, b) return a.price < b.price end)
+
+  local left, spent, hasInfinite = wanted, 0, false
+  for _, source in ipairs(sources) do
+    if left <= 0 then break end
+    local stock = tonumber(source.stock) or -1
+    if stock < 0 then
+      -- 无限库存：以当前档价买满剩余需求
+      spent = spent + source.price * left
+      left = 0
+      hasInfinite = true
+    elseif stock > 0 then
+      local take = min(left, stock)
+      spent = spent + source.price * take
+      left = left - take
+    end
+  end
+  -- 只有真正买齐才返回报价；买不齐时由行情价兜底或标记缺货，不能用部分库存算单价
+  if left > 0 then
+    return {
+      unit = nil, shortfall = { have = wanted - left, need = wanted },
+      vendor = { npc = bestOffer.npc, zone = bestOffer.zone, stock = bestOffer.stock, totalStock = bestOffer.totalStock },
+    }
+  end
+  return {
+    unit = spent / wanted, shortfall = hasInfinite and nil or (left > 0 and { have = wanted, need = wanted } or nil),
+    total = spent,
+    vendor = { npc = bestOffer.npc, zone = bestOffer.zone, stock = bestOffer.stock, totalStock = bestOffer.totalStock },
+  }
 end
 
----采集时间用于让套利行缓存失效
+---采集时间用于让套利行缓存失效（版本号确保同秒重复采集也生效）
 local function vendorSignature()
-  return tostring(floor(tonumber(WoWFDB.vendorCacheAt) or 0)) .. ":" .. tostring(WoWFDB.vendorCache and type(WoWFDB.vendorCache) == "table" and #Arb.VendorOffers() or 0)
+  local count = (type(WoWFDB.vendorCache) == "table") and #Arb.VendorOffers() or 0
+  return tconcat({ floor(tonumber(WoWFDB.vendorCacheAt) or 0), count, vendorVersion }, ":")
 end
 
 ---计算「NPC 商人买入 → 拍卖行卖出」的套利行
@@ -1028,10 +1111,13 @@ function Arb.VendorArbitrage(options)
     local rows = {}
     for _, offer in ipairs(Arb.VendorOffers()) do
       local price, record = Arb.SellQuote(offer.itemID)
+      -- 单件买入价即最低档价（批量时按档位逐段计价，见 VendorBuyFor）
+      local buyForOne = Arb.VendorBuyFor(offer.itemID, 1)
+      local buyPrice = (buyForOne and buyForOne.unit) or offer.price
       local row = {
         outputID = offer.itemID, name = Arb.ItemName(offer.itemID), kind = "vendor",
-        vendorPrice = offer.price, vendorNPC = offer.npc, vendorZone = offer.zone,
-        vendorStock = offer.stock, vendorStack = offer.stack,
+        vendorPrice = buyPrice, listPrice = offer.price, vendorNPC = offer.npc, vendorZone = offer.zone,
+        vendorStock = offer.stock, vendorStack = offer.stack, vendorInfinite = offer.infinite == true,
         vendorSources = offer.sources, vendorTotalStock = offer.totalStock,
         vendorAt = offer.at,
         price = price, record = record,
@@ -1039,8 +1125,8 @@ function Arb.VendorArbitrage(options)
       if price and price > 0 then
         row.revenue = price
         row.cut = price * cut
-        row.profit = price - row.cut - offer.price
-        row.roi = offer.price > 0 and row.profit / offer.price or 0
+        row.profit = price - row.cut - buyPrice
+        row.roi = buyPrice > 0 and row.profit / buyPrice or 0
         row.margin = row.profit / price
         row.profitPerUnit = row.profit
       else
@@ -1055,13 +1141,18 @@ function Arb.VendorArbitrage(options)
     vendorRowsCache = { stamp = stamp, rows = rows }
   end
 
-  local rows, profitable, hidden = {}, 0, 0
+  local rows, profitable, hidden, priced = {}, 0, 0, 0
   for _, row in ipairs(vendorRowsCache.rows) do
     local keep = true
+    if row.price then priced = priced + 1 end
     if keep and options.onlyProfitable and not (row.profit and row.profit > 0) then keep = false end
     if keep and options.query and options.query ~= "" then
-      local hay = lower((row.name or "") .. " " .. (row.npc or "") .. " " .. (row.zone or ""))
-      if not find(hay, lower(options.query), 1, true) then keep = false end
+      local parts = { row.name or "", row.vendorNPC or "", row.vendorZone or "" }
+      for _, source in ipairs(row.vendorSources or {}) do
+        parts[#parts + 1] = source.npc or ""
+        parts[#parts + 1] = source.zone or ""
+      end
+      if not find(lower(tconcat(parts, " ")), lower(options.query), 1, true) then keep = false end
     end
     if keep then
       if row.profit and row.profit > 0 then profitable = profitable + 1 end
@@ -1072,7 +1163,7 @@ function Arb.VendorArbitrage(options)
   end
   return rows, {
     offers = #Arb.VendorOffers(), shown = #rows, hidden = hidden, profitable = profitable,
-    cut = cut, state = Arb.ApiState(), provider = Arb.MarketProvider(),
+    priced = priced, cut = cut, state = Arb.ApiState(), provider = Arb.MarketProvider(),
   }
 end
 
@@ -1728,11 +1819,21 @@ function Arb.Analyse(options)
     if updated > 0 then marketInfo = { updatedAt = updated } end
   end
 
-  local total = #craftCache + (vendorMeta and vendorMeta.offers or 0)
+  local total, pricedCount, hiddenCount = 0, 0, 0
+  if source ~= "vendor" then
+    total = #craftCache
+    pricedCount = rowCache.priced or 0
+    hiddenCount = hiddenByKeep
+  end
+  if vendorMeta then
+    total = total + vendorMeta.offers
+    pricedCount = pricedCount + vendorMeta.priced
+    hiddenCount = hiddenCount + vendorMeta.hidden
+  end
   return rows, {
     mode = mode, source = source, cut = cut, state = Arb.ApiState(), provider = Arb.MarketProvider(), revision = revision(),
     market = marketInfo, professions = professions,
-    total = total, priced = rowCache.priced or 0, shown = #rows, hidden = hiddenByKeep,
+    total = total, priced = pricedCount, shown = #rows, hidden = hiddenCount,
     profitable = profitable, best = rows[1],
     players = #storedRecipeSets(), ownProfessions = Arb.Professions(), identity = Arb.Identity(),
     vendorOffers = vendorMeta and vendorMeta.offers or 0,
