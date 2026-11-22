@@ -1295,6 +1295,74 @@ local function HasPlayerProfession(profs, cnName, enName)
   return false
 end
 
+-- ============================================================================
+-- 骑术提醒过滤：角色已学会骑术后，不再提示「攒钱/学骑术」
+-- ============================================================================
+
+-- 各版本骑术法术 ID（初级/中级/高级/专家/大师）
+local RIDING_SPELL_IDS = { 33388, 33391, 34090, 34091, 90265 }
+
+local function IsSpellKnownById(spellID)
+  if IsPlayerSpell then
+    local ok, known = pcall(IsPlayerSpell, spellID)
+    if ok and known then return true end
+  end
+  if IsSpellKnown then
+    local ok, known = pcall(IsSpellKnown, spellID)
+    if ok and known then return true end
+  end
+  if C_SpellBook and C_SpellBook.IsSpellKnown then
+    local ok, known = pcall(C_SpellBook.IsSpellKnown, spellID)
+    if ok and known then return true end
+  end
+  if C_Spell and C_Spell.IsSpellKnown then
+    local ok, known = pcall(C_Spell.IsSpellKnown, spellID)
+    if ok and known then return true end
+  end
+  return false
+end
+
+local function HasRidingSkillLine()
+  if not (GetNumSkillLines and GetSkillLineInfo) then return false end
+  local ok, num = pcall(GetNumSkillLines)
+  if not ok or type(num) ~= "number" then return false end
+  for i = 1, num do
+    local okLine, name, isHeader, _, rank = pcall(GetSkillLineInfo, i)
+    if okLine and not isHeader and type(name) == "string" and name ~= "" then
+      if string.find(name, "骑术", 1, true) or string.find(string.lower(name), "riding", 1, true) then
+        local rankNum = tonumber(rank)
+        -- rank 为 nil（部分客户端不返回）或大于 0 时视为已学会
+        if rank == nil or (rankNum and rankNum > 0) then return true end
+      end
+    end
+  end
+  return false
+end
+
+local function HasRidingSkill()
+  for _, id in ipairs(RIDING_SPELL_IDS) do
+    if IsSpellKnownById(id) then return true end
+  end
+  return HasRidingSkillLine()
+end
+
+-- 只匹配「学骑术」类提醒；圣骑士的「召唤军马」、其他职业坐骑任务不受影响
+local RIDING_REMINDER_MARKERS = { "骑术", "riding" }
+
+local function IsRidingReminderText(text)
+  if type(text) ~= "string" or text == "" then return false end
+  local lower = string.lower(text)
+  for _, marker in ipairs(RIDING_REMINDER_MARKERS) do
+    if string.find(lower, marker, 1, true) then return true end
+  end
+  return false
+end
+
+local function ShouldSkipMilestone(milestone, ridingKnown)
+  if not ridingKnown or not milestone then return false end
+  return IsRidingReminderText(milestone.text)
+end
+
 local function HasGatheringProfession(profs)
   return HasPlayerProfession(profs, "采矿", "Mining")
     or HasPlayerProfession(profs, "草药学", "Herbalism")
@@ -4329,10 +4397,11 @@ local function RenderTabSmartMatch()
 
   -- 5. 当前等级种族+职业专属任务链与关键里程碑摘要
   local milestoneLines = {}
+  local hasRidingSkill = HasRidingSkill()
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
       local mLvl = m.level or 1
-      if mLvl >= lvl - 2 and mLvl <= lvl + 10 and #milestoneLines < 3 then
+      if mLvl >= lvl - 2 and mLvl <= lvl + 10 and #milestoneLines < 3 and not ShouldSkipMilestone(m, hasRidingSkill) then
         local tag = (mLvl == lvl) and "|cff00ff00[当前必做]|r " or string.format("|cffffd100[Lv.%d 要点]|r ", mLvl)
         table.insert(milestoneLines, "  - " .. tag .. LinkifyInlineCoords(m.text or "", band and band.zone or "", spec.name or "要点"))
       end
@@ -4476,9 +4545,10 @@ local function RenderTabRoutes()
     end
   end
   if spec and spec.musts then
+    local hasRidingSkill = HasRidingSkill()
     for _, m in ipairs(spec.musts) do
       local mLvl = m.level or 1
-      if not isMatchMode or (mLvl >= lvl - 2 and mLvl <= lvl + LOOKAHEAD) then
+      if (not isMatchMode or (mLvl >= lvl - 2 and mLvl <= lvl + LOOKAHEAD)) and not ShouldSkipMilestone(m, hasRidingSkill) then
         local activeTag = (mLvl == lvl) and "|cff00ff00★[本级必做]|r " or ""
         table.insert(charGuideLines, string.format("  - %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, mLvl, spec.name or "专精", LinkifyInlineCoords(m.text or "", "", spec.name or "要点")))
       end
@@ -6606,6 +6676,10 @@ pcall(eventFrame.RegisterEvent, eventFrame, "BAG_UPDATE_DELAYED")
 for _, questEv in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_LOG_UPDATE" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, questEv)
 end
+-- 学会骑术后立即刷新「当前必做」里的骑术提醒
+for _, spellEv in ipairs({ "SPELLS_CHANGED", "LEARNED_SPELL_IN_TAB" }) do
+  pcall(eventFrame.RegisterEvent, eventFrame, spellEv)
+end
 for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED", "SKILL_LINES_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
@@ -6696,7 +6770,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         ScheduleRefresh(true, 0.25)
       end
     end
-  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" then
+  elseif event == "QUEST_TURNED_IN" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" or event == "QUEST_LOG_UPDATE" or event == "SKILL_LINES_CHANGED" or event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" then
     if mainFrame and mainFrame:IsShown() then
       ScheduleRefresh(true, 0.2)
     end
