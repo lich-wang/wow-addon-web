@@ -1346,7 +1346,42 @@ local function HasRidingSkill()
   return HasRidingSkillLine()
 end
 
--- 只匹配「学骑术」类提醒；圣骑士的「召唤军马」、其他职业坐骑任务不受影响
+-- 职业坐骑：圣骑士军马/战马、术士地狱战马/恐惧战马（含无限服自定义法术）
+local PALADIN_WARHORSE_SPELL_IDS = { 13819, 34769, 1279399, 73629 }
+local PALADIN_CHARGER_SPELL_IDS = { 23214, 34767, 1296534, 73630 }
+local WARLOCK_FELSTEED_SPELL_IDS = { 5784 }
+local WARLOCK_DREADSTEED_SPELL_IDS = { 23161 }
+
+-- 无限服：联盟圣骑士 40 级军马任务《高贵之书》；60 级战马任务《审判与救赎》
+local PALADIN_WARHORSE_QUEST_ID = 1661
+local PALADIN_CHARGER_QUEST_ID = 7647
+
+local function AnySpellKnown(spellIDs)
+  for _, id in ipairs(spellIDs) do
+    if IsSpellKnownById(id) then return true end
+  end
+  return false
+end
+
+local function BuildMilestoneFilter()
+  local warhorse = AnySpellKnown(PALADIN_WARHORSE_SPELL_IDS)
+    or IsQuestCompletedById(PALADIN_WARHORSE_QUEST_ID)
+  local charger = AnySpellKnown(PALADIN_CHARGER_SPELL_IDS)
+    or IsQuestCompletedById(PALADIN_CHARGER_QUEST_ID)
+  local felsteed = AnySpellKnown(WARLOCK_FELSTEED_SPELL_IDS)
+  local dreadsteed = AnySpellKnown(WARLOCK_DREADSTEED_SPELL_IDS)
+
+  return {
+    riding = HasRidingSkill(),
+    -- 已学会战马/恐惧战马时，低阶军马/地狱战马提醒也一并视为完成
+    warhorse = warhorse or charger,
+    charger = charger,
+    felsteed = felsteed or dreadsteed,
+    dreadsteed = dreadsteed,
+  }
+end
+
+-- 只匹配「学骑术」类提醒
 local RIDING_REMINDER_MARKERS = { "骑术", "riding" }
 
 local function IsRidingReminderText(text)
@@ -1358,9 +1393,40 @@ local function IsRidingReminderText(text)
   return false
 end
 
-local function ShouldSkipMilestone(milestone, ridingKnown)
-  if not ridingKnown or not milestone then return false end
-  return IsRidingReminderText(milestone.text)
+-- 职业坐骑提醒：对应坐骑/任务完成后同样隐藏
+local function IsClassMountReminderText(text, filter)
+  local lower = string.lower(text)
+  if filter.warhorse and (string.find(lower, "军马", 1, true) or string.find(lower, "warhorse", 1, true) or string.find(lower, "elekk", 1, true)) then
+    return true
+  end
+  if filter.charger and (string.find(lower, "召唤战马", 1, true) or string.find(lower, "战马任务", 1, true) or string.find(lower, "charger", 1, true)) then
+    return true
+  end
+  if filter.felsteed and (string.find(lower, "地狱战马", 1, true) or string.find(lower, "felsteed", 1, true)) then
+    return true
+  end
+  if filter.dreadsteed and (string.find(lower, "恐惧战马", 1, true) or string.find(lower, "dreadsteed", 1, true)) then
+    return true
+  end
+  if (filter.warhorse or filter.charger or filter.felsteed or filter.dreadsteed)
+    and (string.find(lower, "职业坐骑", 1, true) or string.find(lower, "class mount", 1, true)) then
+    return true
+  end
+  return false
+end
+
+local function ShouldSkipMilestone(milestone, filter)
+  if not filter or not milestone then return false end
+  local text = milestone.text
+  if type(text) ~= "string" or text == "" then return false end
+  if filter.riding and IsRidingReminderText(text) then return true end
+  return IsClassMountReminderText(text, filter)
+end
+
+local function ShouldSkipClassRun(classRun, filter)
+  if not filter or not classRun then return false end
+  local text = (classRun.teaches or "") .. " " .. (classRun.name or "")
+  return IsClassMountReminderText(text, filter)
 end
 
 local function HasGatheringProfession(profs)
@@ -4397,11 +4463,11 @@ local function RenderTabSmartMatch()
 
   -- 5. 当前等级种族+职业专属任务链与关键里程碑摘要
   local milestoneLines = {}
-  local hasRidingSkill = HasRidingSkill()
+  local milestoneFilter = BuildMilestoneFilter()
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
       local mLvl = m.level or 1
-      if mLvl >= lvl - 2 and mLvl <= lvl + 10 and #milestoneLines < 3 and not ShouldSkipMilestone(m, hasRidingSkill) then
+      if mLvl >= lvl - 2 and mLvl <= lvl + 10 and #milestoneLines < 3 and not ShouldSkipMilestone(m, milestoneFilter) then
         local tag = (mLvl == lvl) and "|cff00ff00[当前必做]|r " or string.format("|cffffd100[Lv.%d 要点]|r ", mLvl)
         table.insert(milestoneLines, "  - " .. tag .. LinkifyInlineCoords(m.text or "", band and band.zone or "", spec.name or "要点"))
       end
@@ -4409,7 +4475,7 @@ local function RenderTabSmartMatch()
   end
   for _, cr in ipairs(matchedClassRuns) do
     local crTo = cr.to or cr.level or 60
-    if lvl >= (cr.level - 4) and crTo >= lvl - 2 and #milestoneLines < 5 then
+    if not ShouldSkipClassRun(cr, milestoneFilter) and lvl >= (cr.level - 4) and crTo >= lvl - 2 and #milestoneLines < 5 then
       local crLine = FormatClassRunLine(cr, {
         prefix = "  - ",
         routeName = route and route.name or "",
@@ -4522,6 +4588,7 @@ local function RenderTabRoutes()
   -- （当前等级起 16 级内）保持一致，否则这些任务会从整页消失。
   local LOOKAHEAD = 16
   local charGuideLines = {}
+  local milestoneFilter = BuildMilestoneFilter()
   if phase then
     table.insert(charGuideLines, string.format(
       "|cff71d5ff[战斗] 当前等级 (%s·Lv.%d-%d) 练级手法:|r 常驻 %s  |  起手 %s  |  循环 %s",
@@ -4531,7 +4598,7 @@ local function RenderTabRoutes()
   if #matchedClassRuns > 0 then
     for _, cr in ipairs(matchedClassRuns) do
       local crTo = cr.to or cr.level or 60
-      if not isMatchMode or (cr.level <= lvl + LOOKAHEAD and crTo >= lvl - 2) then
+      if not ShouldSkipClassRun(cr, milestoneFilter) and (not isMatchMode or (cr.level <= lvl + LOOKAHEAD and crTo >= lvl - 2)) then
         local activeTag = (lvl >= cr.level and lvl <= crTo + 2) and "|cff00ff00★[当前可做]|r " or ""
         local crLine, crTree = FormatClassRunLine(cr, {
           prefix = "  - " .. activeTag,
@@ -4545,10 +4612,9 @@ local function RenderTabRoutes()
     end
   end
   if spec and spec.musts then
-    local hasRidingSkill = HasRidingSkill()
     for _, m in ipairs(spec.musts) do
       local mLvl = m.level or 1
-      if (not isMatchMode or (mLvl >= lvl - 2 and mLvl <= lvl + LOOKAHEAD)) and not ShouldSkipMilestone(m, hasRidingSkill) then
+      if (not isMatchMode or (mLvl >= lvl - 2 and mLvl <= lvl + LOOKAHEAD)) and not ShouldSkipMilestone(m, milestoneFilter) then
         local activeTag = (mLvl == lvl) and "|cff00ff00★[本级必做]|r " or ""
         table.insert(charGuideLines, string.format("  - %s|cffffd100[Lv.%d %s要点]|r %s", activeTag, mLvl, spec.name or "专精", LinkifyInlineCoords(m.text or "", "", spec.name or "要点")))
       end
