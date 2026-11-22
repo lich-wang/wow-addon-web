@@ -522,38 +522,88 @@ function Arb.PriceFor(itemID, quantity, options)
   return nil, entry.source, entry
 end
 
----产出可卖出的参考价：优先压过对手的最低价（rivalMin），否则当前最低价/行情估计
+---产出可卖出的参考价：按「观测到的最低售价」（record.min，全量扫描的原始最低挂单价）计算利润，
+---避免用 rivalMin 高估收入；min 缺失时才回退 rivalMin → market。
 ---@param itemID number
 ---@return number|nil price
 ---@return table|nil record
+---@return string|nil priceSource "min" | "rivalMin" | "market" | "api" | nil
 function Arb.SellQuote(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
   local cached = sellCache[id]
-  if cached then return cached.price, cached.record end
+  if cached then return cached.price, cached.record, cached.priceSource end
   local api = Arb.Market()
   if api and type(api.GetRecord) == "function" then
     local ok, record = pcall(api.GetRecord, id)
     if not ok or type(record) ~= "table" then return nil end
-    local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
-    sellCache[id] = { price = price, record = record }
-    return price, record
+    local price, priceSource = tonumber(record.min), "min"
+    if not price then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
+    if not price then price, priceSource = tonumber(record.market), "market" end
+    sellCache[id] = { price = price, record = record, priceSource = priceSource }
+    return price, record, priceSource
   end
   local btPrices = blackthornesPriceTable()
   local record = btPrices and btPrices[id]
   if type(record) == "table" then
-    local price = tonumber(record.rivalMin) or tonumber(record.min) or tonumber(record.market)
+    local price, priceSource = tonumber(record.min), "min"
+    if not price then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
+    if not price then price, priceSource = tonumber(record.market), "market" end
     if price and price > 0 then
-      sellCache[id] = { price = price, record = record }
-      return price, record
+      sellCache[id] = { price = price, record = record, priceSource = priceSource }
+      return price, record, priceSource
     end
   end
   local btApi = blackthornesApi()
   if btApi then
     local ok, price = pcall(btApi.GetPrice, id)
     if ok and type(price) == "number" and price > 0 then
-      sellCache[id] = { price = price, record = nil }
-      return price, nil
+      sellCache[id] = { price = price, record = nil, priceSource = "api" }
+      return price, nil, "api"
+    end
+  end
+  return nil
+end
+
+---读取拍卖行当前在售件数（只认全量扫描的完整快照；没有完整快照返回 nil 表示「未知」）
+---数据源：EasyAuction GetRecord().bookQuantity（bookComplete）/ GetDepth().totalQuantity（complete），
+---并兼容黑石交易技能价格表里同名字段。
+---@param itemID number
+---@return number|nil quantity 在售件数，nil 表示未知
+---@return string|nil source 快照来源 "record" | "depth" | nil
+function Arb.ListedSupply(itemID)
+  local id = tonumber(itemID)
+  if not id then return nil end
+  local api = Arb.Market()
+  if api then
+    if type(api.GetRecord) == "function" then
+      local ok, record = pcall(api.GetRecord, id)
+      if ok and type(record) == "table" and record.bookComplete == true then
+        local qty = tonumber(record.bookQuantity)
+        if qty and qty >= 0 then return qty, "record" end
+      end
+    end
+    if type(api.GetDepth) == "function" then
+      local ok, depth = pcall(api.GetDepth, id, 200)
+      if ok and type(depth) == "table" and depth.complete == true then
+        local qty = tonumber(depth.totalQuantity)
+        if qty and qty >= 0 then return qty, "depth" end
+      end
+    end
+  else
+    local prices = blackthornesPriceTable()
+    local record = prices and prices[id]
+    if type(record) == "table" and record.bookComplete == true then
+      local qty = tonumber(record.bookQuantity)
+      if qty and qty >= 0 then return qty, "record" end
+    end
+    local btApi = blackthornesApi()
+    if btApi and type(btApi.GetDepth) == "function" then
+      local ok, depth = pcall(btApi.GetDepth, id)
+      if ok and type(depth) == "table" and depth.complete == true then
+        local qty = tonumber(depth.totalQuantity)
+        if qty and qty >= 0 then return qty, "depth" end
+      end
     end
   end
   return nil
@@ -1099,6 +1149,17 @@ local function vendorSignature()
   return tconcat({ floor(tonumber(WoWFDB.vendorCacheAt) or 0), count, vendorVersion }, ":")
 end
 
+---在售数量过滤：只过滤「已确认在售数量 < 阈值」的商品；数量未知时保留，避免误杀。
+---@param row table
+---@param minSupply number|nil
+---@return boolean keep
+local function passesSupply(row, minSupply)
+  if not minSupply then return true end
+  local supply = row.listedSupply
+  if supply == nil then return true end
+  return supply >= minSupply
+end
+
 ---计算「NPC 商人买入 → 拍卖行卖出」的套利行
 ---买入价取商人实际售价，卖出价取拍卖行对手最低价并扣除手续费；不用商人的回收价当收入。
 ---@return table[] rows
@@ -1110,17 +1171,18 @@ function Arb.VendorArbitrage(options)
   if vendorRowsCache.stamp ~= stamp then
     local rows = {}
     for _, offer in ipairs(Arb.VendorOffers()) do
-      local price, record = Arb.SellQuote(offer.itemID)
+      local price, record, priceSource = Arb.SellQuote(offer.itemID)
       -- 单件买入价即最低档价（批量时按档位逐段计价，见 VendorBuyFor）
       local buyForOne = Arb.VendorBuyFor(offer.itemID, 1)
       local buyPrice = (buyForOne and buyForOne.unit) or offer.price
       local row = {
+        listedSupply = Arb.ListedSupply(offer.itemID),
         outputID = offer.itemID, name = Arb.ItemName(offer.itemID), kind = "vendor",
         vendorPrice = buyPrice, listPrice = offer.price, vendorNPC = offer.npc, vendorZone = offer.zone,
         vendorStock = offer.stock, vendorStack = offer.stack, vendorInfinite = offer.infinite == true,
         vendorSources = offer.sources, vendorTotalStock = offer.totalStock,
         vendorAt = offer.at,
-        price = price, record = record,
+        price = price, record = record, priceSource = priceSource,
       }
       if price and price > 0 then
         row.revenue = price
@@ -1145,6 +1207,7 @@ function Arb.VendorArbitrage(options)
   for _, row in ipairs(vendorRowsCache.rows) do
     local keep = true
     if row.price then priced = priced + 1 end
+    if keep then keep = passesSupply(row, options.minSupply) end
     if keep and options.onlyProfitable and not (row.profit and row.profit > 0) then keep = false end
     if keep and options.query and options.query ~= "" then
       local parts = { row.name or "", row.vendorNPC or "", row.vendorZone or "" }
@@ -1650,10 +1713,11 @@ local function buildRows(mode, crossOwner)
     end
     row.leaves, row.craftLines = leaves, crafts
 
+    row.listedSupply = Arb.ListedSupply(recipe.output)
     if row.craftable then
       priced = priced + 1
-      local price, record = Arb.SellQuote(recipe.output)
-      row.price, row.record = price, record
+      local price, record, priceSource = Arb.SellQuote(recipe.output)
+      row.price, row.record, row.priceSource = price, record, priceSource
       row.sellRevenue = price and price * row.yield or nil
       if mode == "de" then
         local de = Arb.Disenchant(recipe.output)
@@ -1704,7 +1768,7 @@ end
 ---执行一次完整分析
 ---@param options table { mode = "sell"|"de", source = "craft"|"vendor"|"both", profession = key|table|nil,
 ---                        ownOnly = bool, onlyProfitable = bool, onlySkillUp = bool, crossOwner = bool,
----                        sort = "profit"|"roi", query = string }
+---                        minSupply = number|nil, sort = "profit"|"roi", query = string }
 ---@return table[] rows
 ---@return table meta
 function Arb.Analyse(options)
@@ -1754,7 +1818,7 @@ function Arb.Analyse(options)
   local vendorRows, vendorMeta
   if source ~= "craft" then
     vendorRows, vendorMeta = Arb.VendorArbitrage({
-      onlyProfitable = options.onlyProfitable, query = options.query,
+      onlyProfitable = options.onlyProfitable, query = options.query, minSupply = options.minSupply,
     })
     for _, row in ipairs(vendorRows) do
       tinsert(rows, row)
@@ -1763,6 +1827,7 @@ function Arb.Analyse(options)
   end
   for _, row in ipairs(source == "vendor" and {} or craftCache) do
     local keep = true
+    if keep then keep = passesSupply(row, options.minSupply) end
     if professionFilter and not (row.professionKey and professionFilter[row.professionKey]) then keep = false end
     -- 「当前可以制作」：默认只保留当前角色自己学会的配方
     if keep and options.ownOnly ~= false and not row.ownCharacter then keep = false end
