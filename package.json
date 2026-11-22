@@ -18,6 +18,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "fetch:client": "node scripts/fetch-client.js",
+    "generate:reputation": "node scripts/generate-reputation-data.mjs",
     "tauri": "tauri",
     "lint": "oxlint",
     "preview": "vite preview",

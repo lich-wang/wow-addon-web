@@ -5,7 +5,13 @@ import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 
 const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
-const WOWF_ADDON_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../addons/WoWF');
+const WOWF_LOCALES_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WOWF_ADDON_DIR = path.resolve(WOWF_LOCALES_DIR, '../../addons/WoWF');
+
+// 16 个新增第三方声望的任务快照（由 scripts/generate-reputation-data.mjs 生成）
+const REPUTATION_DATA = JSON.parse(
+  fs.readFileSync(path.join(WOWF_LOCALES_DIR, 'wowf-reputation-data.json'), 'utf8')
+);
 
 function readWoWFLuaFile(filename) {
   return fs.readFileSync(path.join(WOWF_ADDON_DIR, filename), 'utf8').replace(/\r\n|\r/g, '\n');
@@ -3896,6 +3902,7 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
       factionQuests: FACTION_QUESTS_DATA,
+      reputationGuides: REPUTATION_DATA,
     }, livePrereqs);
   }
 
@@ -3935,6 +3942,7 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     professions: professionsList,
     foreverSystems: FOREVER_SYSTEMS_DATA,
     factionQuests: FACTION_QUESTS_DATA,
+    reputationGuides: REPUTATION_DATA,
     news,
   };
   if (useSnapshotOnly && prevalidatedSnapshot) {

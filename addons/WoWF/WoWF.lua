@@ -91,6 +91,13 @@ local COMMON_COMMANDS = {
     note = "等同点击顶部「地下城百科」页签。",
   },
   {
+    title = "第三方声望",
+    category = "本百科 / 快捷入口",
+    code = "/wowf rep",
+    desc = "直达声望页：魔兽无限新增的 16 个第三方声望（贸易局/补给后勤部、爆破引线港、海加尔守护者、树皮地洞、夜爪德鲁伊、肯瑞托等）的任务与上交清单，按当前声望过滤。",
+    note = "等同点击顶部「声望」页签；任务按角色等级与完成状态过滤，工匠文书按声望档位分组。",
+  },
+  {
     title = "制造套利",
     category = "本百科 / 快捷入口",
     code = "/wowf arb",
@@ -5860,6 +5867,380 @@ local function FormatCraftProfessionFilter(arb, professions)
   end
 end
 
+-- ============================================================================
+-- 声望页：魔兽无限新增的 16 个第三方声望
+-- 数据来自 Data.reputationGuides（scripts/locales/wowf-reputation-data.json）。
+-- 按角色阵营/等级/声望/完成状态过滤；任务全量列出，已完成折叠，跨阵营按任务 ID 去重。
+-- ============================================================================
+local function RenderTabReputations()
+  local list = CreateCardList(6)
+  local lvl = state.level
+  local guides = Data and Data.reputationGuides
+  local factions = guides and guides.factions
+  if type(factions) ~= "table" or #factions == 0 then
+    list:Add({
+      title = "|cff00ffcc[声望] 无限服新增第三方声望|r",
+      body = "|cffff8800声望数据尚未打包：请更新 WoWF 插件或等待下一次数据同步。|r",
+      theme = "info",
+    })
+    list:Finish()
+    return
+  end
+
+  local SIDE_TAG = {
+    alliance = "|cff44aaff[联盟]|r ",
+    horde = "|cffff5555[部落]|r ",
+    both = "|cffcccccc[中立]|r ",
+  }
+  local REP_TIERS = {
+    { 42000, "崇拜" }, { 21000, "崇敬" }, { 9000, "尊敬" }, { 3000, "友善" },
+    { 0, "中立" }, { -3000, "冷淡" }, { -6000, "敌对" }, { -42000, "仇恨" },
+  }
+  local NEXT_TIERS = { 3000, 9000, 21000, 42000 }
+
+  local function RepLabel(value)
+    for _, tier in ipairs(REP_TIERS) do
+      if value >= tier[1] then return tier[2] end
+    end
+    return "仇恨"
+  end
+  local function RepColor(value)
+    if value >= 9000 then return "|cff00ff00" end
+    if value >= 3000 then return "|cff66ff66" end
+    if value >= 0 then return "|cffffd100" end
+    if value >= -6000 then return "|cffff8800" end
+    return "|cffff5555"
+  end
+  local function FormatNum(value)
+    local n = math.floor(tonumber(value) or 0)
+    local sign = (n < 0) and "-" or ""
+    local out = string.reverse(tostring(math.abs(n)))
+    out = string.gsub(out, "(%d%d%d)", "%1,")
+    out = string.reverse(out)
+    out = string.gsub(out, "^,", "")
+    return sign .. out
+  end
+  local function GetRepValue(factionId)
+    local fid = tonumber(factionId)
+    if not fid then return nil end
+    if GetFactionInfoByID then
+      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, fid)
+      if ok and type(barValue) == "number" then return barValue end
+    end
+    if C_Reputation and C_Reputation.GetFactionDataByID then
+      local ok, data = pcall(C_Reputation.GetFactionDataByID, fid)
+      if ok and type(data) == "table" and type(data.currentStanding) == "number" then
+        return data.currentStanding
+      end
+    end
+    return nil
+  end
+  local function NextTierHint(value)
+    for _, threshold in ipairs(NEXT_TIERS) do
+      if value < threshold then
+        return string.format("%s %s（还差 %s）", RepLabel(threshold), FormatNum(threshold), FormatNum(threshold - value))
+      end
+    end
+    return nil
+  end
+  local function QuestRepOk(qid)
+    if not _G.QuestDB then return true end
+    local function Check(reqFn, isMin)
+      local req = reqFn and reqFn(qid)
+      if type(req) ~= "table" then return true end
+      local fid, need = tonumber(req[1]), tonumber(req[2])
+      if not fid or not need then return true end
+      local value = GetRepValue(fid)
+      if type(value) ~= "number" then return true end
+      if isMin then return value >= need end
+      return value < need
+    end
+    if not Check(_G.QuestDB.requiredMinRep, true) then return false end
+    if not Check(_G.QuestDB.requiredMaxRep, false) then return false end
+    return true
+  end
+
+  local factionNameById = {}
+  local factionSideById = {}
+  for _, f in ipairs(factions) do
+    factionNameById[tonumber(f.id)] = f.name
+    factionSideById[tonumber(f.id)] = f.side or "both"
+  end
+  local shownQuestIds = {}
+
+  local function FactionAvailable(f)
+    local side = f.side
+    return (not side) or side == "both" or side == state.faction
+  end
+
+  -- 顶部总览：16 个阵营一屏看完当前声望
+  local summaryLines = {
+    "|cff99e6ff《魔兽世界：无限》新增第三方声望总览|r：蓝色为联盟声望、红色为部落声望、灰色为中立；对立阵营的详情卡会自动隐藏。",
+  }
+  for _, f in ipairs(factions) do
+    local side = f.side or "both"
+    local value = GetRepValue(f.id)
+    local standingText
+    if not FactionAvailable(f) then
+      standingText = "|cff888888不可用（对立阵营）|r"
+    elseif type(value) == "number" then
+      standingText = string.format("%s%s (%s)|r", RepColor(value), RepLabel(value), FormatNum(value))
+    else
+      standingText = "|cff888888未追踪|r"
+    end
+    table.insert(summaryLines, string.format("%s%s %s", SIDE_TAG[side] or "", f.name, standingText))
+  end
+
+  local function AppendQuest(lines, q)
+    local info = GetQuestieQuestInfo(q.id)
+    local qLevel = (tonumber(q.level) and tonumber(q.level) > 0) and tonumber(q.level) or (info and info.level) or lvl
+    local qObj = {
+      id = q.id,
+      name = q.name,
+      level = qLevel,
+      faction = "both",
+      zone = (q.zone and q.zone ~= "" and q.zone) or (info and info.zone) or "",
+      npc = info and info.npc or nil,
+      x = info and info.x or nil,
+      y = info and info.y or nil,
+    }
+    local link = FormatQuestLink(qObj, qLevel, qObj.zone, q.repeatable and false or nil)
+    local parts = { link }
+    local tags = {}
+    if q.kind == "writ" then table.insert(tags, "|cffc79c6e[工匠文书]|r") end
+    if q.repeatable then table.insert(tags, "|cffff8800[可重复]|r") end
+    if q.items and #q.items > 0 then table.insert(tags, "|cff00aaff[交物品]|r") end
+    if #tags > 0 then table.insert(parts, table.concat(tags, "")) end
+    if q.rep and tonumber(q.rep) ~= 0 then
+      table.insert(parts, string.format("|cff00ff00+%s|r", FormatNum(q.rep)))
+    end
+    if type(q.otherRep) == "table" and #q.otherRep > 0 then
+      local others = {}
+      for _, other in ipairs(q.otherRep) do
+        local otherName = factionNameById[tonumber(other.id)]
+        local otherSide = factionSideById[tonumber(other.id)]
+        if otherName and ((not otherSide) or otherSide == "both" or otherSide == state.faction) then
+          local n = tonumber(other.n) or 0
+          table.insert(others, string.format("%s%s %s%s|r", n >= 0 and "|cff66ff66" or "|cffff5555", otherName, n >= 0 and "+" or "", FormatNum(n)))
+        end
+      end
+      if #others > 0 then table.insert(parts, "另 " .. table.concat(others, "、")) end
+    end
+    if q.items and #q.items > 0 then
+      local itemTexts = {}
+      for _, item in ipairs(q.items) do
+        table.insert(itemTexts, string.format("%d×%s", item.count or 1, FormatItemLink(item.id, item.name)))
+      end
+      table.insert(parts, "交 " .. table.concat(itemTexts, "、"))
+    end
+    if q.zone and q.zone ~= "" then
+      table.insert(parts, "|cff8899aa(" .. q.zone .. ")|r")
+    end
+    table.insert(lines, "  · " .. table.concat(parts, "  "))
+    shownQuestIds[q.id] = true
+  end
+
+  local function BuildGroups(faction, eligible)
+    if #eligible == 0 then
+      return { { quests = {} } }
+    end
+    local writs, rest = {}, {}
+    for _, q in ipairs(eligible) do
+      if q.kind == "writ" then table.insert(writs, q) else table.insert(rest, q) end
+    end
+    local groups = {}
+    if #writs > 0 then
+      local byRep, keys = {}, {}
+      for _, q in ipairs(writs) do
+        local rep = tonumber(q.rep) or 0
+        if not byRep[rep] then
+          byRep[rep] = {}
+          table.insert(keys, rep)
+        end
+        table.insert(byRep[rep], q)
+      end
+      table.sort(keys)
+      for _, rep in ipairs(keys) do
+        local repQuests = byRep[rep]
+        local chunks = {}
+        if #repQuests > 30 then
+          for idx = 1, #repQuests, 25 do
+            local chunk = {}
+            for j = idx, math.min(idx + 24, #repQuests) do table.insert(chunk, repQuests[j]) end
+            table.insert(chunks, chunk)
+          end
+        else
+          table.insert(chunks, repQuests)
+        end
+        for chunkIdx, chunk in ipairs(chunks) do
+          local suffix = string.format(" · 工匠文书 +%s", FormatNum(rep))
+          if #chunks > 1 then suffix = suffix .. string.format(" (%d/%d)", chunkIdx, #chunks) end
+          table.insert(groups, { quests = chunk, titleSuffix = suffix })
+        end
+      end
+    end
+    if #rest > 0 then
+      if #rest > 30 then
+        local bands = {
+          { 1, 5 }, { 6, 10 }, { 11, 15 }, { 16, 20 }, { 21, 25 }, { 26, 30 },
+          { 31, 35 }, { 36, 40 }, { 41, 45 }, { 46, 50 }, { 51, 55 }, { 56, 60 },
+        }
+        for _, band in ipairs(bands) do
+          local bandQuests = {}
+          for _, q in ipairs(rest) do
+            local qLv = tonumber(q.level) or 0
+            if qLv >= band[1] and qLv <= band[2] then table.insert(bandQuests, q) end
+          end
+          if #bandQuests > 0 then
+            local chunks = {}
+            if #bandQuests > 25 then
+              for idx = 1, #bandQuests, 25 do
+                local chunk = {}
+                for j = idx, math.min(idx + 24, #bandQuests) do table.insert(chunk, bandQuests[j]) end
+                table.insert(chunks, chunk)
+              end
+            else
+              table.insert(chunks, bandQuests)
+            end
+            for chunkIdx, chunk in ipairs(chunks) do
+              local suffix = string.format(" · %sLv.%d-%d", (#writs > 0) and "其他任务 " or "", band[1], band[2])
+              if #chunks > 1 then suffix = suffix .. string.format(" (%d/%d)", chunkIdx, #chunks) end
+              table.insert(groups, { quests = chunk, titleSuffix = suffix })
+            end
+          end
+        end
+      else
+        table.insert(groups, {
+          quests = rest,
+          titleSuffix = (#writs > 0) and " · 其他声望任务" or nil,
+        })
+      end
+    end
+    if #groups == 0 then return { { quests = eligible } } end
+    return groups
+  end
+
+  list:Add({
+    title = "|cff00ffcc[声望] 魔兽无限 · 新增第三方声望|r",
+    body = table.concat(summaryLines, "\n"),
+    theme = "header",
+    badge = string.format("%d 个阵营", #factions),
+  })
+
+  for _, faction in ipairs(factions) do
+    if FactionAvailable(faction) then
+      local factionBlob = (faction.name or "") .. " " .. (faction.summary or "")
+      for _, source in ipairs(faction.sources or {}) do factionBlob = factionBlob .. " " .. source end
+      for _, q in ipairs(faction.quests or {}) do
+        factionBlob = factionBlob .. " " .. (q.name or "")
+        for _, item in ipairs(q.items or {}) do factionBlob = factionBlob .. " " .. (item.name or "") end
+      end
+      if MatchesSearch(factionBlob) then
+        local eligible = {}
+        local completedCount, higherCount, repLockedCount, sharedCount = 0, 0, 0, 0
+        for _, q in ipairs(faction.quests or {}) do
+          local sideOk = (not q.side) or q.side == "both" or q.side == state.faction
+          if sideOk then
+            if IsQuestCompletedById(q.id) and not q.repeatable then
+              completedCount = completedCount + 1
+            elseif (tonumber(q.minLevel) or 1) > lvl + 2 then
+              higherCount = higherCount + 1
+            elseif not QuestRepOk(q.id) then
+              repLockedCount = repLockedCount + 1
+            elseif shownQuestIds[q.id] then
+              sharedCount = sharedCount + 1
+            else
+              table.insert(eligible, q)
+            end
+          end
+        end
+
+        local value = GetRepValue(faction.id)
+        local standingText = type(value) == "number"
+          and string.format("%s%s (%s)|r", RepColor(value), RepLabel(value), FormatNum(value))
+          or "|cff888888未追踪|r"
+        local nextHint = type(value) == "number" and NextTierHint(value) or nil
+        local groups = BuildGroups(faction, eligible)
+        local side = faction.side or "both"
+        local baseTitle = string.format(
+          "|cff00ffcc[声望] %s%s|r",
+          (side ~= "both" and (SIDE_TAG[side] or "")) or "",
+          faction.name or ""
+        )
+
+        for groupIdx, group in ipairs(groups) do
+          local lines = {}
+          if groupIdx == 1 then
+            local standingLine = "|cff99e6ff你的声望:|r " .. standingText
+            if nextHint then standingLine = standingLine .. "   |cff8899aa下一门槛: " .. nextHint .. "|r" end
+            table.insert(lines, standingLine)
+            if type(value) == "number" and value >= (tonumber(faction.max) or 42999) then
+              table.insert(lines, "|cff00ff00已满声望。|r")
+            end
+            if faction.summary and faction.summary ~= "" then table.insert(lines, faction.summary) end
+            if type(faction.sources) == "table" and #faction.sources > 0 then
+              table.insert(lines, "|cffffd100声望来源:|r")
+              for _, source in ipairs(faction.sources) do table.insert(lines, "  · " .. source) end
+            end
+            if type(faction.rewards) == "table" and #faction.rewards > 0 then
+              local rewardParts = {}
+              for _, rewardGroup in ipairs(faction.rewards) do
+                local names = {}
+                for _, item in ipairs(rewardGroup.items or {}) do
+                  table.insert(names, FormatItemLink(item.id, item.name))
+                end
+                if #names > 0 then
+                  local suffix = (tonumber(rewardGroup.total) and rewardGroup.total > #names)
+                    and string.format(" 等%d件", rewardGroup.total) or ""
+                  table.insert(rewardParts, string.format("%s %s%s", rewardGroup.standing, table.concat(names, "、"), suffix))
+                end
+              end
+              if #rewardParts > 0 then
+                table.insert(lines, "|cffffd100可换:|r " .. table.concat(rewardParts, "  |  "))
+              end
+            end
+            if completedCount > 0 then
+              table.insert(lines, string.format("|cff888888✓ 已完成 %d 条声望任务（已折叠）|r", completedCount))
+            end
+          else
+            table.insert(lines, "|cff8899aa（接上）|r")
+          end
+
+          if #group.quests == 0 then
+            table.insert(lines, "|cff8899aa暂无可接任务；按上方来源提升声望。|r")
+          else
+            for _, q in ipairs(group.quests) do AppendQuest(lines, q) end
+          end
+
+          if groupIdx == #groups then
+            if higherCount > 0 then
+              table.insert(lines, string.format("|cff8899aa另有 %d 条任务需更高等级（Lv.%d+）|r", higherCount, lvl + 3))
+            end
+            if repLockedCount > 0 then
+              table.insert(lines, string.format("|cff8899aa另有 %d 条任务需更高声望|r", repLockedCount))
+            end
+            if sharedCount > 0 then
+              table.insert(lines, string.format("|cff8899aa另有 %d 条任务同时提升本阵营声望（已列在其他阵营卡）|r", sharedCount))
+            end
+          end
+
+          local titleSuffix = group.titleSuffix or ""
+          local badge = type(value) == "number" and RepLabel(value) or "未追踪"
+          if group.titleSuffix then badge = badge .. group.titleSuffix end
+          list:Add({
+            title = baseTitle .. titleSuffix,
+            body = table.concat(lines, "\n"),
+            theme = "zone",
+            badge = badge,
+          })
+        end
+      end
+    end
+  end
+
+  list:Finish()
+end
+
 local function RenderTabCraftArb()
   local list = CreateCardList(6)
   local arb = WoWF_CraftArb
@@ -6587,6 +6968,7 @@ local TAB_DEFS = {
   { id = 4, label = "一键宏库",     render = RenderTabMacros,          slash = { "macro", "macros" }, searchable = true },
   { id = 5, label = "地下城百科",   render = RenderTabDungeons,        slash = { "dungeon", "dungeons" }, searchable = true },
   { id = 6, label = "专业&无限特色", render = RenderTabForeverAndNews, slash = { "news", "forever", "prof", "professions" }, onSlash = function() state.featureFilter = "MATCH" end, searchable = true },
+  { id = 9, label = "声望",         render = RenderTabReputations,     slash = { "rep", "reputation", "factions" }, searchable = true },
   { id = 7, label = "无限服速查",     render = RenderTabCommands,        slash = { "cmd", "commands", "console", "quick" }, searchable = true },
   { id = 8, label = "制造套利",     render = RenderTabCraftArb,        slash = { "arb", "craft", "crafting", "profit", "auction" }, searchable = true },
 }
@@ -6977,7 +7359,7 @@ local function CreateMainWindow()
   end)
   AttachTooltip(searchBox, "关键词搜索", "对当前标签页内容进行关键词过滤（按 Esc 清空；「智能匹配」总览页不支持搜索）。")
 
-  -- 八大功能标签栏（由 TAB_DEFS 统一驱动）
+  -- 功能标签栏（由 TAB_DEFS 统一驱动）
   local tabX = 12
   for i, def in ipairs(TAB_DEFS) do
     local btn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
@@ -7265,7 +7647,7 @@ SlashCmdList["WOWF"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 可用斜杠子命令:")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf|r — 打开智能匹配仪表盘")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf route|r — 升级路线   |cffffd100/wowf class|r — 职业与天赋   |cffffd100/wowf macro|r — 一键宏库")
-    DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf dungeon|r — 地下城百科   |cffffd100/wowf news|r — 专业&无限特色   |cffffd100/wowf cmd|r — 无限服速查   |cffffd100/wowf arb|r — 制造套利")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf dungeon|r — 地下城百科   |cffffd100/wowf news|r — 专业&无限特色   |cffffd100/wowf rep|r — 声望   |cffffd100/wowf cmd|r — 无限服速查   |cffffd100/wowf arb|r — 制造套利")
     return
   end
   local def = SLASH_TO_TAB[cmd] or TAB_DEFS[1]
