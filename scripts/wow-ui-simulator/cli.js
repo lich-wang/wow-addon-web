@@ -1195,6 +1195,101 @@ async function main() {
     else console.log('[✓] 半人马阵营任务卡回归通过（声望过滤、交物品/可重复、门槛与已完成折叠）。');
   }
 
+  // 声望页：16 个新增第三方声望的任务卡（声望过滤、已完成折叠、跨阵营去重）
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const repCoreFiles = files.filter((f) => !isDataLuaFile(f));
+    const reputationMockLua = `
+      local REP = { [2586] = 3250, [2740] = 9000, [2826] = 0, [2587] = 0 }
+      function GetFactionInfoByID(id)
+        local value = REP[id] or 0
+        return "faction", "", 4, 0, 0, value
+      end
+      local function q(id, name, lv, minLv, zone, extra)
+        local t = { id = id, name = name, level = lv, minLevel = minLv, zone = zone, items = {}, otherRep = {} }
+        for k, v in pairs(extra or {}) do t[k] = v end
+        return t
+      end
+      WoWF_Data = {
+        meta = { version = "reputation-test" },
+        routes = {},
+        classes = { MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精" } } } },
+        dungeons = {}, macros = {}, professions = {},
+        reputationGuides = {
+          factions = {
+            {
+              id = 2586, name = "艾泽拉斯贸易局", side = "alliance", max = 42999,
+              summary = "联盟侧贸易声望。", sources = { "上交遭劫的板条箱" },
+              rewards = { { standing = "友善", items = { { id = 1, name = "补给包" } }, total = 1 } },
+              quests = {
+                q(94004, "工匠文书：测试药水", 60, 1, "制造区", { rep = 75, repeatable = true, kind = "writ", items = { { id = 2, name = "测试药水", count = 1 } } }),
+                q(99901, "联盟贸易任务", 38, 36, "赤脊山", { rep = 100, side = "alliance" }),
+              },
+            },
+            {
+              id = 2587, name = "杜隆塔尔补给后勤部", side = "horde", max = 42999,
+              summary = "部落侧贸易声望。", sources = {}, rewards = {},
+              quests = { q(99902, "部落贸易任务", 38, 36, "杜隆塔尔", { rep = 100, side = "horde" }) },
+            },
+            {
+              id = 2740, name = "肯瑞托", side = "alliance", max = 42999,
+              summary = "达拉然法师声望。", sources = {}, rewards = {},
+              quests = {
+                q(93963, "联盟之旅", 13, 7, "暴风城", { rep = 100, side = "alliance" }),
+                q(90001, "共同任务", 40, 38, "达拉然", { rep = 250, otherRep = { { id = 2826, n = 150 } } }),
+              },
+            },
+            {
+              id = 2826, name = "铁马兄弟会", side = "alliance", max = 42999,
+              summary = "联盟新阵营。", sources = {}, rewards = {},
+              quests = {
+                q(90001, "共同任务", 40, 38, "达拉然", { rep = 150, otherRep = { { id = 2740, n = 250 } } }),
+                q(90002, "高等级任务", 55, 53, "河林", { rep = 100 }),
+              },
+            },
+          },
+        },
+      }
+    `;
+    const repRt = new WoWSimulatorRuntime({
+      level: 40,
+      classKey: 'MAGE',
+      raceKey: '人类',
+      faction: 'Alliance',
+      completedQuests: [93963, 94004],
+    });
+    repRt.loadAddon(addonName, [
+      { filename: 'ReputationMock.lua', content: reputationMockLua },
+      ...repCoreFiles,
+    ]);
+    repRt.runSlashCommand('/wowf rep');
+    const repSnap = repRt.getSnapshot();
+    const repCards = summarizeCards(repSnap);
+    const repAll = repCards.map((c) => `${c.title}\n${c.body}`).join('\n');
+    const repTitles = repCards.map((c) => c.title);
+    const sharedCount = (repAll.match(/共同任务/g) || []).length;
+    const repChecks = [
+      ['声望总览卡', repTitles.some((t) => t.includes('新增第三方声望'))],
+      ['贸易局声望', repAll.includes('友善 (3,250)')],
+      ['工匠文书分组', repTitles.some((t) => t.includes('工匠文书 +75'))],
+      ['可重复文书未被完成过滤', repAll.includes('工匠文书：测试药水')],
+      ['已完成任务折叠', repAll.includes('已完成 1 条声望任务') && !repAll.includes('联盟之旅')],
+      ['共同任务只列一次', sharedCount === 1],
+      ['去重提示', repAll.includes('已列在对应阵营卡')],
+      ['高等级任务折叠', !repAll.includes('高等级任务') && repAll.includes('需更高等级')],
+      ['对立阵营详情隐藏', !repTitles.some((t) => t.includes('杜隆塔尔补给后勤部'))],
+    ];
+    const repFailed = repChecks.filter(([, ok]) => !ok);
+    if (repSnap.luaErrors.length > 0 || repFailed.length > 0) {
+      assertionFailed = true;
+      console.error(
+        `[Assert Failed] 声望页回归 errors=${repSnap.luaErrors.length}, failed=${repFailed.map(([name]) => name).join('|')}`
+      );
+    } else {
+      console.log('[✓] 声望页回归通过（声望过滤、已完成折叠、工匠文书/可重复、跨阵营去重）。');
+    }
+    repRt.destroy();
+  }
+
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
     process.exit(1);
   }
