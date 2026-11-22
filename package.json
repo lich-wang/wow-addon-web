@@ -21,6 +21,7 @@
     "tauri": "tauri",
     "lint": "oxlint",
     "preview": "vite preview",
+    "publish:curseforge": "node scripts/publish-curseforge.js",
     "sim:wowf": "node scripts/wow-ui-simulator/cli.js --assert",
     "prepare": "git config core.hooksPath .githooks || true"
   },
