@@ -706,6 +706,7 @@ async function main() {
             faction = "alliance",
             bands = {
               { from = 38, to = 42, zone = "尘泥沼泽", hub = { name = "塞拉摩", x = 66.1, y = 51.5 }, quests = {} },
+              { from = 58, to = 60, zone = "西瘟疫之地", hub = { name = "冰风营地", x = 43.0, y = 84.0 }, quests = {} },
             },
             classRunsByClass = {},
           },
@@ -730,7 +731,31 @@ async function main() {
               {
                 key = "holy", name = "神圣专精", recommendedProfs = "", phases = {}, steps = {},
                 musts = {
-                  { level = 40, text = "不用买坐骑，立刻做职业任务学会召唤军马。" },
+                  { level = 40, text = "通过职业任务学会|cff71d5ff[召唤军马]|r。" },
+                  { level = 40, text = "40级记得去训练师学习新技能。" },
+                  { level = 60, text = "60级记得去训练师学习新技能。" },
+                },
+              },
+            },
+            classRuns = {
+              {
+                id = 7647, faction = "alliance", level = 60, to = 60,
+                name = "审判和救赎", teaches = "召唤战马",
+                steps = {
+                  { id = 7647, name = "审判和救赎", level = 60, zone = "西瘟疫之地", npc = "格雷森·沙东布瑞克公爵", x = 48.4, y = 50.2 },
+                },
+              },
+            },
+            macros = {},
+          },
+          WARLOCK = {
+            name = "术士",
+            specs = {
+              {
+                key = "affliction", name = "痛苦", recommendedProfs = "", phases = {}, steps = {},
+                musts = {
+                  { level = 40, text = "通过职业任务学会|cff71d5ff[召唤地狱战马]|r。" },
+                  { level = 40, text = "40级记得去训练师学习新技能。" },
                 },
               },
             },
@@ -793,26 +818,100 @@ async function main() {
       rt.destroy();
     }
 
-    // 圣骑士的「召唤军马」是职业任务，不属于骑术提醒，即使已学骑术也必须保留
-    const paladinRt = new WoWSimulatorRuntime({
-      level: 40,
-      classKey: 'PALADIN',
-      raceKey: '人类',
-      faction: 'Alliance',
-      knownSpells: [33388],
-    });
-    paladinRt.loadAddon(addonName, [
-      { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
-      ...ridingCoreFiles,
-    ]);
-    const paladin = readRidingCards(paladinRt, '/wowf');
-    if (paladin.snap.luaErrors.length > 0 || !paladin.text.includes('召唤军马')) {
-      ridingFail = true;
-      console.error(
-        `[Assert Failed] 骑术提醒过滤误伤圣骑士职业任务 (errors=${paladin.snap.luaErrors.length}, hasCharger=${paladin.text.includes('召唤军马')})`
-      );
+    // 职业坐骑提醒：对应坐骑/任务完成后隐藏；未完成时保留
+    const classMountCases = [
+      {
+        label: '圣骑士未完成军马任务',
+        classKey: 'PALADIN',
+        marker: '召唤军马',
+        options: { knownSpells: [33388] },
+        expectMount: true,
+      },
+      {
+        label: '圣骑士已学召唤军马',
+        classKey: 'PALADIN',
+        marker: '召唤军马',
+        options: { knownSpells: [33388, 13819] },
+        expectMount: false,
+      },
+      {
+        label: '圣骑士已完成军马任务',
+        classKey: 'PALADIN',
+        marker: '召唤军马',
+        options: { knownSpells: [33388], completedQuests: [1661] },
+        expectMount: false,
+      },
+      {
+        label: '圣骑士已学召唤战马',
+        classKey: 'PALADIN',
+        marker: '召唤军马',
+        options: { knownSpells: [33388, 23214] },
+        expectMount: false,
+      },
+      {
+        label: '术士已学地狱战马',
+        classKey: 'WARLOCK',
+        marker: '召唤地狱战马',
+        options: { knownSpells: [5784] },
+        expectMount: false,
+      },
+      {
+        label: '圣骑士未完成战马任务',
+        classKey: 'PALADIN',
+        marker: '审判和救赎',
+        level: 60,
+        options: { knownSpells: [33388] },
+        expectMount: true,
+      },
+      {
+        label: '圣骑士已完成战马任务',
+        classKey: 'PALADIN',
+        marker: '审判和救赎',
+        level: 60,
+        options: { knownSpells: [33388, 23214] },
+        expectMount: false,
+      },
+      {
+        label: '圣骑士仅完成战马任务',
+        classKey: 'PALADIN',
+        marker: '审判和救赎',
+        level: 60,
+        options: { knownSpells: [33388], completedQuests: [7647] },
+        expectMount: false,
+      },
+    ];
+    for (const c of classMountCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: c.level || 40,
+        classKey: c.classKey,
+        raceKey: '人类',
+        faction: 'Alliance',
+        ...c.options,
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+        ...ridingCoreFiles,
+      ]);
+      const smart = readRidingCards(rt, '/wowf');
+      const route = readRidingCards(rt, '/wowf route');
+      const smartHasMount = smart.text.includes(c.marker);
+      const routeHasMount = route.text.includes(c.marker);
+      const keepsOtherMust =
+        smart.text.includes('训练师学习新技能') && route.text.includes('训练师学习新技能');
+      const errors = smart.snap.luaErrors.length + route.snap.luaErrors.length;
+      if (
+        errors > 0 ||
+        smartHasMount !== c.expectMount ||
+        routeHasMount !== c.expectMount ||
+        !keepsOtherMust
+      ) {
+        ridingFail = true;
+        console.error(
+          `[Assert Failed] 职业坐骑提醒过滤回归 (${c.label}) failed (errors=${errors}, smartMount=${smartHasMount}, routeMount=${routeHasMount}, keepsOther=${keepsOtherMust})`
+        );
+      }
+      rt.destroy();
     }
-    paladinRt.destroy();
 
     // 自动刷新回归：窗口已打开时学会骑术，事件驱动重绘后提醒应消失
     const autoRefreshCases = [
@@ -860,8 +959,42 @@ async function main() {
       rt.destroy();
     }
 
+    // 职业坐骑任务完成事件：窗口开着时完成任务，提醒自动消失
+    const mountRefreshRt = new WoWSimulatorRuntime({
+      level: 40,
+      classKey: 'PALADIN',
+      raceKey: '人类',
+      faction: 'Alliance',
+      knownSpells: [33388],
+    });
+    mountRefreshRt.loadAddon(addonName, [
+      { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+      ...ridingCoreFiles,
+    ]);
+    const beforeMount = readRidingCards(mountRefreshRt, '/wowf');
+    mountRefreshRt.charState.completedQuests.push(1661);
+    mountRefreshRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'QUEST_TURNED_IN');
+    await waitForRefresh(600);
+    const mountAfterSnap = mountRefreshRt.getSnapshot();
+    const mountAfterText = summarizeCards(mountAfterSnap)
+      .map((card) => `${card.title}\n${card.body}`)
+      .join('\n');
+    if (
+      beforeMount.snap.luaErrors.length > 0 ||
+      !beforeMount.text.includes('召唤军马') ||
+      mountAfterSnap.luaErrors.length > 0 ||
+      mountAfterText.includes('召唤军马') ||
+      !mountAfterText.includes('训练师学习新技能')
+    ) {
+      ridingFail = true;
+      console.error(
+        `[Assert Failed] 职业坐骑任务自动刷新回归 failed (before=${beforeMount.text.includes('召唤军马')}, after=${mountAfterText.includes('召唤军马')}, keepsOther=${mountAfterText.includes('训练师学习新技能')})`
+      );
+    }
+    mountRefreshRt.destroy();
+
     if (ridingFail) assertionFailed = true;
-    else console.log('[✓] 骑术提醒过滤回归通过（已学骑术隐藏提醒、事件刷新生效，未误伤职业军马任务）。');
+    else console.log('[✓] 骑术/职业坐骑提醒过滤回归通过（完成状态隐藏、事件刷新生效、其他里程碑保留）。');
   }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
