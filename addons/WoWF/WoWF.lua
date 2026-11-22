@@ -4552,7 +4552,7 @@ local function RenderCentaurFactionCard(list, level)
     ["附魔"] = "Enchanting",
     ["裁缝"] = "Tailoring",
     ["制皮"] = "Leatherworking",
-    ["炼金"] = "Alchemy",
+    ["炼金术"] = "Alchemy",
     ["工程学"] = "Engineering",
     ["锻造"] = "Blacksmithing",
   }
@@ -4641,10 +4641,11 @@ local function RenderCentaurFactionCard(list, level)
           local isDone = IsQuestCompletedById(q.id)
           local gateOk = true
           if opts.minRep and opts.standing < opts.minRep then gateOk = false end
+          if q.minRep and opts.standing < q.minRep then gateOk = false end
           if q.neutralOnly and opts.standing < 0 then gateOk = false end
           if isDone and not q.repeatable then
             completed = completed + 1
-          elseif not gateOk then
+          elseif not gateOk and not q.showWhenLocked then
             locked = locked + 1
           else
             local info = GetQuestieQuestInfo(q.id)
@@ -4666,6 +4667,13 @@ local function RenderCentaurFactionCard(list, level)
             if q.items and #q.items > 0 then table.insert(tags, "|cff00aaff[交物品]|r") end
             if q.profession then table.insert(tags, string.format("|cffc79c6e[%s]|r", q.profession)) end
             if q.elite then table.insert(tags, "|cffff5555[精英]|r") end
+            if not gateOk and q.showWhenLocked and q.minRep then
+              table.insert(tags, string.format(
+                "|cff8899aa[需%s %s 后交付]|r",
+                CentaurRepLabel(q.minRep),
+                CentaurFormatNumber(q.minRep)
+              ))
+            end
             if #tags > 0 then table.insert(parts, table.concat(tags, "")) end
             if q.rep then
               table.insert(parts, string.format("|cff00ff00+%s|r", CentaurFormatNumber(q.rep)))
@@ -4716,15 +4724,17 @@ local function RenderCentaurFactionCard(list, level)
     or IsQuestActiveById(1368) or IsQuestActiveById(1382)
   local magramStarted = IsQuestCompletedById(1367) or IsQuestCompletedById(1385)
     or IsQuestActiveById(1367) or IsQuestActiveById(1385)
+  -- 声望优先决定倾向；任务接取/完成记录只在双方声望完全相等时作为辅助信息。
+  -- 双方都是 0（未选边）时不折叠任何一方，并列提示先选边。
   local mainFactionId
-  if gelkisStarted and not magramStarted then
+  if gelkis ~= magram then
+    mainFactionId = (gelkis > magram) and CENTAUR_FACTION_GELKIS or CENTAUR_FACTION_MAGRAM
+  elseif gelkisStarted and not magramStarted then
     mainFactionId = CENTAUR_FACTION_GELKIS
   elseif magramStarted and not gelkisStarted then
     mainFactionId = CENTAUR_FACTION_MAGRAM
-  elseif gelkis ~= magram then
-    mainFactionId = (gelkis > magram) and CENTAUR_FACTION_GELKIS or CENTAUR_FACTION_MAGRAM
   end
-  local committed = mainFactionId ~= nil and (math.max(gelkis, magram) >= 3000 or gelkisStarted or magramStarted)
+  local committed = mainFactionId ~= nil and (gelkis ~= 0 or magram ~= 0)
 
   -- 搜索：把任务/物品名一并纳入，避免搜索「图腾」「破碎之泪」时卡片被漏掉
   local searchBlob = (def.zone or "") .. " " .. (def.title or "") .. " " .. (def.summary or "")
@@ -4817,7 +4827,7 @@ local function RenderCentaurFactionCard(list, level)
     end
 
     local stages = {
-      { key = "entry", label = "入门 · 中立可接", minRep = nil },
+      { key = "entry", label = "入门 · 起步任务", minRep = nil },
       { key = "friendly", label = "友善阶段", minRep = 3000 },
       { key = "honored", label = "尊敬阶段", minRep = 9000 },
     }

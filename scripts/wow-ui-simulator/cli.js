@@ -9,6 +9,11 @@ import { generateHtmlReport } from './html-report.js';
 // 坐标数值：兼容整点/多位小数、半角/全角逗号，用于校验可见文案中不得残留坐标
 const COORD_TEXT_PATTERN = /\b\d{1,3}(?:\.\d+)?\s*[,，]\s*\d{1,3}(?:\.\d+)?\b/;
 
+// 声望/金币等千位分组（3,000 / 9,000）不是坐标：先去掉分组逗号再检测，
+// 避免把「还差 5,750」这类数值误判成裸坐标；`47, 56` 与 `47.8,56.3` 仍会命中。
+const stripThousandSeparators = (text) => String(text ?? '').replace(/(\d)[,，](?=\d{3}(?!\d))/g, '$1');
+const hasBareCoord = (text) => COORD_TEXT_PATTERN.test(stripThousandSeparators(text));
+
 // 数据文件判定：兼容 Data.lua、Data/Data.lua 子目录以及 `Data.lua (source)` 合成文件名
 const isDataLuaFile = (f) => /^data\.lua/i.test(path.basename(f.filename)) || /^data\.lua/i.test(f.filename);
 
@@ -214,7 +219,7 @@ async function main() {
     // 坐标只允许存在于链接载荷与悬停 Tooltip 中；卡片标题/正文不得出现裸坐标数值
     if (opts.assert) {
       for (const c of cards) {
-        const leaked = [c.title, c.body].find((t) => COORD_TEXT_PATTERN.test(t));
+        const leaked = [c.title, c.body].find((t) => hasBareCoord(t));
         if (leaked) {
           console.error(`[Assert Failed] ${cmd} 仍渲染出裸坐标: ${String(leaked).slice(0, 160)}`);
           assertionFailed = true;
@@ -223,7 +228,7 @@ async function main() {
       }
       for (const m of snap.chatMessages) {
         const plain = stripWoWFormatting(m.text);
-        if (COORD_TEXT_PATTERN.test(plain)) {
+        if (hasBareCoord(plain)) {
           console.error(`[Assert Failed] ${cmd} 聊天框仍输出裸坐标: ${plain.slice(0, 160)}`);
           assertionFailed = true;
           break;
@@ -1033,7 +1038,7 @@ async function main() {
               {
                 factionId = 92, name = "吉尔吉斯", where = "吉尔吉斯村",
                 entry = {
-                  q(1368, "吉尔吉斯部族", 33, { faction = "horde", rep = 250 }),
+                  q(1368, "吉尔吉斯部族", 33, { faction = "horde", rep = 250, minRep = 3000, showWhenLocked = true }),
                   q(93227, "收买友谊：吉尔吉斯", 45, { faction = "alliance", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
                   q(94873, "收买友谊：吉尔吉斯", 45, { faction = "horde", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
                 },
@@ -1052,8 +1057,8 @@ async function main() {
               {
                 factionId = 93, name = "玛格拉姆", where = "玛格拉姆村",
                 entry = {
-                  q(1367, "玛格拉姆部族", 33, { faction = "horde", rep = 250 }),
-                  q(1385, "野蛮外交", 35, { faction = "alliance", rep = 250 }),
+                  q(1367, "玛格拉姆部族", 33, { faction = "horde", rep = 250, minRep = 3000, showWhenLocked = true }),
+                  q(1385, "野蛮外交", 35, { faction = "alliance", rep = 250, minRep = 3000, showWhenLocked = true }),
                   q(93226, "收买友谊：玛格拉姆", 45, { faction = "alliance", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
                   q(94872, "收买友谊：玛格拉姆", 45, { faction = "horde", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
                 },
@@ -1109,10 +1114,12 @@ async function main() {
         rep92: 0,
         rep93: 0,
         completedQuests: [],
+        activeQuests: [1368],
         present: [
           '尚未选边',
           '吉尔吉斯部族',
           '玛格拉姆部族',
+          '需友善 3,000 后交付',
           '收买友谊：吉尔吉斯',
           '收买友谊：玛格拉姆',
           '未解锁：需 友善 3,000',

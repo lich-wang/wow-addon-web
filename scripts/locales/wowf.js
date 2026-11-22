@@ -666,11 +666,15 @@ const FACTION_QUESTS_DATA = [
           centaurQuest(1368, '吉尔吉斯部族', 33, {
             faction: 'horde',
             rep: 250,
+            minRep: 3000,
+            showWhenLocked: true,
             note: '先击杀玛格拉姆半人马把声望刷到友善，再交任务。',
           }),
           centaurQuest(1382, '奇怪的联盟', 35, {
             faction: 'alliance',
             rep: 250,
+            minRep: 3000,
+            showWhenLocked: true,
             note: '先击杀玛格拉姆半人马把声望刷到友善，再交任务。',
           }),
           centaurQuest(93227, '收买友谊：吉尔吉斯', 45, {
@@ -777,11 +781,15 @@ const FACTION_QUESTS_DATA = [
           centaurQuest(1367, '玛格拉姆部族', 33, {
             faction: 'horde',
             rep: 250,
+            minRep: 3000,
+            showWhenLocked: true,
             note: '先击杀吉尔吉斯半人马把声望刷到友善，再交任务。',
           }),
           centaurQuest(1385, '野蛮外交', 35, {
             faction: 'alliance',
             rep: 250,
+            minRep: 3000,
+            showWhenLocked: true,
             note: '先击杀吉尔吉斯半人马把声望刷到友善，再交任务。',
           }),
           centaurQuest(93226, '收买友谊：玛格拉姆', 45, {
@@ -818,7 +826,7 @@ const FACTION_QUESTS_DATA = [
             items: [centaurItem(4392, '高级假人', 1)],
           }),
           centaurQuest(92754, '新的防护暗影需求', 35, {
-            profession: '炼金',
+            profession: '炼金术',
             rep: 1000,
             items: [centaurItem(13459, '强效暗影防护药水', 3)],
           }),
