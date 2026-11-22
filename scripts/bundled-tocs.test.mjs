@@ -78,6 +78,25 @@ test('只有 Camelot 清单时反向补一份 Forever 清单', async () => {
   assert.deepEqual(await validateFlavorTocs(zip), []);
 });
 
+test('大小写不同的旧别名清单会被就地覆盖，不留下重复条目', async () => {
+  const zip = new JSZip();
+  zip.file('A/A_Forever.toc', makeToc('2.0.0', ['New.lua']));
+  zip.file('A/New.lua', '-- new module');
+  // 旧包用的是小写 camelot，且清单内容已过期
+  zip.file('A/A_camelot.toc', makeToc('1.0.0', ['Old.lua']));
+  zip.file('A/Old.lua', '-- old module');
+
+  const written = await syncFlavorTocs(zip);
+
+  assert.deepEqual(written, ['A/A_camelot.toc']);
+  const aliasEntries = Object.keys(zip.files).filter(p => /camelot\.toc$/i.test(p));
+  assert.deepEqual(aliasEntries, ['A/A_camelot.toc'], `不应出现重复条目：${aliasEntries.join(', ')}`);
+  const alias = await zip.file('A/A_camelot.toc').async('string');
+  assert.match(alias, /2\.0\.0/);
+  assert.match(alias, /New\.lua/);
+  assert.deepEqual(await validateFlavorTocs(zip), []);
+});
+
 test('同名清单已一致时不重复写入（幂等）', async () => {
   const zip = await makeZip({ A: { toc: 'A_Forever.toc', files: ['a.lua'] } });
   await syncFlavorTocs(zip);

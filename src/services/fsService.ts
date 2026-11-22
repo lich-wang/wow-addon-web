@@ -396,8 +396,13 @@ async function collectStaleTocFiles(
 ): Promise<void> {
   const iter = dirHandle.entries ? dirHandle.entries() : dirHandle;
   const children: Array<[string, any]> = [];
-  for await (const [name, handle] of iter) {
-    children.push([name, handle]);
+  try {
+    for await (const [name, handle] of iter) {
+      children.push([name, handle]);
+    }
+  } catch {
+    // 子目录不可读（权限不足 / 句柄失效）时跳过它，不能让清理失败影响已经完成的安装
+    return;
   }
   for (const [name, handle] of children) {
     const childPath = `${prefix}/${name}`;
@@ -485,23 +490,27 @@ export async function installAddonFromZip(
       await collectStaleTocFiles(folderHandle, folder, keepPaths, staleTocs);
     }
   }
+  let removedTocCount = 0;
   for (const stale of staleTocs) {
     try {
       await stale.dir.removeEntry(stale.name);
+      removedTocCount++;
     } catch {
       // 删除失败（权限 / 文件被占用）不阻断安装，下次更新再清理
     }
   }
+  const failedTocCount = staleTocs.length - removedTocCount;
 
-  const staleNote = staleTocs.length > 0 ? `，清理 ${staleTocs.length} 个过期清单` : '';
+  const staleNote = removedTocCount > 0 ? `，清理 ${removedTocCount} 个过期清单` : '';
+  const failedNote = failedTocCount > 0 ? `；另有 ${failedTocCount} 个过期清单未能清理，建议重启游戏后再更新一次` : '';
   onProgress?.({
     status: 'completed',
     addonName: Array.from(topLevelFolders).join(', '),
     percent: 100,
-    message: `安装成功！已写入 ${topLevelFolders.size} 个插件目录${staleNote}`,
+    message: `安装成功！已写入 ${topLevelFolders.size} 个插件目录${staleNote}${failedNote}`,
   });
 
-  return { installedFolders: Array.from(topLevelFolders), removedTocCount: staleTocs.length };
+  return { installedFolders: Array.from(topLevelFolders), removedTocCount };
 }
 
 /**

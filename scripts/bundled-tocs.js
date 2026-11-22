@@ -88,8 +88,11 @@ export async function syncFlavorTocs(zip) {
       const existingBuf = await zip.file(existingPath).async('nodebuffer');
       if (existingBuf.equals(sourceBuf)) continue;
     }
-    zip.file(targetPath, sourceBuf);
-    written.push(targetPath);
+    // JSZip 的条目名区分大小写：旧包里可能是 A_camelot.toc，直接写 A_Camelot.toc 会留下
+    // 两条重复清单、旧的照样会被客户端加载，所以已有条目要按原路径覆盖
+    const writePath = existingPath ?? targetPath;
+    zip.file(writePath, sourceBuf);
+    written.push(writePath);
   }
 
   // 第二轮：只有 Camelot 没有 Forever 的包，补一份 Forever，保证扫描器与客户端读到同一份清单
