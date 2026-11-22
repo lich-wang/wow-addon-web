@@ -814,8 +814,54 @@ async function main() {
     }
     paladinRt.destroy();
 
+    // 自动刷新回归：窗口已打开时学会骑术，事件驱动重绘后提醒应消失
+    const autoRefreshCases = [
+      { command: '/wowf', event: 'SPELLS_CHANGED' },
+      { command: '/wowf', event: 'LEARNED_SPELL_IN_TAB' },
+      { command: '/wowf route', event: 'SPELLS_CHANGED' },
+      { command: '/wowf route', event: 'LEARNED_SPELL_IN_TAB' },
+    ];
+    const waitForRefresh = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (const c of autoRefreshCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: 40,
+        classKey: 'MAGE',
+        raceKey: '人类',
+        faction: 'Alliance',
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+        ...ridingCoreFiles,
+      ]);
+      const before = readRidingCards(rt, c.command);
+      if (!before.text.includes('骑术')) {
+        ridingFail = true;
+        console.error(`[Assert Failed] 骑术自动刷新回归 (${c.command}/${c.event}) 初始未显示骑术提醒`);
+        rt.destroy();
+        continue;
+      }
+      rt.charState.knownSpells.push(33388);
+      rt.callLuaGlobal('__WOW_DISPATCH_EVENT__', c.event);
+      await waitForRefresh(600);
+      const afterSnap = rt.getSnapshot();
+      const afterText = summarizeCards(afterSnap)
+        .map((card) => `${card.title}\n${card.body}`)
+        .join('\n');
+      if (
+        afterSnap.luaErrors.length > 0 ||
+        afterText.includes('骑术') ||
+        !afterText.includes('训练师学习新技能')
+      ) {
+        ridingFail = true;
+        console.error(
+          `[Assert Failed] 骑术自动刷新回归 (${c.command}/${c.event}) failed (errors=${afterSnap.luaErrors.length}, riding=${afterText.includes('骑术')}, keepsOther=${afterText.includes('训练师学习新技能')})`
+        );
+      }
+      rt.destroy();
+    }
+
     if (ridingFail) assertionFailed = true;
-    else console.log('[✓] 骑术提醒过滤回归通过（已学骑术隐藏提醒，未误伤职业军马任务）。');
+    else console.log('[✓] 骑术提醒过滤回归通过（已学骑术隐藏提醒、事件刷新生效，未误伤职业军马任务）。');
   }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
