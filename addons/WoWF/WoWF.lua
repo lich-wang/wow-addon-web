@@ -155,6 +155,8 @@ local state = {
   craftProfession = nil, -- 过滤的专业集合（nil = 全部，table = { [key] = true }）
   craftCrossOwner = true, -- 允许借用同账号其他角色的中间产物配方
   craftOnlySkillUp = false, -- 只看还能涨点的配方
+  craftSource = "craft", -- 套利来源: "craft" 制作套利 | "vendor" 商人购入→拍卖出售 | "both" 全部
+  craftPreferVendor = false, -- 制作成本是否优先采用已采集的 NPC 商人价
 }
 
 local PERSISTED_STATE_KEYS = {
@@ -175,6 +177,8 @@ local PERSISTED_STATE_KEYS = {
   "craftProfession",
   "craftCrossOwner",
   "craftOnlySkillUp",
+  "craftSource",
+  "craftPreferVendor",
 }
 
 local function NormalizeCraftProfession(val)
@@ -5311,8 +5315,12 @@ local function RenderTabCraftArb()
     return
   end
 
+  local source = state.craftSource == "vendor" and "vendor"
+    or (state.craftSource == "both" and "both" or "craft")
   local rows, meta = arb.Analyse({
     mode = mode,
+    source = source,
+    preferVendor = state.craftPreferVendor == true,
     profession = state.craftProfession,
     onlyProfitable = onlyProfitable,
     onlySkillUp = state.craftOnlySkillUp == true,
@@ -5368,24 +5376,28 @@ local function RenderTabCraftArb()
     recipeCount,
     recipeCount == 0 and "（打开一次专业窗口即可自动补全）" or ""
   ))
+  local sourceLabel = source == "vendor" and "|cff00ffcc商人购入→拍卖出售|r"
+    or (source == "both" and "|cff99e6ff制作 + 商人|r" or "|cff99e6ff制作套利|r")
   table.insert(infoLines, string.format(
-    "|cff99e6ff统计:|r 已分析 |cffffd100%d|r 条配方，可定价 |cffffd100%d|r 条，当前筛选下 |cffffd100%d|r 条，其中 |cff44ff88盈利 %d|r 条  ·  当前模式: %s",
+    "|cff99e6ff统计:|r 已分析 |cffffd100%d|r 条，当前筛选下 |cffffd100%d|r 条，其中 |cff44ff88盈利 %d|r 条  ·  当前模式: %s  ·  来源: %s%s",
     meta.total or 0,
-    meta.priced or 0,
     meta.shown or 0,
     meta.profitable or 0,
-    mode == "de" and "|cffffd100分解套利|r" or "|cff99e6ff成品出售|r"
+    mode == "de" and "|cffffd100分解套利|r" or "|cff99e6ff成品出售|r",
+    sourceLabel,
+    source ~= "craft" and string.format("  ·  已采集商人商品 |cffffd100%d|r 件", meta.vendorOffers or 0) or ""
   ))
   if mode == "de" and not hasEnchanting then
     table.insert(infoLines, "|cffff5555注意:|r 当前角色没有【附魔】，分解套利只代表「若能分解」的理论值，实际无法执行。")
   end
   local profBtnLabel, profSummaryText = FormatCraftProfessionFilter(arb, meta.professions)
-  table.insert(infoLines, string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s",
+  table.insert(infoLines, string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s  ·  材料价: %s",
     profSummaryText,
     onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100含亏损|r",
     state.craftCrossOwner ~= false and "|cff99e6ff含小号自产|r" or "|cffaaaaaa仅本角色|r",
     state.craftOnlySkillUp == true and "|cffffd100只看涨点|r" or "|cffaaaaaa含不涨点|r",
-    sortKey == "roi" and "ROI" or "单次净利润"))
+    sortKey == "roi" and "ROI" or "单次净利润",
+    state.craftPreferVendor == true and "|cff00ffcc含商人价|r" or "|cffaaaaaa仅拍卖行|r"))
 
   list:Add({
     title = "|cff00ffcc[制造套利] 用拍卖行行情筛选「当前可制作且能盈利」的配方|r",
@@ -5403,6 +5415,18 @@ local function RenderTabCraftArb()
   -- 2. 紧凑工具条（专业下拉 + 4 个筛选/排序开关 + Tooltip 口径说明）
   list.y = LayoutArbToolbar(list.y, {
     buttons = {
+      {
+        label = source == "vendor" and "来源: 商人→拍卖" or (source == "both" and "来源: 全部" or "来源: 制作"),
+        fn = function()
+          local nextSource = source == "craft" and "vendor" or (source == "vendor" and "both" or "craft")
+          state.craftSource = nextSource
+          RefreshUI()
+        end,
+        tipTitle = "套利来源（制作 / 商人→拍卖 / 全部）",
+        tipBody = "制作：买材料做成成品卖拍卖行（可递归折算中间产物 / 分解套利）；"
+          .. "商人→拍卖：把打开 NPC 商人窗口时采集到的「买入价」与拍卖行对手最低价对比，直接倒买倒卖；"
+          .. "全部：两类结果合并排序。商人商品来自本插件自动采集，打开任意商人窗口即可记录。",
+      },
       {
         label = profBtnLabel,
         fn = function(self)
@@ -5512,6 +5536,16 @@ local function RenderTabCraftArb()
         tipTitle = "技能涨点过滤",
         tipBody = "开启后隐藏已灰（不涨点）的配方，适合边冲专业等级边回本。",
       },
+      {
+        label = state.craftPreferVendor == true and "商人材料价: 开" or "商人材料价: 关",
+        fn = function()
+          state.craftPreferVendor = state.craftPreferVendor ~= true
+          RefreshUI()
+        end,
+        tipTitle = "制作材料优先用 NPC 商人价",
+        tipBody = "开启后，制作成本会优先采用已采集到的 NPC 商人售价（若低于拍卖行）；"
+          .. "关闭则只按拍卖行行情计价。商人价通过打开对应商人窗口自动采集。",
+      },
     },
   })
 
@@ -5520,6 +5554,90 @@ local function RenderTabCraftArb()
   for _, row in ipairs(rows) do
     if shown >= 40 then break end
     shown = shown + 1
+    if row.kind == "vendor" then
+      local vendorLines = {}
+      table.insert(vendorLines, string.format(
+        "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（对手最低价）",
+        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0)))
+      local availableStock, hasAnyInfinite, hasAnyStock = nil, false, false
+      for _, source in ipairs(row.vendorSources or {}) do
+        local s = tonumber(source.stock) or -1
+        if s < 0 then hasAnyInfinite = true
+        elseif s > 0 then
+          hasAnyStock = true
+          availableStock = (availableStock or 0) + s
+        end
+      end
+      local stockText = hasAnyInfinite and "|cffffd100无限库存|r"
+        or hasAnyStock and string.format("%d 件", availableStock)
+        or "|cffff8800已售罄|r"
+      table.insert(vendorLines, string.format(
+        "|cff99e6ff商人:|r %s  ·  |cff99e6ff地点:|r %s  ·  |cff99e6ff库存:|r %s",
+        row.vendorNPC or "未知", row.vendorZone or "未知", stockText))
+      if row.vendorSources and #row.vendorSources > 1 then
+        local srcParts = {}
+        for _, s in ipairs(row.vendorSources) do
+          table.insert(srcParts, string.format("%s(%s, %s/件)", s.npc or "?", s.zone or "?", FormatMoney(s.price)))
+        end
+        table.insert(vendorLines, "|cffffd100其他商人:|r " .. table.concat(srcParts, " · "))
+      end
+      if row.profit then
+        table.insert(vendorLines, string.format(
+          "|cff99e6ff拍卖手续费:|r %s  ·  净利润 %s%s|r  ·  ROI %s%.1f%%|r",
+          FormatMoney(row.cut or 0), CraftSignColor(row.profit), FormatMoney(row.profit),
+          CraftSignColor(row.roi), (row.roi or 0) * 100))
+      else
+        table.insert(vendorLines, "|cffff8800无法给出利润:|r " .. (row.reason or "缺少数据"))
+      end
+      if not row.price then
+        table.insert(vendorLines, "|cffff8800提示:|r 该物品暂无拍卖行报价，不能算作可执行套利。")
+      end
+      local profitable = (row.profit or 0) > 0
+      -- 售罄判定必须看全部来源：最低价来源售罄但其他商人有货时，仍可从有货来源采购。
+      -- 从可用来源统一取价格 / 商人 / 地点 / 可购买数量，避免混用不同来源的数据。
+      local buySource
+      for _, source in ipairs(row.vendorSources or {}) do
+        if not source.stock or source.stock ~= 0 then
+          if not buySource or source.price < buySource.price then buySource = source end
+        end
+      end
+      local vendorAction
+      if buySource then
+        local sourceQty = (buySource.stock and buySource.stock > 0) and buySource.stock or 0
+        vendorAction = {
+          label = sourceQty > 0 and "加入购物清单" or "加入购物清单(无限)",
+          fn = function()
+            local api = arb.Market()
+            if not api or type(api.CreateShoppingList) ~= "function" or type(api.SetShoppingListItem) ~= "function" then
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 未检测到 EasyAuction 购物清单写入接口。")
+              return
+            end
+            local qty = sourceQty > 0 and sourceQty or 1
+            local ok, listID = pcall(api.CreateShoppingList, "WoWF 商人套利", true)
+            if not ok or not listID then
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 创建购物清单失败。")
+              return
+            end
+            local wroteOK, wrote = pcall(api.SetShoppingListItem, listID, row.outputID, qty, buySource.price, row.name)
+            if not wroteOK or wrote == false then
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 写入购物清单失败（清单 ID: " .. tostring(listID) .. "）。")
+              return
+            end
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+              "|cff00ffcc[WoWF 商人套利]|r 已把 %s ×%d 写入购物清单（清单 ID: %s），买入价 %s、到 %s 找 %s。",
+              FormatItemLink(row.outputID, row.name), qty, tostring(listID), FormatMoney(buySource.price),
+              buySource.zone or "?", buySource.npc or "?"))
+          end,
+        }
+      end
+      list:Add({
+        title = string.format("%s  |cffffd100[商人→拍卖] %s|r", FormatItemLink(row.outputID, row.name), row.vendorNPC or "商人"),
+        body = table.concat(vendorLines, "\n"),
+        theme = profitable and "arbGood" or "arbBad",
+        badge = row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
+        action = vendorAction,
+      })
+    else
     local bodyLines = {}
     local costText
     if row.costTotal then
@@ -5637,12 +5755,18 @@ local function RenderTabCraftArb()
         end,
       },
     })
+    end
   end
 
   -- 5. 空状态
   if shown == 0 then
     local emptyLines = {}
-    if meta.total == 0 then
+    if source == "vendor" and (meta.vendorOffers or 0) == 0 then
+      table.insert(emptyLines, "|cffffd100尚未采集到任何 NPC 商人商品。|r")
+      table.insert(emptyLines, "1. 走到任意 NPC 商人（杂货商、专业供应商等）面前，打开商人窗口，本插件会自动记录其出售物品的买入价与库存；")
+      table.insert(emptyLines, "2. 记录后切回「制造套利」页，把来源切到「商人→拍卖」即可查看可直接倒买倒卖的商品；")
+      table.insert(emptyLines, "3. 若拍卖行插件尚未扫描，将只显示商人买入价、无法计算利润，并不会把无报价当作 0 成本。")
+    elseif meta.total == 0 then
       table.insert(emptyLines, "|cffffd100还没有可用于分析的配方数据。|r")
       table.insert(emptyLines, "1. 安装并启用 EasyAuction 或黑石交易技能（Blackthornes_TS），进过拍卖行后其专业库会记录各角色已学配方；")
       table.insert(emptyLines, "2. 也可以打开一次游戏原生专业窗口（裁缝/锻造/附魔等），本页面会自动采集当前角色的配方；")
@@ -6458,6 +6582,10 @@ end
 for _, craftEv in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_CLOSE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "GET_ITEM_INFO_RECEIVED", "ITEM_DATA_LOAD_RESULT" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, craftEv)
 end
+-- 商人套利：打开 NPC 商人窗口时自动采集其出售商品与买入价
+for _, vendorEv in ipairs({ "MERCHANT_SHOW", "MERCHANT_UPDATE" }) do
+  pcall(eventFrame.RegisterEvent, eventFrame, vendorEv)
+end
 pcall(eventFrame.RegisterEvent, eventFrame, "GET_ITEM_INFO_RECEIVED")
 
 local hasPrintedWelcome = false
@@ -6513,6 +6641,13 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
   elseif event == "TRADE_SKILL_CLOSE" then
     if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
       ScheduleRefresh(true, 0.2)
+    end
+  elseif event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" then
+    if WoWF_CraftArb and WoWF_CraftArb.HarvestVendor then
+      local ok, count = pcall(WoWF_CraftArb.HarvestVendor)
+      if ok and count and count > 0 and mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+        ScheduleRefresh(true, 0.2)
+      end
     end
   elseif event == "AUCTION_HOUSE_SHOW" or event == "AUCTION_HOUSE_CLOSED" then
     -- 行情快照只在拍卖行内更新：回到「制造套利」页时重新计算一次
