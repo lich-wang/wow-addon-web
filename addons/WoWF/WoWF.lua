@@ -157,6 +157,7 @@ local state = {
   craftOnlySkillUp = false, -- 只看还能涨点的配方
   craftSource = "craft", -- 套利来源: "craft" 制作套利 | "vendor" 商人购入→拍卖出售 | "both" 全部
   craftPreferVendor = false, -- 制作成本是否优先采用已采集的 NPC 商人价
+  craftMinSupply = false, -- 是否过滤掉拍卖行在售少于 100 件的物品（异常价格）
 }
 
 local PERSISTED_STATE_KEYS = {
@@ -179,6 +180,7 @@ local PERSISTED_STATE_KEYS = {
   "craftOnlySkillUp",
   "craftSource",
   "craftPreferVendor",
+  "craftMinSupply",
 }
 
 local function NormalizeCraftProfession(val)
@@ -5165,6 +5167,13 @@ local function CraftSignColor(value)
   return (tonumber(value) or 0) >= 0 and "|cff44ff88" or "|cffff5555"
 end
 
+---在售数量展示：少于 100 件标红提示异常价格风险；nil 表示没有完整扫描快照
+local function SupplyText(supply)
+  if supply == nil then return "|cffffd100未知(无完整快照)|r" end
+  if supply < 100 then return string.format("|cffff5555%d 件(偏少)|r", supply) end
+  return string.format("|cff44ff88%d 件|r", supply)
+end
+
 local function AttachTooltip(widget, title, bodyOrFn)
   widget:SetScript("OnEnter", function(self)
     if not GameTooltip then return end
@@ -5321,6 +5330,7 @@ local function RenderTabCraftArb()
     mode = mode,
     source = source,
     preferVendor = state.craftPreferVendor == true,
+    minSupply = state.craftMinSupply == true and 100 or nil,
     profession = state.craftProfession,
     onlyProfitable = onlyProfitable,
     onlySkillUp = state.craftOnlySkillUp == true,
@@ -5391,13 +5401,15 @@ local function RenderTabCraftArb()
     table.insert(infoLines, "|cffff5555注意:|r 当前角色没有【附魔】，分解套利只代表「若能分解」的理论值，实际无法执行。")
   end
   local profBtnLabel, profSummaryText = FormatCraftProfessionFilter(arb, meta.professions)
-  table.insert(infoLines, string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s  ·  材料价: %s",
+  table.insert(infoLines, string.format("|cff99e6ff当前筛选:|r %s  ·  %s  ·  %s  ·  %s  ·  排序: %s  ·  材料价: %s  ·  在售: %s  ·  售价: %s",
     profSummaryText,
     onlyProfitable and "|cff44ff88只看盈利|r" or "|cffffd100含亏损|r",
     state.craftCrossOwner ~= false and "|cff99e6ff含小号自产|r" or "|cffaaaaaa仅本角色|r",
     state.craftOnlySkillUp == true and "|cffffd100只看涨点|r" or "|cffaaaaaa含不涨点|r",
     sortKey == "roi" and "ROI" or "单次净利润",
-    state.craftPreferVendor == true and "|cff00ffcc含商人价|r" or "|cffaaaaaa仅拍卖行|r"))
+    state.craftPreferVendor == true and "|cff00ffcc含商人价|r" or "|cffaaaaaa仅拍卖行|r",
+    state.craftMinSupply == true and "|cff00ffcc在售≥100|r" or "|cffaaaaaa不限|r",
+    "|cff99e6ff最低价(min)|r"))
 
   list:Add({
     title = "|cff00ffcc[制造套利] 用拍卖行行情筛选「当前可制作且能盈利」的配方|r",
@@ -5546,6 +5558,16 @@ local function RenderTabCraftArb()
         tipBody = "开启后，制作成本会优先采用已采集到的 NPC 商人售价（若低于拍卖行）；"
           .. "关闭则只按拍卖行行情计价。商人价通过打开对应商人窗口自动采集。",
       },
+      {
+        label = state.craftMinSupply == true and "在售过滤: ≥100" or "在售过滤: 关",
+        fn = function()
+          state.craftMinSupply = state.craftMinSupply ~= true
+          RefreshUI()
+        end,
+        tipTitle = "拍卖行在售数量过滤（异常价格防护）",
+        tipBody = "开启后过滤掉拍卖行在售数量少于 100 件的物品——挂单过少通常意味着个别人乱挂的异常价格。"
+          .. "数量来自 EasyAuction 全量扫描（bookQuantity / GetDepth 总量）；没有完整快照时在售数量记为「未知」，不参与过滤。",
+      },
     },
   })
 
@@ -5557,8 +5579,8 @@ local function RenderTabCraftArb()
     if row.kind == "vendor" then
       local vendorLines = {}
       table.insert(vendorLines, string.format(
-        "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（对手最低价）",
-        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0)))
+        "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（最低售价 min）  ·  |cff99e6ff在售:|r %s",
+        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0), SupplyText(row.listedSupply)))
       local availableStock, hasAnyInfinite, hasAnyStock = nil, false, false
       for _, source in ipairs(row.vendorSources or {}) do
         local s = tonumber(source.stock) or -1
@@ -5695,8 +5717,8 @@ local function RenderTabCraftArb()
       ))
     end
     if row.price then
-      table.insert(bodyLines, string.format("|cff99e6ff拍卖行参考价:|r %s|r / 件（对手最低价或当前最低价）",
-        FormatMoney(row.price)))
+      table.insert(bodyLines, string.format("|cff99e6ff拍卖行售价:|r %s|r / 件（观测到的最低价 min）  ·  |cff99e6ff在售:|r %s",
+        FormatMoney(row.price), SupplyText(row.listedSupply)))
     end
     if row.disenchantEV then
       local verdict
