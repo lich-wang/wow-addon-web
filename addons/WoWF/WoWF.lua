@@ -6040,7 +6040,7 @@ local function RenderTabReputations()
     shownQuestIds[q.id] = true
   end
 
-  local function BuildGroups(faction, eligible)
+  local function BuildGroups(eligible)
     if #eligible == 0 then
       return { { quests = {} } }
     end
@@ -6160,7 +6160,7 @@ local function RenderTabReputations()
           and string.format("%s%s (%s)|r", RepColor(value), RepLabel(value), FormatNum(value))
           or "|cff888888未追踪|r"
         local nextHint = type(value) == "number" and NextTierHint(value) or nil
-        local groups = BuildGroups(faction, eligible)
+        local groups = BuildGroups(eligible)
         local side = faction.side or "both"
         local baseTitle = string.format(
           "|cff00ffcc[声望] %s%s|r",
