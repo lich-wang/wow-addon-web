@@ -95,6 +95,7 @@ const SIDE_MAP = { 联盟: 'alliance', 部落: 'horde' };
 async function fetchJson(url) {
   const res = await fetch(url, {
     headers: { 'User-Agent': 'WoWF-reputation-data/1.0' },
+    signal: AbortSignal.timeout(60000),
   });
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
   return res.json();
