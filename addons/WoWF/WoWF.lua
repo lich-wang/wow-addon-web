@@ -935,7 +935,12 @@ end
 
 local function FormatItemLink(itemID, fallbackName, fallbackQuality)
   if WoWF_CraftArb and type(WoWF_CraftArb.ItemLink) == "function" then
-    return WoWF_CraftArb.ItemLink(itemID, fallbackName, fallbackQuality)
+    local link = WoWF_CraftArb.ItemLink(itemID, fallbackName, fallbackQuality)
+    -- CraftArb 缓存里只有编号时会回落到「物品 #id」，此时优先显示调用方给出的中文名
+    if type(link) == "string" and fallbackName and fallbackName ~= "" and string.find(link, "[物品 #", 1, true) then
+      link = string.gsub(link, "%[物品 #%d+%]", function() return "[" .. fallbackName .. "]" end, 1)
+    end
+    return link
   end
   local id = tonumber(itemID)
   if not id or id <= 0 then
@@ -4535,6 +4540,397 @@ local function RenderTabSmartMatch()
   list:Finish()
 end
 
+-- ============================================================================
+-- 凄凉之地 · 半人马阵营任务卡（吉尔吉斯 / 玛格拉姆二选一）
+-- 数据来自 Data.factionQuests；运行时读取 92/93 两族声望，只展开玩家倾向的一方，
+-- 未达门槛的阶段只留一行「还差多少」，已完成步骤折叠成计数。
+-- ============================================================================
+local function RenderCentaurFactionCard(list, level)
+  local CENTAUR_FACTION_GELKIS = 92
+  local CENTAUR_FACTION_MAGRAM = 93
+  local CENTAUR_PROFESSION_EN = {
+    ["附魔"] = "Enchanting",
+    ["裁缝"] = "Tailoring",
+    ["制皮"] = "Leatherworking",
+    ["炼金"] = "Alchemy",
+    ["工程学"] = "Engineering",
+    ["锻造"] = "Blacksmithing",
+  }
+  local CENTAUR_REP_TIERS = {
+    { 42000, "崇拜" },
+    { 21000, "崇敬" },
+    { 9000, "尊敬" },
+    { 3000, "友善" },
+    { 0, "中立" },
+    { -3000, "冷淡" },
+    { -6000, "敌对" },
+    { -42000, "仇恨" },
+  }
+  local CENTAUR_NEXT_TIERS = { 3000, 9000, 21000, 42000 }
+
+  local function CentaurRepLabel(value)
+    for _, tier in ipairs(CENTAUR_REP_TIERS) do
+      if value >= tier[1] then return tier[2] end
+    end
+    return "仇恨"
+  end
+
+  local function CentaurRepColor(value)
+    if value >= 9000 then return "|cff00ff00" end
+    if value >= 3000 then return "|cff66ff66" end
+    if value >= 0 then return "|cffffd100" end
+    if value >= -6000 then return "|cffff8800" end
+    return "|cffff5555"
+  end
+
+  local function CentaurFormatNumber(value)
+    local n = math.floor(tonumber(value) or 0)
+    local sign = (n < 0) and "-" or ""
+    local digits = tostring(math.abs(n))
+    local out = string.reverse(digits)
+    out = string.gsub(out, "(%d%d%d)", "%1,")
+    out = string.reverse(out)
+    out = string.gsub(out, "^,", "")
+    return sign .. out
+  end
+
+  -- 与既有 IsZoneStepUnlocked 使用同一套取声望方式：GetFactionInfoByID 的第 6 个返回值为当前声望值
+  local function GetCentaurReputation(factionId)
+    local fid = tonumber(factionId)
+    if not fid then return nil end
+    if GetFactionInfoByID then
+      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, fid)
+      if ok and type(barValue) == "number" then return barValue end
+    end
+    if C_Reputation and C_Reputation.GetFactionDataByID then
+      local ok, data = pcall(C_Reputation.GetFactionDataByID, fid)
+      if ok and type(data) == "table" and type(data.currentStanding) == "number" then
+        return data.currentStanding
+      end
+    end
+    return nil
+  end
+
+  local function CentaurNextTierHint(value)
+    for _, threshold in ipairs(CENTAUR_NEXT_TIERS) do
+      if value < threshold then
+        return string.format(
+          "%s %s（还差 %s）",
+          CentaurRepLabel(threshold),
+          CentaurFormatNumber(threshold),
+          CentaurFormatNumber(threshold - value)
+        )
+      end
+    end
+    return nil
+  end
+
+  -- 渲染一个阶段的任务；返回 已显示/已完成/未达门槛/专业不符 四项计数
+  local function RenderCentaurQuestStage(lines, quests, opts)
+    local shown, completed, locked, professionHidden = 0, 0, 0, 0
+    for _, q in ipairs(quests or {}) do
+      local factionOk = (not q.faction) or (q.faction == "both") or (q.faction == opts.faction)
+      if factionOk then
+        local professionOk = true
+        if q.profession then
+          professionOk = HasPlayerProfession(opts.profs, q.profession, CENTAUR_PROFESSION_EN[q.profession])
+        end
+        if not professionOk then
+          professionHidden = professionHidden + 1
+        else
+          local isDone = IsQuestCompletedById(q.id)
+          local gateOk = true
+          if opts.minRep and opts.standing < opts.minRep then gateOk = false end
+          if q.neutralOnly and opts.standing < 0 then gateOk = false end
+          if isDone and not q.repeatable then
+            completed = completed + 1
+          elseif not gateOk then
+            locked = locked + 1
+          else
+            local info = GetQuestieQuestInfo(q.id)
+            local questObj = {
+              id = q.id,
+              name = q.name,
+              level = q.level or (info and info.level) or opts.level,
+              faction = "both",
+              zone = (info and info.zone) or "凄凉之地",
+              npc = info and info.npc or nil,
+              x = info and info.x or nil,
+              y = info and info.y or nil,
+            }
+            -- 可重复任务交过一次不应置灰，继续用黄色提示还能再交
+            local link = FormatQuestLink(questObj, opts.level, "凄凉之地", q.repeatable and false or nil)
+            local parts = { link }
+            local tags = {}
+            if q.repeatable then table.insert(tags, "|cffff8800[可重复]|r") end
+            if q.items and #q.items > 0 then table.insert(tags, "|cff00aaff[交物品]|r") end
+            if q.profession then table.insert(tags, string.format("|cffc79c6e[%s]|r", q.profession)) end
+            if q.elite then table.insert(tags, "|cffff5555[精英]|r") end
+            if #tags > 0 then table.insert(parts, table.concat(tags, "")) end
+            if q.rep then
+              table.insert(parts, string.format("|cff00ff00+%s|r", CentaurFormatNumber(q.rep)))
+            end
+            if q.otherRep then
+              table.insert(parts, string.format("|cffff5555对方 %s|r", CentaurFormatNumber(q.otherRep)))
+            end
+            if q.items and #q.items > 0 then
+              local itemTexts = {}
+              for _, item in ipairs(q.items) do
+                table.insert(itemTexts, string.format("%d×%s", item.count or 1, FormatItemLink(item.id, item.name)))
+              end
+              table.insert(parts, "交 " .. table.concat(itemTexts, "、"))
+            end
+            if q.note and q.note ~= "" then
+              table.insert(parts, "|cff99aabb" .. q.note .. "|r")
+            end
+            table.insert(lines, "  · " .. table.concat(parts, "  "))
+            shown = shown + 1
+          end
+        end
+      end
+    end
+    return shown, completed, locked, professionHidden
+  end
+
+  local defs = Data and Data.factionQuests
+  if type(defs) ~= "table" or #defs == 0 then return 0 end
+  local lvl = tonumber(level) or state.level or 1
+  local def
+  for _, candidate in ipairs(defs) do
+    if type(candidate) == "table"
+      and lvl >= (candidate.minLevel or 1)
+      and lvl <= (candidate.maxLevel or 60) then
+      def = candidate
+      break
+    end
+  end
+  if not def then return 0 end
+
+  local gelkis = GetCentaurReputation(CENTAUR_FACTION_GELKIS)
+  local magram = GetCentaurReputation(CENTAUR_FACTION_MAGRAM)
+  local hasRep = (type(gelkis) == "number") or (type(magram) == "number")
+  gelkis = tonumber(gelkis) or 0
+  magram = tonumber(magram) or 0
+
+  local gelkisStarted = IsQuestCompletedById(1368) or IsQuestCompletedById(1382)
+    or IsQuestActiveById(1368) or IsQuestActiveById(1382)
+  local magramStarted = IsQuestCompletedById(1367) or IsQuestCompletedById(1385)
+    or IsQuestActiveById(1367) or IsQuestActiveById(1385)
+  local mainFactionId
+  if gelkisStarted and not magramStarted then
+    mainFactionId = CENTAUR_FACTION_GELKIS
+  elseif magramStarted and not gelkisStarted then
+    mainFactionId = CENTAUR_FACTION_MAGRAM
+  elseif gelkis ~= magram then
+    mainFactionId = (gelkis > magram) and CENTAUR_FACTION_GELKIS or CENTAUR_FACTION_MAGRAM
+  end
+  local committed = mainFactionId ~= nil and (math.max(gelkis, magram) >= 3000 or gelkisStarted or magramStarted)
+
+  -- 搜索：把任务/物品名一并纳入，避免搜索「图腾」「破碎之泪」时卡片被漏掉
+  local searchBlob = (def.zone or "") .. " " .. (def.title or "") .. " " .. (def.summary or "")
+  for _, q in ipairs(def.shared or {}) do
+    searchBlob = searchBlob .. " " .. (q.name or "")
+    for _, item in ipairs(q.items or {}) do searchBlob = searchBlob .. " " .. (item.name or "") end
+  end
+  for _, group in ipairs(def.groups or {}) do
+    searchBlob = searchBlob .. " " .. (group.name or "") .. " " .. (group.where or "")
+    for _, section in ipairs({ "entry", "friendly", "honored", "repeatable" }) do
+      for _, q in ipairs(group[section] or {}) do
+        searchBlob = searchBlob .. " " .. (q.name or "")
+        for _, item in ipairs(q.items or {}) do searchBlob = searchBlob .. " " .. (item.name or "") end
+      end
+    end
+  end
+  if not MatchesSearch(searchBlob) then return 0 end
+
+  local profs = GetPlayerProfessions()
+  local lines = { def.summary or "" }
+  local function repText(label, value)
+    return string.format(
+      "%s%s|r %s (%s)",
+      CentaurRepColor(value),
+      label,
+      CentaurRepLabel(value),
+      CentaurFormatNumber(value)
+    )
+  end
+  table.insert(lines, "|cff99e6ff你的声望:|r " .. repText("吉尔吉斯", gelkis) .. "   ·   " .. repText("玛格拉姆", magram))
+  if not hasRep then
+    table.insert(lines, "|cff99aabb无法读取两族声望，以下按中立展示；请确认客户端 GetFactionInfoByID 可用。|r")
+  end
+
+  local function findGroup(factionId)
+    for _, group in ipairs(def.groups or {}) do
+      if tonumber(group.factionId) == factionId then return group end
+    end
+    return nil
+  end
+  local function standingOf(factionId)
+    return (factionId == CENTAUR_FACTION_GELKIS) and gelkis or magram
+  end
+
+  local sharedLines = {}
+  local sharedShown, sharedDone, sharedLocked, sharedProf = RenderCentaurQuestStage(sharedLines, def.shared, {
+    standing = gelkis,
+    faction = state.faction,
+    profs = profs,
+    level = lvl,
+  })
+  if sharedShown > 0 or sharedDone > 0 then
+    table.insert(lines, "")
+    table.insert(lines, "|cff00ffcc[公共任务]|r |cff8899aa两族通用，先做雕刻图腾解锁「收买友谊」|r")
+    if sharedDone > 0 then
+      table.insert(lines, string.format("  |cff888888✓ 已完成 %d 步|r", sharedDone))
+    end
+    for _, line in ipairs(sharedLines) do table.insert(lines, line) end
+    if sharedLocked > 0 then
+      table.insert(lines, "  |cff8899aa部分任务需先把对应部族声望恢复到中立|r")
+    end
+    if sharedProf > 0 then
+      table.insert(lines, string.format("  |cff8899aa另有 %d 个任务需对应专业|r", sharedProf))
+    end
+  end
+
+  local function renderGroup(group)
+    local factionId = tonumber(group.factionId)
+    local standing = standingOf(factionId)
+    table.insert(lines, "")
+    local header = string.format("|cff00ffcc[%s]|r", group.name or "")
+    if group.where and group.where ~= "" then
+      header = header .. " |cff8899aa" .. group.where .. "|r"
+    end
+    table.insert(lines, header)
+    local nextHint = CentaurNextTierHint(standing)
+    if nextHint then
+      table.insert(lines, "  |cff8899aa下一门槛: " .. nextHint .. "|r")
+    end
+    local totalCompleted = 0
+    for _, stage in ipairs({ "entry", "friendly", "honored" }) do
+      for _, q in ipairs(group[stage] or {}) do
+        if IsQuestCompletedById(q.id) and not q.repeatable then
+          totalCompleted = totalCompleted + 1
+        end
+      end
+    end
+    if totalCompleted > 0 then
+      table.insert(lines, string.format("  |cff888888✓ 已完成 %d 步|r", totalCompleted))
+    end
+
+    local stages = {
+      { key = "entry", label = "入门 · 中立可接", minRep = nil },
+      { key = "friendly", label = "友善阶段", minRep = 3000 },
+      { key = "honored", label = "尊敬阶段", minRep = 9000 },
+    }
+    for _, stage in ipairs(stages) do
+      local quests = group[stage.key]
+      if type(quests) == "table" and #quests > 0 then
+        if stage.minRep and standing < stage.minRep then
+          table.insert(lines, string.format(
+            "  |cff8899aa[%s] 未解锁：需 %s %s，当前 %s，还差 %s|r",
+            stage.label,
+            CentaurRepLabel(stage.minRep),
+            CentaurFormatNumber(stage.minRep),
+            CentaurFormatNumber(standing),
+            CentaurFormatNumber(stage.minRep - standing)
+          ))
+        else
+          local stageLines = {}
+          local shown, done, locked, professionHidden = RenderCentaurQuestStage(stageLines, quests, {
+            standing = standing,
+            faction = state.faction,
+            profs = profs,
+            level = lvl,
+            minRep = stage.minRep,
+          })
+          if shown > 0 or done > 0 then
+            table.insert(lines, string.format("  |cff00ffcc[%s]|r", stage.label))
+            for _, line in ipairs(stageLines) do table.insert(lines, line) end
+            if professionHidden > 0 then
+              table.insert(lines, string.format("  |cff8899aa另有 %d 个专业配方任务需对应专业|r", professionHidden))
+            end
+            if locked > 0 then
+              table.insert(lines, string.format("  |cff8899aa另有 %d 个任务需相应声望|r", locked))
+            end
+          end
+        end
+      end
+    end
+
+    local repQuests = group.repeatable
+    if type(repQuests) == "table" and #repQuests > 0 then
+      if standing >= 42000 then
+        table.insert(lines, "  |cffff8800[可重复]|r |cff888888已崇拜，无需再交图腾|r")
+      else
+        local repLines = {}
+        local shown = RenderCentaurQuestStage(repLines, repQuests, {
+          standing = standing,
+          faction = state.faction,
+          profs = profs,
+          level = lvl,
+          minRep = nil,
+        })
+        if shown > 0 then
+          table.insert(lines, "  |cffff8800[可重复]|r")
+          for _, line in ipairs(repLines) do table.insert(lines, line) end
+          local requires = repQuests[1].requires or {}
+          if #requires > 0 then
+            local unlocked = false
+            for _, reqId in ipairs(requires) do
+              if IsQuestCompletedById(reqId) then
+                unlocked = true
+                break
+              end
+            end
+            if not unlocked then
+              table.insert(lines, string.format(
+                "  |cffff8800↳ 需先完成「收买友谊：%s」|r",
+                group.name or ""
+              ))
+            end
+          end
+        end
+      end
+    end
+  end
+
+  if committed then
+    local mainGroup = findGroup(mainFactionId)
+    local otherGroup = findGroup(mainFactionId == CENTAUR_FACTION_GELKIS and CENTAUR_FACTION_MAGRAM or CENTAUR_FACTION_GELKIS)
+    if mainGroup then
+      table.insert(lines, string.format(
+        "|cff99e6ff当前倾向:|r %s|cff8899aa（已选边；另一端任务已折叠）|r",
+        mainGroup.name or ""
+      ))
+      renderGroup(mainGroup)
+      if otherGroup then
+        local otherStanding = standingOf(tonumber(otherGroup.factionId))
+        table.insert(lines, string.format(
+          "|cff8899aa%s：%s (%s) · 已折叠（与当前选择冲突，做其任务会清空%s声望）|r",
+          otherGroup.name or "",
+          CentaurRepLabel(otherStanding),
+          CentaurFormatNumber(otherStanding),
+          mainGroup.name or ""
+        ))
+      end
+    end
+  else
+    table.insert(lines, "|cffff8800尚未选边：两族初始中立，做任意一族的任务都会大幅降低另一族声望；先选定一边再投入。|r")
+    for _, group in ipairs(def.groups or {}) do renderGroup(group) end
+  end
+
+  list:Add({
+    title = string.format(
+      "|cff00ffcc[凄凉之地 · 半人马阵营]|r |cffffd100(Lv.%d-%d)|r",
+      def.minLevel or 30,
+      def.maxLevel or 45
+    ),
+    body = table.concat(lines, "\n"),
+    theme = "zone",
+    badge = "按声望过滤",
+  })
+  return 1
+end
+
 local function RenderTabRoutes()
   local list = CreateCardList(6)
   local lvl = state.level
@@ -4629,6 +5025,9 @@ local function RenderTabRoutes()
       badge = "角色专属匹配",
     })
   end
+
+  -- 凄凉之地半人马阵营：独立卡片，不随当前阶段区域消失；Lv.30-45 按当前声望过滤
+  RenderCentaurFactionCard(list, lvl)
 
   -- 整理要渲染的阶段列表：在 MATCH 模式下将当前等级所在阶段置顶，并展示后续衔接阶段（过滤已过时的低级阶段）
   local orderedBands = {}

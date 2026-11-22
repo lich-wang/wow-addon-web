@@ -614,6 +614,264 @@ const DUNGEON_ENTRANCE_COORDS = {
   'upper-blackrock-spire': { zone: '燃烧平原', x: 33.0, y: 25.2 },
 };
 
+// ---------------------------------------------------------------------------
+// 凄凉之地 · 半人马阵营任务（吉尔吉斯 factionId=92 / 玛格拉姆 factionId=93）
+//
+// 两族只能二选一：做一边会大幅降低另一边声望。插件运行时用
+// GetFactionInfoByID(92/93) 读取当前声望，只展开玩家已经倾向的部族，
+// 另一边折叠成一行；未达声望门槛的阶段只留一行「还差多少」提示。
+//
+// 阶段划分（与游戏内门槛一致）：
+// - entry      中立即可接：部族入门、雕刻图腾、收买友谊（一次性 +3000）
+// - friendly   需友善 3,000：交物品 / 职业配方任务
+// - honored    需尊敬 9,000：白骨之谷（辛德拉）新任务链
+// - repeatable 可重复：交 5 个雕刻半人马图腾 → +750 声望（需先完成收买友谊）
+//
+// 数据来源：wowf.io 任务链页、Wowhead Forever 声望指南与国服 1.60 任务数据。
+// ---------------------------------------------------------------------------
+const centaurQuest = (id, name, level, extra = {}) => ({ id, name, level, ...extra });
+const centaurItem = (id, name, count) => ({ id, name, count });
+
+const FACTION_QUESTS_DATA = [
+  {
+    id: 'desolace-centaur',
+    zone: '凄凉之地',
+    title: '凄凉之地 · 半人马阵营',
+    minLevel: 30,
+    maxLevel: 45,
+    summary:
+      '吉尔吉斯与玛格拉姆只能二选一：做一边会掉另一边声望。卡片按当前声望只展开已选边的部族，另一边折叠成一行；[交物品] 与 [可重复] 任务会单独标出。',
+    shared: [
+      centaurQuest(93224, '雕刻半人马图腾', 40, {
+        faction: 'alliance',
+        items: [centaurItem(254432, '雕刻半人马图腾', 5)],
+        note: '交给尼耶尔前哨站的本迪加斯上尉；解锁两族的「收买友谊」。',
+      }),
+      centaurQuest(93225, '雕刻半人马图腾', 40, {
+        faction: 'horde',
+        items: [centaurItem(254432, '雕刻半人马图腾', 5)],
+        note: '交给幽灵岗哨的古尔达·蛮鬃；解锁两族的「收买友谊」。',
+      }),
+      centaurQuest(96222, '赫鲁萨可汗', 42, {
+        items: [centaurItem(6077, '玛洛迪钥匙碎片', 1)],
+        note: '中立任务，两族均可做；奖励四选一。',
+      }),
+    ],
+    groups: [
+      {
+        factionId: 92,
+        name: '吉尔吉斯',
+        where: '凄凉之地西南 · 吉尔吉斯村（智者乌泰克）',
+        entry: [
+          centaurQuest(1368, '吉尔吉斯部族', 33, {
+            faction: 'horde',
+            rep: 250,
+            note: '先击杀玛格拉姆半人马把声望刷到友善，再交任务。',
+          }),
+          centaurQuest(1382, '奇怪的联盟', 35, {
+            faction: 'alliance',
+            rep: 250,
+            note: '先击杀玛格拉姆半人马把声望刷到友善，再交任务。',
+          }),
+          centaurQuest(93227, '收买友谊：吉尔吉斯', 45, {
+            faction: 'alliance',
+            neutralOnly: true,
+            rep: 3000,
+            otherRep: -15000,
+            items: [centaurItem(257685, '图腾手提包', 1)],
+            note: '一次性捷径；注意会清空玛格拉姆声望。',
+          }),
+          centaurQuest(94873, '收买友谊：吉尔吉斯', 45, {
+            faction: 'horde',
+            neutralOnly: true,
+            rep: 3000,
+            otherRep: -15000,
+            items: [centaurItem(257685, '图腾手提包', 1)],
+            note: '一次性捷径；注意会清空玛格拉姆声望。',
+          }),
+        ],
+        friendly: [
+          centaurQuest(1384, '突袭科卡尔', 32, {
+            faction: 'alliance',
+            rep: 500,
+            items: [centaurItem(6079, '粗制咒符', 10)],
+          }),
+          centaurQuest(1370, '偷取物资', 35, {
+            rep: 500,
+            items: [centaurItem(6069, '粗制干肉', 6)],
+          }),
+          centaurQuest(1373, '盎格库尔', 37, {
+            rep: 1000,
+            items: [centaurItem(6190, '德莱尼水晶碎片', 1)],
+            note: '在悲伤沼泽击杀盎格库尔。',
+          }),
+          centaurQuest(1374, '杰恩可汗', 37, {
+            items: [centaurItem(6072, '杰恩可汗的头颅', 1)],
+            note: '在玛格拉姆村击杀杰恩可汗。',
+          }),
+          centaurQuest(1380, '赫鲁萨可汗', 42, {
+            elite: true,
+            items: [centaurItem(6077, '玛洛迪钥匙碎片', 1)],
+            note: '42 级精英，建议组队；先在长矛谷打到半人马号角哨嘴。',
+          }),
+          centaurQuest(92755, '玄秘之术', 35, {
+            profession: '附魔',
+            rep: 1000,
+            items: [centaurItem(11135, '强效秘法精华', 3)],
+          }),
+          centaurQuest(92814, '我需要一名裁缝', 35, {
+            profession: '裁缝',
+            rep: 1000,
+            items: [centaurItem(10008, '白色强盗面罩', 1)],
+          }),
+          centaurQuest(92817, '制皮技巧', 35, {
+            profession: '制皮',
+            rep: 1000,
+            items: [centaurItem(5739, '野人背心', 1)],
+          }),
+        ],
+        honored: [
+          centaurQuest(93034, '白骨之谷', 38, { rep: 125, note: '前往白骨之谷入口找 Nerlokh。' }),
+          centaurQuest(93035, '肆虐的劫掠者', 38, { rep: 500 }),
+          centaurQuest(93037, '揪出叛徒', 40, {
+            rep: 500,
+            items: [centaurItem(255875, '通灵法衣', 1)],
+          }),
+          centaurQuest(93041, '直面真相', 38, {
+            rep: 500,
+            items: [centaurItem(255945, '诅咒徽记', 1), centaurItem(255941, '吉尔吉斯通灵法衣', 1)],
+          }),
+          centaurQuest(93044, '净化的呼唤', 38, {
+            rep: 500,
+            items: [centaurItem(255878, '瑟莱德丝之泪', 3)],
+          }),
+          centaurQuest(93045, '测试你的理论', 38, {
+            rep: 500,
+            items: [centaurItem(256061, '乌泰克的德莱尼水晶法杖', 1)],
+          }),
+          centaurQuest(93058, '拯救同胞', 42, { rep: 500 }),
+          centaurQuest(93062, '埋葬骸骨', 42, { rep: 500 }),
+          centaurQuest(93122, '四处侦察', 43, { rep: 500 }),
+          centaurQuest(93125, '回家之路', 43, { rep: 500, note: '护送任务，可选。' }),
+          centaurQuest(93128, '杰恩可汗', 42, {
+            rep: 6000,
+            note: '任务链终点，三选一武器。',
+          }),
+        ],
+        repeatable: [
+          centaurQuest(92812, '经济战', 60, {
+            repeatable: true,
+            rep: 750,
+            otherRep: -3750,
+            items: [centaurItem(254432, '雕刻半人马图腾', 5)],
+            requires: [93227, 94873],
+            note: '可反复交，直到崇拜。',
+          }),
+        ],
+      },
+      {
+        factionId: 93,
+        name: '玛格拉姆',
+        where: '凄凉之地东南 · 玛格拉姆村（瓦鲁格）',
+        entry: [
+          centaurQuest(1367, '玛格拉姆部族', 33, {
+            faction: 'horde',
+            rep: 250,
+            note: '先击杀吉尔吉斯半人马把声望刷到友善，再交任务。',
+          }),
+          centaurQuest(1385, '野蛮外交', 35, {
+            faction: 'alliance',
+            rep: 250,
+            note: '先击杀吉尔吉斯半人马把声望刷到友善，再交任务。',
+          }),
+          centaurQuest(93226, '收买友谊：玛格拉姆', 45, {
+            faction: 'alliance',
+            neutralOnly: true,
+            rep: 3000,
+            otherRep: -15000,
+            items: [centaurItem(257685, '图腾手提包', 1)],
+            note: '一次性捷径；注意会清空吉尔吉斯声望。',
+          }),
+          centaurQuest(94872, '收买友谊：玛格拉姆', 45, {
+            faction: 'horde',
+            neutralOnly: true,
+            rep: 3000,
+            otherRep: -15000,
+            items: [centaurItem(257685, '图腾手提包', 1)],
+            note: '一次性捷径；注意会清空吉尔吉斯声望。',
+          }),
+        ],
+        friendly: [
+          centaurQuest(1386, '突袭科卡尔部族', 32, { faction: 'alliance', rep: 500 }),
+          centaurQuest(1369, '破碎之泪', 33, {
+            rep: 500,
+            items: [centaurItem(6083, '破碎之泪', 3)],
+          }),
+          centaurQuest(92743, '征服者的皇冠', 40, {
+            rep: 1000,
+            items: [centaurItem(254392, '征服者的头盔', 1)],
+            note: '头盔在荒芜之地。',
+          }),
+          centaurQuest(1371, '瓦鲁格的玩具', 35, {
+            profession: '工程学',
+            rep: 1000,
+            items: [centaurItem(4392, '高级假人', 1)],
+          }),
+          centaurQuest(92754, '新的防护暗影需求', 35, {
+            profession: '炼金',
+            rep: 1000,
+            items: [centaurItem(13459, '强效暗影防护药水', 3)],
+          }),
+          centaurQuest(92818, '大型铁斧，不，巨型铁斧', 35, {
+            profession: '锻造',
+            rep: 1000,
+            items: [centaurItem(3855, '巨型铁斧', 2)],
+          }),
+        ],
+        honored: [
+          centaurQuest(92841, '白骨之谷', 40, { rep: 125, note: '前往白骨之谷附近找 Orgrul。' }),
+          centaurQuest(92844, '白骨之山', 42, {
+            rep: 500,
+            items: [centaurItem(254663, '被轻微诅咒的骨头', 426)],
+          }),
+          centaurQuest(92846, '流放者通灵师', 40, { rep: 500 }),
+          centaurQuest(92847, '腐化之泪', 42, {
+            rep: 500,
+            items: [centaurItem(254841, '石化树皮', 3), centaurItem(254840, '注能之泪', 3)],
+          }),
+          centaurQuest(92873, '初试身手', 41, {
+            rep: 500,
+            items: [centaurItem(254842, '被强力诅咒的骨头', 426)],
+          }),
+          centaurQuest(92893, '对弱者绝不留情', 42, { rep: 500 }),
+          centaurQuest(92894, '唤醒骸骨', 40, { rep: 500 }),
+          centaurQuest(93066, '刺背避难所', 43, { rep: 500 }),
+          centaurQuest(93072, '长远之计', 43, { rep: 500 }),
+          centaurQuest(93129, '断粮之危', 43, {
+            rep: 500,
+            items: [centaurItem(256892, '被偷走的补给品', 6)],
+          }),
+          centaurQuest(93188, '向奥尔格鲁尔复命', 43, { rep: 500 }),
+          centaurQuest(93196, '杰恩可汗', 42, {
+            rep: 6000,
+            note: '任务链终点，三选一武器。',
+          }),
+        ],
+        repeatable: [
+          centaurQuest(92811, '经济战', 60, {
+            repeatable: true,
+            rep: 750,
+            otherRep: -3750,
+            items: [centaurItem(254432, '雕刻半人马图腾', 5)],
+            requires: [93226, 94872],
+            note: '可反复交，直到崇拜。',
+          }),
+        ],
+      },
+    ],
+  },
+];
+
 const FOREVER_SYSTEMS_DATA = [
   {
     id: 'sleeping-bag',
@@ -3629,6 +3887,7 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
       },
       professions: professionsList,
       foreverSystems: FOREVER_SYSTEMS_DATA,
+      factionQuests: FACTION_QUESTS_DATA,
     }, livePrereqs);
   }
 
@@ -3667,6 +3926,7 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     items: itemsList,
     professions: professionsList,
     foreverSystems: FOREVER_SYSTEMS_DATA,
+    factionQuests: FACTION_QUESTS_DATA,
     news,
   };
   if (useSnapshotOnly && prevalidatedSnapshot) {
