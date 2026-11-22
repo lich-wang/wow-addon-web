@@ -137,6 +137,48 @@ npm run tauri build
 
 ---
 
+## 📤 自动发布到 CurseForge（WoWF）
+
+巫妖王的无限百科（`WoWF`）支持通过 GitHub Actions 自动发布到 CurseForge：
+
+- **触发时机**：推送 `v*` tag，且自上一个 tag 以来 `addons/WoWF` 或 `scripts/locales/wowf.js` 有变更；无变更时自动跳过，不影响其它 tag 流程。也可在 Actions 页面手动运行 `Publish WoWF to CurseForge`，勾选 `force` 强制发布。
+- **版本号**：取自打包产物内 `WoWF/WoWF.toc` 的 `## Version`（由 `scripts/locales/wowf.js` 按提交数自动生成，如 `v1.2.51`）。
+- **变更说明**：自动取上一个 tag 到当前 tag 的 git 提交，生成 Markdown。
+- **游戏版本**：按 toc 的 `## Interface: 16001` 推导为 Forever `1.60.1` 并从 CurseForge 版本列表自动匹配；匹配不到时用 `CF_GAME_VERSION` 指定。
+
+### 首次配置（一次性）
+
+CurseForge 的 API 只能上传文件、不能创建项目，因此需要先手工建项目：
+
+1. 在 [CurseForge](https://www.curseforge.com/wow) 创建 WoW 项目（游戏选《魔兽世界：无限服 / Forever》），记下项目页 URL 中的数字 ID。
+2. 在 [API Tokens](https://authors.curseforge.com/#/settings/api-tokens) 生成 token。
+3. 仓库 **Settings → Secrets and variables → Actions** 配置：
+
+| 名称 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `CF_API_TOKEN` | Secret | 是 | CurseForge API Token（`X-Api-Token`） |
+| `CF_PROJECT_ID` | Secret | 是 | CurseForge 项目数字 ID |
+| `CF_GAME_VERSION` | Variable | 否 | 游戏版本 ID 或精确名称；默认按 `## Interface` 推导（16001 → 1.60.1），匹配不到会报错 |
+| `CF_RELATIONS_JSON` | Secret | 否 | 默认声明 QuestieDB 为必需依赖；自定义 JSON 覆盖，设为 `off` 关闭 |
+| `CF_PROJECT_SLUG` | Secret | 否 | 项目 slug，仅用于日志里拼出文件链接 |
+
+未配置 `CF_API_TOKEN` / `CF_PROJECT_ID` 时工作流只给出 warning 并跳过，不会阻塞发布。
+
+### 本地预演与手工上传
+
+```bash
+# 1. 打包当前 WoWF（会同步 wowf.io 最新数据）
+node scripts/fetch-addons.js --only=wowf
+
+# 2. 预演：只打印将上传的 metadata，不发写请求
+CF_API_TOKEN=... CF_PROJECT_ID=... npm run publish:curseforge -- --dry-run
+
+# 3. 正式上传
+CF_API_TOKEN=... CF_PROJECT_ID=... npm run publish:curseforge -- --changelog "本次更新说明"
+```
+
+---
+
 ## 🤝 开源协议
 
 本项目基于 [MIT License](LICENSE) 开源，欢迎提交 Issue 和 Pull Request！

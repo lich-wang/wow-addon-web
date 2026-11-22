@@ -1,0 +1,129 @@
+name: Publish WoWF to CurseForge
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '要发布的 tag 或分支（留空使用当前分支）'
+        required: false
+        default: ''
+      force:
+        description: '自上一个 tag 以来 WoWF 无变更时也强制发布'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: publish-curseforge
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      # 只在 WoWF 真的变了、且凭据齐全时继续；否则给出 notice/warning 并跳过，
+      # 不阻塞与 WoWF 无关的 tag 发布。
+      - name: Prepare release metadata
+        id: prep
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_PROJECT_ID: ${{ secrets.CF_PROJECT_ID }}
+          FORCE: ${{ inputs.force || 'false' }}
+        run: |
+          set -euo pipefail
+          CURRENT_TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+          if [ -n "$CURRENT_TAG" ]; then
+            PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)
+          else
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
+          fi
+          if [ -n "$PREV_TAG" ]; then RANGE="${PREV_TAG}..HEAD"; else RANGE="HEAD"; fi
+          CHANGED=$(git log --oneline "$RANGE" -- addons/WoWF scripts/locales/wowf.js | wc -l | tr -d ' ')
+          echo "自 ${PREV_TAG:-仓库起点} 以来 WoWF 相关提交数：${CHANGED}"
+
+          if [ "$CHANGED" = "0" ] && [ "${FORCE}" != "true" ]; then
+            echo "::notice title=跳过 CurseForge 发布::自 ${PREV_TAG:-仓库起点} 以来 WoWF 没有变更。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_PROJECT_ID:-}" ]; then
+            echo "::warning title=跳过 CurseForge 发布::未配置 CF_API_TOKEN / CF_PROJECT_ID（见 README「自动发布到 CurseForge」）。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RELEASE_TYPE=release
+          case "$CURRENT_TAG" in
+            *alpha*) RELEASE_TYPE=alpha ;;
+            *beta*) RELEASE_TYPE=beta ;;
+          esac
+          echo "release_type=$RELEASE_TYPE" >> "$GITHUB_OUTPUT"
+          echo "tag=${CURRENT_TAG:-manual}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          WOWF_LOG=$(git log -n 50 --pretty=format:'- %s (%h)' --no-merges "$RANGE" -- addons/WoWF scripts/locales/wowf.js)
+          {
+            echo "### ${CURRENT_TAG:-手动发布 WoWF}"
+            echo
+            if [ -n "$WOWF_LOG" ]; then echo "$WOWF_LOG"; else echo "- WoWF 数据同步与细节修复"; fi
+            echo
+            echo
+            echo "数据同步自 https://wowf.io/zh 。"
+          } > changelog.md
+          cat changelog.md
+
+      - name: Setup Node.js
+        if: steps.prep.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        if: steps.prep.outputs.skip != 'true'
+        run: npm ci
+
+      # 复用 deploy.yml 的上游缓存，避免每次重新下载 QuestieDB
+      - name: Restore Raw Upstream Addon Cache
+        if: steps.prep.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: .cache/upstream-addons
+          key: upstream-addons-${{ github.run_id }}
+          restore-keys: |
+            upstream-addons-
+
+      - name: Build WoWF Package
+        if: steps.prep.outputs.skip != 'true'
+        run: node scripts/fetch-addons.js --only=wowf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to CurseForge
+        if: steps.prep.outputs.skip != 'true'
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_PROJECT_ID: ${{ secrets.CF_PROJECT_ID }}
+          CF_GAME_VERSION: ${{ vars.CF_GAME_VERSION }}
+          CF_RELATIONS_JSON: ${{ secrets.CF_RELATIONS_JSON }}
+        run: |
+          node scripts/publish-curseforge.js \
+            --changelog-file changelog.md \
+            --release-type "${{ steps.prep.outputs.release_type }}"
+
+      - name: Summarize
+        if: steps.prep.outputs.skip != 'true'
+        run: |
+          echo "WoWF 已发布到 CurseForge（${{ steps.prep.outputs.tag }}）" >> "$GITHUB_STEP_SUMMARY"
