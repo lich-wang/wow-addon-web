@@ -158,8 +158,8 @@ CurseForge 的 API 只能上传文件、不能创建项目，因此需要先手�
 | :--- | :--- | :--- | :--- |
 | `CF_API_TOKEN` | Secret | 是 | CurseForge API Token（`X-Api-Token`） |
 | `CF_PROJECT_ID` | Secret | 是 | CurseForge 项目数字 ID |
-| `CF_GAME_VERSION` | Variable | 否 | 游戏版本 ID 或名称，默认按 `## Interface` 推导 |
-| `CF_RELATIONS_JSON` | Secret | 否 | 项目依赖，如 `[{"slug":"questiedb","type":"requiredDependency"}]` |
+| `CF_GAME_VERSION` | Variable | 否 | 游戏版本 ID 或精确名称；默认按 `## Interface` 推导（16001 → 1.60.1），匹配不到会报错 |
+| `CF_RELATIONS_JSON` | Secret | 否 | 默认声明 QuestieDB 为必需依赖；自定义 JSON 覆盖，设为 `off` 关闭 |
 | `CF_PROJECT_SLUG` | Secret | 否 | 项目 slug，仅用于日志里拼出文件链接 |
 
 未配置 `CF_API_TOKEN` / `CF_PROJECT_ID` 时工作流只给出 warning 并跳过，不会阻塞发布。

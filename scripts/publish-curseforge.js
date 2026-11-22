@@ -20,9 +20,12 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 
-const API_BASE = (process.env.CF_API_BASE || 'https://www.curseforge.com').replace(/\/+$/, '');
+const API_BASE = (process.env.CF_API_BASE || 'https://wow.curseforge.com').replace(/\/+$/, '');
 const UPLOAD_PATH_TEMPLATE = process.env.CF_UPLOAD_PATH || '/api/projects/{projectId}/upload-file';
 const DEFAULT_FILE = 'public/addons/wowf.zip';
+// WoWF 的 toc 声明 `## Dependencies: QuestieDB`，默认把 QuestieDB 作为必需依赖一并声明，
+// 这样 CurseForge 客户端安装 WoWF 时会自动带上 QuestieDB。可用 CF_RELATIONS_JSON=off 关闭。
+const DEFAULT_RELATIONS = [{ slug: 'questiedb', type: 'requiredDependency' }];
 
 const HELP = `发布 WoWF 插件包到 CurseForge
 
@@ -36,7 +39,7 @@ const HELP = `发布 WoWF 插件包到 CurseForge
   --release-type <类型>   release | beta | alpha（默认 release）
   --changelog <文本>      变更说明（Markdown）
   --changelog-file <路径> 从文件读取变更说明（优先级低于 --changelog）
-  --game-version <值>     游戏版本 ID 或名称（默认按 ## Interface 推导，如 16001 → 1.60.1）
+  --game-version <值>     游戏版本 ID 或精确名称（默认按 ## Interface 推导，如 16001 → 1.60.1）
   --project-id <ID>       覆盖 CF_PROJECT_ID
   --dry-run               只打印 metadata，不发起上传
   --help, -h              显示本帮助
@@ -45,7 +48,8 @@ const HELP = `发布 WoWF 插件包到 CurseForge
   CF_API_TOKEN            必填。CurseForge API token（X-Api-Token）
   CF_PROJECT_ID           必填。CurseForge 项目数字 ID
   CF_GAME_VERSION         可选。游戏版本 ID 或名称
-  CF_RELATIONS_JSON       可选。项目依赖，如 [{"slug":"questiedb","type":"requiredDependency"}]
+  CF_RELATIONS_JSON       可选。项目依赖，默认 [{"slug":"questiedb","type":"requiredDependency"}]，
+                          设为 off 可关闭默认依赖
   CF_API_BASE             可选。默认 ${API_BASE}
   CF_UPLOAD_PATH          可选。默认 ${UPLOAD_PATH_TEMPLATE}
 `;
@@ -133,17 +137,6 @@ function versionKey(value) {
   return parts ? parts.map(part => String(Number.parseInt(part, 10))).join('.') : '';
 }
 
-function compareVersionKeys(a, b) {
-  const left = a.split('.').map(Number);
-  const right = b.split('.').map(Number);
-  const length = Math.max(left.length, right.length);
-  for (let i = 0; i < length; i += 1) {
-    const diff = (left[i] || 0) - (right[i] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
 function resolveGameVersion(versions, spec) {
   const list = versions.filter(item => item && item.id !== undefined && item.id !== null);
   const raw = String(spec ?? '').trim();
@@ -157,34 +150,36 @@ function resolveGameVersion(versions, spec) {
 
   const key = versionKey(raw);
   const exact = list.filter(item => versionKey(item.name) === key || versionKey(item.slug) === key);
-  if (exact.length > 0) return exact[0];
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) {
+    throw new Error(
+      `${raw} 匹配到多个 CurseForge 游戏版本（${exact.map(item => `${item.name}#${item.id}`).join('、')}），请用 CF_GAME_VERSION 指定版本 ID。`
+    );
+  }
 
   const family = key.split('.').slice(0, 2).join('.');
-  const candidates = list
-    .filter(item => versionKey(item.name).startsWith(`${family}.`))
-    .sort((a, b) => compareVersionKeys(versionKey(a.name), versionKey(b.name)));
-  if (candidates.length > 0) return candidates[candidates.length - 1];
-
   const available = list
     .map(item => item.name)
     .filter(name => String(name).startsWith(family))
     .slice(0, 12)
     .join('、');
   throw new Error(
-    `未找到匹配 ${raw} 的 CurseForge 游戏版本${available ? `（候选：${available}）` : ''}。` +
-      '请用 CF_GAME_VERSION 指定版本 ID 或名称。'
+    `CurseForge 游戏版本列表中没有精确匹配 ${raw} 的版本${available ? `（同系列候选：${available}）` : ''}。` +
+      '请用 CF_GAME_VERSION 指定版本 ID 或该版本在 CurseForge 上的精确名称，避免把文件标记为错误的游戏版本。'
   );
 }
 
 function parseRelations(raw) {
-  if (!raw) return [];
+  const value = String(raw ?? '').trim();
+  if (!value) return DEFAULT_RELATIONS;
+  if (value === 'off' || value === 'none' || value === '[]') return [];
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(value);
   } catch {
-    throw new Error('CF_RELATIONS_JSON 不是合法 JSON，示例：[{"slug":"questiedb","type":"requiredDependency"}]');
+    throw new Error('CF_RELATIONS_JSON 不是合法 JSON，示例：[{"slug":"questiedb","type":"requiredDependency"}]，或设为 off 关闭默认依赖');
   }
-  if (!Array.isArray(parsed)) throw new Error('CF_RELATIONS_JSON 必须是数组');
+  if (!Array.isArray(parsed)) throw new Error('CF_RELATIONS_JSON 必须是数组，或设为 off 关闭默认依赖');
   return parsed.filter(item => item && item.slug && item.type);
 }
 
@@ -249,8 +244,7 @@ function buildMetadata({ changelog, displayName, releaseType, gameVersion, relat
   return metadata;
 }
 
-async function uploadFile({ token, projectId, metadata, filePath, fileName }) {
-  const buffer = fs.readFileSync(filePath);
+async function uploadFile({ token, projectId, metadata, buffer, fileName }) {
   const url = `${API_BASE}${UPLOAD_PATH_TEMPLATE.replace('{projectId}', encodeURIComponent(projectId))}`;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const form = new FormData();
@@ -284,6 +278,18 @@ async function uploadFile({ token, projectId, metadata, filePath, fileName }) {
   throw new Error('上传失败：重试后仍未成功');
 }
 
+/** 显式 --project-id 必须是数字，避免空串静默回退到 CF_PROJECT_ID 后上传到错误项目 */
+function resolveProjectId(opts) {
+  if (opts.projectId !== undefined) {
+    const value = String(opts.projectId).trim();
+    if (!/^\d+$/.test(value)) {
+      throw new Error(`--project-id 必须是非空的数字 ID，收到：${JSON.stringify(opts.projectId)}`);
+    }
+    return value;
+  }
+  return process.env.CF_PROJECT_ID;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
@@ -296,7 +302,8 @@ async function main() {
     throw new Error(`找不到插件包 ${filePath}，请先执行：node scripts/fetch-addons.js --only=wowf`);
   }
 
-  const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+  const fileBuffer = fs.readFileSync(filePath);
+  const zip = await JSZip.loadAsync(fileBuffer);
   const tocEntry = zip.file('WoWF/WoWF.toc');
   if (!tocEntry) throw new Error(`${filePath} 中缺少 WoWF/WoWF.toc，不是有效的 WoWF 插件包`);
   const toc = await tocEntry.async('string');
@@ -319,16 +326,12 @@ async function main() {
   if (!changelog) changelog = defaultChangelog();
 
   const token = process.env.CF_API_TOKEN;
-  const projectId = opts.projectId || process.env.CF_PROJECT_ID;
+  const projectId = resolveProjectId(opts);
   const gameVersionSpec = opts.gameVersion || process.env.CF_GAME_VERSION || derivedGameVersion;
   const relations = parseRelations(process.env.CF_RELATIONS_JSON);
 
   let gameVersion = null;
-  if (token && !opts.dryRun) {
-    const versions = await fetchGameVersions(token);
-    gameVersion = resolveGameVersion(versions, gameVersionSpec);
-  } else if (token) {
-    // dry-run 也尽量解析，提前暴露版本名错误
+  if (token) {
     const versions = await fetchGameVersions(token);
     gameVersion = resolveGameVersion(versions, gameVersionSpec);
   }
@@ -360,7 +363,7 @@ async function main() {
     );
   }
 
-  const result = await uploadFile({ token, projectId, metadata, filePath, fileName });
+  const result = await uploadFile({ token, projectId, metadata, buffer: fileBuffer, fileName });
   if (result?.id !== undefined) {
     const slug = process.env.CF_PROJECT_SLUG;
     const url = slug
