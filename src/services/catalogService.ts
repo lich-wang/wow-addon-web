@@ -194,7 +194,7 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
 /**
  * 为插件下载链接附加版本查询参数，避免浏览器或 CDN 返回旧版本缓存
  */
-function withVersionQuery(url: string, version: string): string {
+export function withVersionQuery(url: string, version: string): string {
   if (!version) return url;
   const separator = url.includes('?') ? '&' : '?';
   return `${url}${separator}v=${encodeURIComponent(version)}`;
