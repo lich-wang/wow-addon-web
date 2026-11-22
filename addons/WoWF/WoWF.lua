@@ -4667,7 +4667,7 @@ local function RenderCentaurFactionCard(list, level)
               y = info and info.y or nil,
             }
             -- 可重复任务交过一次不应置灰，继续用黄色提示还能再交
-            local link = FormatQuestLink(questObj, opts.level, "凄凉之地", q.repeatable and false or nil)
+            local link = FormatQuestLink(questObj, opts.level, "凄凉之地", nil, q.repeatable and false or nil)
             local parts = { link }
             local tags = {}
             if q.repeatable then table.insert(tags, "|cffff8800[可重复]|r") end
@@ -6004,7 +6004,7 @@ local function RenderTabReputations()
       x = info and info.x or nil,
       y = info and info.y or nil,
     }
-    local link = FormatQuestLink(qObj, qLevel, qObj.zone, q.repeatable and false or nil)
+    local link = FormatQuestLink(qObj, qLevel, qObj.zone, nil, q.repeatable and false or nil)
     local parts = { link }
     local tags = {}
     if q.kind == "writ" then table.insert(tags, "|cffc79c6e[工匠文书]|r") end
@@ -6063,7 +6063,7 @@ local function RenderTabReputations()
       for _, rep in ipairs(keys) do
         local repQuests = byRep[rep]
         local chunks = {}
-        if #repQuests > 30 then
+        if #repQuests > 25 then
           for idx = 1, #repQuests, 25 do
             local chunk = {}
             for j = idx, math.min(idx + 24, #repQuests) do table.insert(chunk, repQuests[j]) end
@@ -6080,7 +6080,7 @@ local function RenderTabReputations()
       end
     end
     if #rest > 0 then
-      if #rest > 30 then
+      if #rest > 25 then
         local bands = {
           { 1, 5 }, { 6, 10 }, { 11, 15 }, { 16, 20 }, { 21, 25 }, { 26, 30 },
           { 31, 35 }, { 36, 40 }, { 41, 45 }, { 46, 50 }, { 51, 55 }, { 56, 60 },
@@ -7065,8 +7065,8 @@ RefreshUI = function(preserveScroll)
     end
   end
 
-  for i, btn in ipairs(tabButtons) do
-    if i == state.activeTab then
+  for tabId, btn in pairs(tabButtons) do
+    if tabId == state.activeTab then
       btn:LockHighlight()
     else
       btn:UnlockHighlight()
@@ -7375,7 +7375,7 @@ local function CreateMainWindow()
       state.activeTab = def.id
       RefreshUI()
     end)
-    tabButtons[i] = btn
+    tabButtons[def.id] = btn
     tabX = tabX + width + 4
   end
 
