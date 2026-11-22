@@ -4835,14 +4835,14 @@ local function RenderCentaurFactionCard(list, level)
           ))
         else
           local stageLines = {}
-          local shown, done, locked, professionHidden = RenderCentaurQuestStage(stageLines, quests, {
+          local shown, _, locked, professionHidden = RenderCentaurQuestStage(stageLines, quests, {
             standing = standing,
             faction = state.faction,
             profs = profs,
             level = lvl,
             minRep = stage.minRep,
           })
-          if shown > 0 or done > 0 then
+          if shown > 0 or professionHidden > 0 then
             table.insert(lines, string.format("  |cff00ffcc[%s]|r", stage.label))
             for _, line in ipairs(stageLines) do table.insert(lines, line) end
             if professionHidden > 0 then
