@@ -5943,6 +5943,8 @@ local function RenderTabReputations()
     end
     return nil
   end
+  -- 国服 1.60 的新阵营任务在 QuestieDB 中没有 requiredMinRep/MaxRep（已核对 478 条），
+  -- 声望门槛主要体现在任务链顺序与当前阵营声望；这里仅对确有门槛字段的任务做兜底过滤。
   local function QuestRepOk(qid)
     if not _G.QuestDB then return true end
     local function Check(reqFn, isMin)
@@ -5967,6 +5969,7 @@ local function RenderTabReputations()
     factionSideById[tonumber(f.id)] = f.side or "both"
   end
   local shownQuestIds = {}
+  local shownQuestFaction = {}
 
   local function FactionAvailable(f)
     local side = f.side
@@ -5990,8 +5993,11 @@ local function RenderTabReputations()
     end
     table.insert(summaryLines, string.format("%s%s %s", SIDE_TAG[side] or "", f.name, standingText))
   end
+  if not _G.QuestDB then
+    table.insert(summaryLines, "|cffff8800QuestieDB 未加载：任务声望门槛无法读取，本页只按阵营声望与等级过滤。|r")
+  end
 
-  local function AppendQuest(lines, q)
+  local function AppendQuest(lines, q, factionName)
     local info = GetQuestieQuestInfo(q.id)
     local qLevel = (tonumber(q.level) and tonumber(q.level) > 0) and tonumber(q.level) or (info and info.level) or lvl
     local qObj = {
@@ -6038,6 +6044,7 @@ local function RenderTabReputations()
     end
     table.insert(lines, "  · " .. table.concat(parts, "  "))
     shownQuestIds[q.id] = true
+    shownQuestFaction[q.id] = factionName or ""
   end
 
   local function BuildGroups(eligible)
@@ -6109,6 +6116,25 @@ local function RenderTabReputations()
             end
           end
         end
+        -- 等级为 0 / 缺失 / 超过 60 的任务不在常规区间内，单独成卡，避免被漏掉
+        local extraQuests = {}
+        for _, q in ipairs(rest) do
+          local qLv = tonumber(q.level) or 0
+          if qLv < 1 or qLv > 60 then table.insert(extraQuests, q) end
+        end
+        if #extraQuests > 0 then
+          local chunks = {}
+          for idx = 1, #extraQuests, 25 do
+            local chunk = {}
+            for j = idx, math.min(idx + 24, #extraQuests) do table.insert(chunk, extraQuests[j]) end
+            table.insert(chunks, chunk)
+          end
+          for chunkIdx, chunk in ipairs(chunks) do
+            local suffix = " · 其他等级"
+            if #chunks > 1 then suffix = suffix .. string.format(" (%d/%d)", chunkIdx, #chunks) end
+            table.insert(groups, { quests = chunk, titleSuffix = suffix })
+          end
+        end
       else
         table.insert(groups, {
           quests = rest,
@@ -6137,7 +6163,8 @@ local function RenderTabReputations()
       end
       if MatchesSearch(factionBlob) then
         local eligible = {}
-        local completedCount, higherCount, repLockedCount, sharedCount = 0, 0, 0, 0
+        local sharedFactions = {}
+        local completedCount, higherCount, repLockedCount = 0, 0, 0
         for _, q in ipairs(faction.quests or {}) do
           local sideOk = (not q.side) or q.side == "both" or q.side == state.faction
           if sideOk then
@@ -6148,7 +6175,8 @@ local function RenderTabReputations()
             elseif not QuestRepOk(q.id) then
               repLockedCount = repLockedCount + 1
             elseif shownQuestIds[q.id] then
-              sharedCount = sharedCount + 1
+              local owner = shownQuestFaction[q.id] or "其他阵营"
+              sharedFactions[owner] = (sharedFactions[owner] or 0) + 1
             else
               table.insert(eligible, q)
             end
@@ -6209,7 +6237,7 @@ local function RenderTabReputations()
           if #group.quests == 0 then
             table.insert(lines, "|cff8899aa暂无可接任务；按上方来源提升声望。|r")
           else
-            for _, q in ipairs(group.quests) do AppendQuest(lines, q) end
+            for _, q in ipairs(group.quests) do AppendQuest(lines, q, faction.name) end
           end
 
           if groupIdx == #groups then
@@ -6219,8 +6247,15 @@ local function RenderTabReputations()
             if repLockedCount > 0 then
               table.insert(lines, string.format("|cff8899aa另有 %d 条任务需更高声望|r", repLockedCount))
             end
-            if sharedCount > 0 then
-              table.insert(lines, string.format("|cff8899aa另有 %d 条任务同时提升本阵营声望（已列在其他阵营卡）|r", sharedCount))
+            local sharedNames = {}
+            for name in pairs(sharedFactions) do table.insert(sharedNames, name) end
+            if #sharedNames > 0 then
+              table.sort(sharedNames)
+              local parts = {}
+              for _, name in ipairs(sharedNames) do
+                table.insert(parts, string.format("「%s」%d 条", name, sharedFactions[name]))
+              end
+              table.insert(lines, "|cff8899aa另有 " .. table.concat(parts, "、") .. " 任务同时提升本阵营声望（已列在对应阵营卡）|r")
             end
           end
 
@@ -7588,7 +7623,8 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
   elseif event == "UPDATE_FACTION" or event == "BAG_UPDATE_DELAYED" then
-    if mainFrame and mainFrame:IsShown() and (state.activeTab == 1 or state.activeTab == 2) then
+    local refreshReputation = (event == "UPDATE_FACTION" and state.activeTab == 9)
+    if mainFrame and mainFrame:IsShown() and (state.activeTab == 1 or state.activeTab == 2 or refreshReputation) then
       ScheduleRefresh(true, 0.2)
     end
   elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then

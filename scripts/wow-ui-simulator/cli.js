@@ -1274,7 +1274,7 @@ async function main() {
       ['可重复文书未被完成过滤', repAll.includes('工匠文书：测试药水')],
       ['已完成任务折叠', repAll.includes('已完成 1 条声望任务') && !repAll.includes('联盟之旅')],
       ['共同任务只列一次', sharedCount === 1],
-      ['去重提示', repAll.includes('已列在其他阵营卡')],
+      ['去重提示', repAll.includes('已列在对应阵营卡')],
       ['高等级任务折叠', !repAll.includes('高等级任务') && repAll.includes('需更高等级')],
       ['对立阵营详情隐藏', !repTitles.some((t) => t.includes('杜隆塔尔补给后勤部'))],
     ];
