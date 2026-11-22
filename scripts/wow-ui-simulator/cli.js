@@ -9,6 +9,11 @@ import { generateHtmlReport } from './html-report.js';
 // 坐标数值：兼容整点/多位小数、半角/全角逗号，用于校验可见文案中不得残留坐标
 const COORD_TEXT_PATTERN = /\b\d{1,3}(?:\.\d+)?\s*[,，]\s*\d{1,3}(?:\.\d+)?\b/;
 
+// 声望/金币等千位分组（3,000 / 9,000）不是坐标：先去掉分组逗号再检测，
+// 避免把「还差 5,750」这类数值误判成裸坐标；`47, 56` 与 `47.8,56.3` 仍会命中。
+const stripThousandSeparators = (text) => String(text ?? '').replace(/(\d)[,，](?=\d{3}(?!\d))/g, '$1');
+const hasBareCoord = (text) => COORD_TEXT_PATTERN.test(stripThousandSeparators(text));
+
 // 数据文件判定：兼容 Data.lua、Data/Data.lua 子目录以及 `Data.lua (source)` 合成文件名
 const isDataLuaFile = (f) => /^data\.lua/i.test(path.basename(f.filename)) || /^data\.lua/i.test(f.filename);
 
@@ -162,6 +167,25 @@ function analyzeRouteDedupe(cards) {
 }
 
 // 自检：确保「重复链 → 报错」「同等级但不同职业 → 不报错」两个方向都被覆盖
+// 自检：千位分组（声望/金币）不应被当成裸坐标，坐标格式仍要能命中
+function selfTestBareCoord() {
+  const cases = [
+    ['47, 56', true],
+    ['47.8,56.3', true],
+    ['47,56', true],
+    ['还差 5,750', false],
+    ['需友善 3,000 后交付', false],
+    ['9,000', false],
+    ['3,000,000', false],
+  ];
+  for (const [text, expected] of cases) {
+    if (hasBareCoord(text) !== expected) {
+      return `裸坐标检测自检失败：${text}（期望 ${expected ? '命中' : '不命中'}）`;
+    }
+  }
+  return null;
+}
+
 function selfTestRouteDedupe() {
   const cases = [
     {
@@ -214,7 +238,7 @@ async function main() {
     // 坐标只允许存在于链接载荷与悬停 Tooltip 中；卡片标题/正文不得出现裸坐标数值
     if (opts.assert) {
       for (const c of cards) {
-        const leaked = [c.title, c.body].find((t) => COORD_TEXT_PATTERN.test(t));
+        const leaked = [c.title, c.body].find((t) => hasBareCoord(t));
         if (leaked) {
           console.error(`[Assert Failed] ${cmd} 仍渲染出裸坐标: ${String(leaked).slice(0, 160)}`);
           assertionFailed = true;
@@ -223,7 +247,7 @@ async function main() {
       }
       for (const m of snap.chatMessages) {
         const plain = stripWoWFormatting(m.text);
-        if (COORD_TEXT_PATTERN.test(plain)) {
+        if (hasBareCoord(plain)) {
           console.error(`[Assert Failed] ${cmd} 聊天框仍输出裸坐标: ${plain.slice(0, 160)}`);
           assertionFailed = true;
           break;
@@ -341,6 +365,11 @@ async function main() {
     const selfTestErr = selfTestRouteDedupe();
     if (selfTestErr) {
       console.error(`[Assert Failed] ${selfTestErr}`);
+      assertionFailed = true;
+    }
+    const coordTestErr = selfTestBareCoord();
+    if (coordTestErr) {
+      console.error(`[Assert Failed] ${coordTestErr}`);
       assertionFailed = true;
     }
     const sampleFiles = [
@@ -995,6 +1024,175 @@ async function main() {
 
     if (ridingFail) assertionFailed = true;
     else console.log('[✓] 骑术/职业坐骑提醒过滤回归通过（完成状态隐藏、事件刷新生效、其他里程碑保留）。');
+  }
+
+  // 凄凉之地半人马阵营任务卡：按声望只展开倾向部族、交物品/可重复标注、门槛与已完成折叠
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const centaurCoreFiles = files.filter((f) => !isDataLuaFile(f));
+    const buildCentaurMockLua = (rep92, rep93) => `
+      function GetFactionInfoByID(id)
+        local rep = { [92] = ${rep92}, [93] = ${rep93} }
+        local value = rep[id]
+        if value == nil then return nil end
+        return "faction", "", 4, 0, 0, value
+      end
+      local function q(id, name, lv, extra)
+        local t = { id = id, name = name, level = lv }
+        for k, v in pairs(extra or {}) do t[k] = v end
+        return t
+      end
+      local function it(id, name, n) return { id = id, name = name, count = n } end
+      WoWF_Data = {
+        meta = { version = "centaur-faction-test" },
+        routes = {
+          human = { name = "人类", faction = "alliance", bands = { { from = 38, to = 41, zone = "荒芜之地", hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 }, quests = {} } } },
+          orc = { name = "兽人", faction = "horde", bands = { { from = 38, to = 41, zone = "荒芜之地", hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 }, quests = {} } } },
+        },
+        classes = { MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精", recommendedProfs = "", phases = {}, musts = {} } } } },
+        dungeons = {}, macros = {}, professions = {},
+        factionQuests = {
+          {
+            id = "desolace-centaur", zone = "凄凉之地", title = "凄凉之地 · 半人马阵营",
+            minLevel = 30, maxLevel = 45, summary = "两族二选一。",
+            shared = {
+              q(93224, "雕刻半人马图腾", 40, { faction = "alliance", items = { it(254432, "雕刻半人马图腾", 5) } }),
+              q(96222, "赫鲁萨可汗", 42, { items = { it(6077, "玛洛迪钥匙碎片", 1) } }),
+            },
+            groups = {
+              {
+                factionId = 92, name = "吉尔吉斯", where = "吉尔吉斯村",
+                entry = {
+                  q(1368, "吉尔吉斯部族", 33, { faction = "horde", rep = 250, minRep = 3000, showWhenLocked = true }),
+                  q(93227, "收买友谊：吉尔吉斯", 45, { faction = "alliance", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
+                  q(94873, "收买友谊：吉尔吉斯", 45, { faction = "horde", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
+                },
+                friendly = {
+                  q(1370, "偷取物资", 35, { rep = 500, items = { it(6069, "粗制干肉", 6) } }),
+                  q(92755, "玄秘之术", 35, { profession = "附魔", rep = 1000, items = { it(11135, "强效秘法精华", 3) } }),
+                },
+                honored = {
+                  q(93034, "白骨之谷", 38, { rep = 125 }),
+                  q(93035, "肆虐的劫掠者", 38, { rep = 500 }),
+                },
+                repeatable = {
+                  q(92812, "经济战", 60, { repeatable = true, rep = 750, otherRep = -3750, items = { it(254432, "雕刻半人马图腾", 5) }, requires = { 93227, 94873 }, note = "可反复交，直到崇拜。" }),
+                },
+              },
+              {
+                factionId = 93, name = "玛格拉姆", where = "玛格拉姆村",
+                entry = {
+                  q(1367, "玛格拉姆部族", 33, { faction = "horde", rep = 250, minRep = 3000, showWhenLocked = true }),
+                  q(1385, "野蛮外交", 35, { faction = "alliance", rep = 250, minRep = 3000, showWhenLocked = true }),
+                  q(93226, "收买友谊：玛格拉姆", 45, { faction = "alliance", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
+                  q(94872, "收买友谊：玛格拉姆", 45, { faction = "horde", neutralOnly = true, rep = 3000, otherRep = -15000, items = { it(257685, "图腾手提包", 1) } }),
+                },
+                friendly = {
+                  q(1386, "突袭科卡尔部族", 32, { faction = "alliance", rep = 500 }),
+                  q(1369, "破碎之泪", 33, { rep = 500, items = { it(6083, "破碎之泪", 3) } }),
+                },
+                honored = {
+                  q(92841, "白骨之谷", 40, { rep = 125 }),
+                  q(92844, "白骨之山", 42, { rep = 500, items = { it(254663, "被轻微诅咒的骨头", 426) } }),
+                },
+                repeatable = {
+                  q(92811, "经济战", 60, { repeatable = true, rep = 750, otherRep = -3750, items = { it(254432, "雕刻半人马图腾", 5) }, requires = { 93226, 94872 }, note = "可反复交，直到崇拜。" }),
+                },
+              },
+            },
+          },
+        },
+      }
+    `;
+
+    const centaurCases = [
+      {
+        label: '吉尔吉斯友善：只展开当前部族并过滤已完成',
+        level: 40,
+        raceKey: '人类',
+        faction: 'Alliance',
+        rep92: 3250,
+        rep93: -12500,
+        completedQuests: [1370],
+        present: [
+          '当前倾向',
+          '吉尔吉斯 友善 (3,250)',
+          '玛格拉姆：仇恨 (-12,500) · 已折叠',
+          '收买友谊：吉尔吉斯',
+          '经济战',
+          '可重复',
+          '需先完成「收买友谊：吉尔吉斯」',
+          '尊敬阶段',
+          '还差 5,750',
+          '✓ 已完成 1 步',
+          '雕刻半人马图腾',
+          '赫鲁萨可汗',
+          '另有 1 个专业配方任务需对应专业',
+        ],
+        absent: ['偷取物资', '破碎之泪', '白骨之谷', '白骨之山', '玛格拉姆部族', '奇怪的联盟'],
+      },
+      {
+        label: '双方中立：并列提示二选一并隐藏未达门槛步骤',
+        level: 35,
+        raceKey: '兽人',
+        faction: 'Horde',
+        rep92: 0,
+        rep93: 0,
+        completedQuests: [],
+        activeQuests: [1368],
+        present: [
+          '尚未选边',
+          '吉尔吉斯部族',
+          '玛格拉姆部族',
+          '需友善 3,000 后交付',
+          '收买友谊：吉尔吉斯',
+          '收买友谊：玛格拉姆',
+          '未解锁：需 友善 3,000',
+        ],
+        absent: ['奇怪的联盟', '野蛮外交', '偷取物资', '破碎之泪'],
+      },
+      {
+        label: '玛格拉姆尊敬：展开尊敬链并折叠敌对部族',
+        level: 44,
+        raceKey: '兽人',
+        faction: 'Horde',
+        rep92: -20000,
+        rep93: 9500,
+        completedQuests: [1369, 92841],
+        present: ['当前倾向', '白骨之山', '经济战', '吉尔吉斯：仇恨 (-20,000) · 已折叠', '✓ 已完成 2 步'],
+        absent: ['肆虐的劫掠者', '偷取物资', '吉尔吉斯部族'],
+      },
+    ];
+
+    let centaurFailed = false;
+    for (const tc of centaurCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: tc.level,
+        classKey: 'MAGE',
+        raceKey: tc.raceKey,
+        faction: tc.faction,
+        completedQuests: tc.completedQuests,
+        activeQuests: tc.activeQuests ?? [],
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'CentaurFactionMock.lua', content: buildCentaurMockLua(tc.rep92, tc.rep93) },
+        ...centaurCoreFiles,
+      ]);
+      rt.runSlashCommand('/wowf route');
+      const snap = rt.getSnapshot();
+      const card = summarizeCards(snap).find((c) => c.title.includes('凄凉之地 · 半人马阵营'));
+      const body = card ? `${card.title}\n${card.body}` : '';
+      const missing = tc.present.filter((text) => !body.includes(text));
+      const unexpected = tc.absent.filter((text) => body.includes(text));
+      if (snap.luaErrors.length > 0 || !card || missing.length > 0 || unexpected.length > 0) {
+        centaurFailed = true;
+        console.error(
+          `[Assert Failed] 半人马阵营任务卡（${tc.label}）errors=${snap.luaErrors.length}, card=${Boolean(card)}, missing=${missing.join('|')}, unexpected=${unexpected.join('|')}`
+        );
+      }
+      rt.destroy();
+    }
+    if (centaurFailed) assertionFailed = true;
+    else console.log('[✓] 半人马阵营任务卡回归通过（声望过滤、交物品/可重复、门槛与已完成折叠）。');
   }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
