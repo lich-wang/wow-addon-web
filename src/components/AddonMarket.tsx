@@ -29,6 +29,7 @@ import {
   isUpdateAvailable,
   canCompareVersions,
   findMatchingCuratedAddon,
+  withVersionQuery,
 } from '../services/catalogService';
 import type { AddonInfo, CuratedAddon, GameFlavor } from '../types/addon';
 
@@ -307,7 +308,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                   {installed ? (
                     <div className="flex items-center space-x-1.5">
                       <a
-                        href={addon.downloadUrl}
+                        href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
                         download={`${addon.defaultFolderName}.zip`}
                         title="直接下载插件 ZIP 压缩包"
                         className="inline-flex items-center space-x-1 px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors"
@@ -372,7 +373,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                   ) : hasDirectory ? (
                     <div className="flex items-center space-x-1.5">
                       <a
-                        href={addon.downloadUrl}
+                        href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
                         download={`${addon.defaultFolderName}.zip`}
                         title="直接下载插件 ZIP 压缩包到本地"
                         className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-slate-100 text-xs font-medium transition-colors"
@@ -399,7 +400,7 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                         <span>连目录安装</span>
                       </button>
                       <a
-                        href={addon.downloadUrl}
+                        href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
                         download={`${addon.defaultFolderName}.zip`}
                         title="无需设置目录，直接下载插件 ZIP 压缩包"
                         className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition-all hover:scale-102 cursor-pointer"
