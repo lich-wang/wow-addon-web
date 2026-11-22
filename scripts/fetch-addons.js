@@ -5,7 +5,8 @@ import JSZip from 'jszip';
 import { patchIceHUDZhCN } from './locales/icehud.js';
 import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
-import { patchQuestie, patchQuestieDB, syncCamelotTocs } from './locales/quests.js';
+import { patchQuestie, patchQuestieDB } from './locales/quests.js';
+import { syncFlavorTocs, validateFlavorTocs } from './bundled-tocs.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import {
   buildWoWFAddon,
@@ -17,6 +18,10 @@ const OUTPUT_DIR = path.resolve('public/addons');
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
+
+// Cloudflare Pages 单文件上限 25 MiB，任何一个插件包超限都会让整次部署失败（实测 25.6 MiB 直接被拒），
+// 所以在打包阶段就拦住，避免「CI 绿、部署红」的哑巴亏。
+const PAGES_MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const BASE_HEADERS = {
@@ -779,11 +784,7 @@ async function processQuestieForever() {
     zip.file('QuestieDB/QuestieDB_Forever.toc', await camelotToc.async('nodebuffer'));
   }
   await patchQuestieDB(zip);
-  // 上游不再附带 *_Camelot.toc，这里补齐并覆盖用户端残留的旧版 Camelot 清单
-  const syncedCamelotTocs = await syncCamelotTocs(zip);
-  if (syncedCamelotTocs.length > 0) {
-    console.log(`[Questie] Camelot TOC aligned with Forever TOC: ${syncedCamelotTocs.join(', ')}`);
-  }
+  // Forever / Camelot 清单的对齐与校验统一在 finalizeBundledTocs() 里做，覆盖全部插件包
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
@@ -934,21 +935,73 @@ async function ensureClientBinaries() {
   }
 }
 
+/**
+ * 统一收尾所有即将发布的插件包：补齐 Forever / Camelot flavor 清单并校验清单与文件一致
+ * 任何插件包的清单引用缺失文件、或两份 flavor 清单不一致，都会让构建直接失败，
+ * 避免再把「代码已升级、清单还是旧版」的包发布出去。
+ * @param {string[]} [fileNames] 只处理指定 zip 文件名；省略时处理 OUTPUT_DIR 下全部 zip
+ */
+async function finalizeBundledTocs(fileNames) {
+  const targets = fileNames ?? fs.readdirSync(OUTPUT_DIR).filter(name => name.toLowerCase().endsWith('.zip'));
+  let rewritten = 0;
+
+  for (const name of targets) {
+    const zipPath = path.join(OUTPUT_DIR, name);
+    if (!fs.existsSync(zipPath)) continue;
+
+    const zip = await JSZip.loadAsync(fs.readFileSync(zipPath));
+    const synced = await syncFlavorTocs(zip);
+    const problems = await validateFlavorTocs(zip);
+    if (problems.length > 0) {
+      throw new Error(`[TOC] ${name} 清单校验未通过：\n  - ${problems.join('\n  - ')}`);
+    }
+    if (synced.length === 0) continue;
+
+    const outBuf = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 9 },
+    });
+    fs.writeFileSync(zipPath, outBuf);
+    rewritten++;
+    console.log(`[TOC] ${name}: 补齐 flavor 清单 ${synced.join(', ')}`);
+  }
+
+  for (const name of targets) {
+    const zipPath = path.join(OUTPUT_DIR, name);
+    if (!fs.existsSync(zipPath)) continue;
+    const size = fs.statSync(zipPath).size;
+    if (size > PAGES_MAX_FILE_BYTES) {
+      throw new Error(
+        `[Size] ${name} 为 ${(size / 1024 / 1024).toFixed(2)} MiB，超过 Cloudflare Pages 25 MiB 单文件上限，部署必然失败；` +
+        `请先瘦身（例如去掉重复的 QuestieDB TOC 副本）或改走外部下载源`
+      );
+    }
+  }
+
+  if (rewritten > 0) {
+    console.log(`[TOC] 已重写 ${rewritten} 个插件包，其余包清单自洽`);
+  }
+}
+
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
     const questieSource = await ensureValidQuestieDBCache();
     await processWoWF(questieSource);
+    await finalizeBundledTocs(['wowf.zip']);
     writeBundledVersions();
     return;
   }
   if (onlyArg === 'openmap') {
     await processOpenMap();
+    await finalizeBundledTocs(['openmap.zip']);
     writeBundledVersions();
     return;
   }
   if (onlyArg === 'blackthornes' || onlyArg === 'blackthornes-tradeskills') {
     await processBlackthornes();
+    await finalizeBundledTocs(['blackthornes-tradeskills.zip']);
     writeBundledVersions();
     return;
   }
@@ -966,6 +1019,7 @@ async function main() {
   await processOpenMap();
   await processSpellActivationOverlay();
   await processWoWF(questieDbBuf);
+  await finalizeBundledTocs();
   writeBundledVersions();
   console.log('=== All 11 Addons successfully bundled & localized into public/addons/ ===');
 }

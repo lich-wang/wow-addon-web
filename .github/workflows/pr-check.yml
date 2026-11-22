@@ -144,3 +144,23 @@ jobs:
           path: .cache/wow-ui-sim-report.html
           retention-days: 7
 
+  bundled-tocs:
+    name: 插件包 TOC 清单校验
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      # 保障：Forever / Camelot 清单必须一致，且 TOC 引用的文件必须真的在包里
+      - name: Run bundled TOC tests
+        run: npm run test:tocs
+
