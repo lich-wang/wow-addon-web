@@ -1,3 +1,38 @@
+// 无限服客户端（1.60.1）的 TOC 选择同时认 Camelot 与 Forever 两种 flavor 后缀。
+// 2026-11 起上游 Questie / QuestieDB / QuestieTrace 的发行包先后不再附带 *_Camelot.toc，
+// 而网页端安装器只覆盖写入、不删除旧文件，用户本地于是残留旧版 Camelot TOC，
+// 形成「代码已是新版、TOC 还是旧版」的半更新状态：例如 12.10.0 的 Questie_Camelot.toc
+// 缺 12.12.0 新增的 Modules\Map\ProfessionStations.lua，客户端按 Camelot 加载后
+// QuestieMenu:OnLogin 访问 ProfessionStations.stations 即为 nil，初始化直接报错。
+// 打包时把 Camelot TOC 补成与同期 Forever TOC 完全一致的副本，即可在下次更新时覆盖掉陈旧文件。
+const CAMELOT_TOC_ALIASES = [
+  ['Questie/Questie_Forever.toc', 'Questie/Questie_Camelot.toc'],
+  ['QuestieTrace/QuestieTrace-Forever.toc', 'QuestieTrace/QuestieTrace-Camelot.toc'],
+  ['QuestieDB/QuestieDB_Forever.toc', 'QuestieDB/QuestieDB_Camelot.toc'],
+];
+
+/**
+ * 让 Camelot flavor 的 TOC 与对应 Forever TOC 保持字节级一致，缺失时补建、内容不同时覆盖
+ * @param {import('jszip')} zip - 已完成 Questie / QuestieDB 合并与本地化补丁的压缩包
+ * @returns {Promise<string[]>} 实际写入或更新的 TOC 路径
+ */
+export async function syncCamelotTocs(zip) {
+  const synced = [];
+  for (const [sourcePath, aliasPath] of CAMELOT_TOC_ALIASES) {
+    const source = zip.file(sourcePath);
+    if (!source) continue;
+    const sourceBuf = await source.async('nodebuffer');
+    const alias = zip.file(aliasPath);
+    if (alias) {
+      const aliasBuf = await alias.async('nodebuffer');
+      if (aliasBuf.equals(sourceBuf)) continue;
+    }
+    zip.file(aliasPath, sourceBuf);
+    synced.push(aliasPath);
+  }
+  return synced;
+}
+
 export async function patchQuestie(zip) {
   const tocFiles = [
     'Questie/Questie.toc',

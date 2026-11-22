@@ -5,7 +5,7 @@ import JSZip from 'jszip';
 import { patchIceHUDZhCN } from './locales/icehud.js';
 import { patchLueur } from './locales/lueur.js';
 import { patchBagnon } from './locales/bagnon.js';
-import { patchQuestie, patchQuestieDB } from './locales/quests.js';
+import { patchQuestie, patchQuestieDB, syncCamelotTocs } from './locales/quests.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import {
   buildWoWFAddon,
@@ -779,6 +779,11 @@ async function processQuestieForever() {
     zip.file('QuestieDB/QuestieDB_Forever.toc', await camelotToc.async('nodebuffer'));
   }
   await patchQuestieDB(zip);
+  // 上游不再附带 *_Camelot.toc，这里补齐并覆盖用户端残留的旧版 Camelot 清单
+  const syncedCamelotTocs = await syncCamelotTocs(zip);
+  if (syncedCamelotTocs.length > 0) {
+    console.log(`[Questie] Camelot TOC aligned with Forever TOC: ${syncedCamelotTocs.join(', ')}`);
+  }
 
   const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   fs.writeFileSync(outPath, outBuf);
