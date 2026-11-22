@@ -510,7 +510,7 @@ function Arb.PriceFor(itemID, quantity, options)
 
   local entry = { unit = unit, source = source or (shortfall and "insufficient" or "no-data"), shortfall = shortfall }
   -- NPC 商人价兜底：比行情更低时作为采购成本；按各商人价格档位逐段计价
-  if vendorQuote and (not unit or vendorQuote.unit < unit) then
+  if vendorQuote and vendorQuote.unit and (not unit or vendorQuote.unit < unit) then
     entry = {
       unit = vendorQuote.unit, source = "vendor", shortfall = vendorQuote.shortfall,
       vendor = vendorQuote.vendor,
@@ -1719,12 +1719,15 @@ function Arb.Analyse(options)
   costPrefersVendor = options.preferVendor == true
   local cacheKey = mode .. (crossOwner and ":cross" or ":own") .. (costPrefersVendor and ":vendor" or "")
   local cache = rowCache[cacheKey]
-  local cut
+  local cut, cachedPriced
   if not cache then
-    cache, cut, rowCache.priced = buildRows(mode, crossOwner)
-    rowCache[cacheKey], rowCache.cut = cache, cut
+    cache, cut, cachedPriced = buildRows(mode, crossOwner)
+    rowCache[cacheKey] = { rows = cache, priced = cachedPriced, cut = cut }
+  else
+    cut, cachedPriced = cache.cut, cache.priced
+    cache = cache.rows
   end
-  cut = rowCache.cut or DEFAULT_CUT
+  cut = cut or DEFAULT_CUT
 
   local professionFilter
   if type(options.profession) == "string" and options.profession ~= "" then
@@ -1822,7 +1825,7 @@ function Arb.Analyse(options)
   local total, pricedCount, hiddenCount = 0, 0, 0
   if source ~= "vendor" then
     total = #craftCache
-    pricedCount = rowCache.priced or 0
+    pricedCount = cachedPriced or 0
     hiddenCount = hiddenByKeep
   end
   if vendorMeta then
