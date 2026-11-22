@@ -36,6 +36,7 @@ export class WoWSimulatorRuntime {
       gold: 120,
       completedQuests: [],
       activeQuests: [],
+      knownSpells: [],
       skills: [
         { name: '技能', rank: 1, maxRank: 1 },
         { name: '草药学', rank: 150, maxRank: 225 },
@@ -297,6 +298,7 @@ export class WoWSimulatorRuntime {
       getCharField: (field) => this.charState[field],
       isQuestCompleted: (qid) => this.charState.completedQuests.includes(qid),
       isQuestActive: (qid) => this.charState.activeQuests.includes(qid),
+      isPlayerSpell: (spellId) => this.charState.knownSpells.includes(spellId),
       getNumSkills: () => this.charState.skills.length,
       getSkillInfo: (idx) => this.charState.skills[idx - 1]?.name ?? null,
       addWaypoint: (zone, label, x, y) => { this.mapWaypoints.push({ zone, label, x, y }); },

@@ -694,6 +694,176 @@ async function main() {
     coordRt.destroy();
   }
 
+  // Riding reminder regression: 角色已学会骑术后隐藏「攒钱学骑术」提醒，
+  // 但不得误伤圣骑士的「召唤军马」职业任务。
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const ridingMockLua = `
+      WoWF_Data = {
+        meta = { version = "riding-filter-test" },
+        routes = {
+          human = {
+            name = "人类",
+            faction = "alliance",
+            bands = {
+              { from = 38, to = 42, zone = "尘泥沼泽", hub = { name = "塞拉摩", x = 66.1, y = 51.5 }, quests = {} },
+            },
+            classRunsByClass = {},
+          },
+        },
+        classes = {
+          MAGE = {
+            name = "法师",
+            specs = {
+              {
+                key = "frost", name = "冰霜专精", recommendedProfs = "", phases = {}, steps = {},
+                musts = {
+                  { level = 40, text = "提前攒好100金币学习初级骑术，本种族坐骑会免费赠送。" },
+                  { level = 40, text = "40级记得去训练师学习新技能。" },
+                },
+              },
+            },
+            classRuns = {}, macros = {},
+          },
+          PALADIN = {
+            name = "圣骑士",
+            specs = {
+              {
+                key = "holy", name = "神圣专精", recommendedProfs = "", phases = {}, steps = {},
+                musts = {
+                  { level = 40, text = "不用买坐骑，立刻做职业任务学会召唤军马。" },
+                },
+              },
+            },
+            classRuns = {}, macros = {},
+          },
+        },
+        dungeons = {}, macros = {}, professions = {},
+      }
+    `;
+    const ridingCoreFiles = files.filter((f) => !isDataLuaFile(f));
+    const readRidingCards = (rt, command) => {
+      rt.runSlashCommand(command);
+      const snap = rt.getSnapshot();
+      const cards = summarizeCards(snap);
+      return {
+        snap,
+        text: cards.map((c) => `${c.title}\n${c.body}`).join('\n'),
+      };
+    };
+
+    const ridingCases = [
+      { label: '未学骑术', options: {}, expectRiding: true },
+      { label: '已学骑术（法术 ID）', options: { knownSpells: [33388] }, expectRiding: false },
+      {
+        label: '已学骑术（技能行）',
+        options: { skills: [{ name: '骑术', rank: 75, maxRank: 75 }] },
+        expectRiding: false,
+      },
+    ];
+    let ridingFail = false;
+    for (const c of ridingCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: 40,
+        classKey: 'MAGE',
+        raceKey: '人类',
+        faction: 'Alliance',
+        ...c.options,
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+        ...ridingCoreFiles,
+      ]);
+      const smart = readRidingCards(rt, '/wowf');
+      const route = readRidingCards(rt, '/wowf route');
+      const smartHasRiding = smart.text.includes('骑术');
+      const routeHasRiding = route.text.includes('骑术');
+      const keepsOtherMust = smart.text.includes('训练师学习新技能') && route.text.includes('训练师学习新技能');
+      const errors = smart.snap.luaErrors.length + route.snap.luaErrors.length;
+      if (
+        errors > 0 ||
+        smartHasRiding !== c.expectRiding ||
+        routeHasRiding !== c.expectRiding ||
+        !keepsOtherMust
+      ) {
+        ridingFail = true;
+        console.error(
+          `[Assert Failed] 骑术提醒过滤回归 (${c.label}) failed (errors=${errors}, smartRiding=${smartHasRiding}, routeRiding=${routeHasRiding}, keepsOther=${keepsOtherMust})`
+        );
+      }
+      rt.destroy();
+    }
+
+    // 圣骑士的「召唤军马」是职业任务，不属于骑术提醒，即使已学骑术也必须保留
+    const paladinRt = new WoWSimulatorRuntime({
+      level: 40,
+      classKey: 'PALADIN',
+      raceKey: '人类',
+      faction: 'Alliance',
+      knownSpells: [33388],
+    });
+    paladinRt.loadAddon(addonName, [
+      { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+      ...ridingCoreFiles,
+    ]);
+    const paladin = readRidingCards(paladinRt, '/wowf');
+    if (paladin.snap.luaErrors.length > 0 || !paladin.text.includes('召唤军马')) {
+      ridingFail = true;
+      console.error(
+        `[Assert Failed] 骑术提醒过滤误伤圣骑士职业任务 (errors=${paladin.snap.luaErrors.length}, hasCharger=${paladin.text.includes('召唤军马')})`
+      );
+    }
+    paladinRt.destroy();
+
+    // 自动刷新回归：窗口已打开时学会骑术，事件驱动重绘后提醒应消失
+    const autoRefreshCases = [
+      { command: '/wowf', event: 'SPELLS_CHANGED' },
+      { command: '/wowf', event: 'LEARNED_SPELL_IN_TAB' },
+      { command: '/wowf route', event: 'SPELLS_CHANGED' },
+      { command: '/wowf route', event: 'LEARNED_SPELL_IN_TAB' },
+    ];
+    const waitForRefresh = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (const c of autoRefreshCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: 40,
+        classKey: 'MAGE',
+        raceKey: '人类',
+        faction: 'Alliance',
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+        ...ridingCoreFiles,
+      ]);
+      const before = readRidingCards(rt, c.command);
+      if (!before.text.includes('骑术')) {
+        ridingFail = true;
+        console.error(`[Assert Failed] 骑术自动刷新回归 (${c.command}/${c.event}) 初始未显示骑术提醒`);
+        rt.destroy();
+        continue;
+      }
+      rt.charState.knownSpells.push(33388);
+      rt.callLuaGlobal('__WOW_DISPATCH_EVENT__', c.event);
+      await waitForRefresh(600);
+      const afterSnap = rt.getSnapshot();
+      const afterText = summarizeCards(afterSnap)
+        .map((card) => `${card.title}\n${card.body}`)
+        .join('\n');
+      if (
+        afterSnap.luaErrors.length > 0 ||
+        afterText.includes('骑术') ||
+        !afterText.includes('训练师学习新技能')
+      ) {
+        ridingFail = true;
+        console.error(
+          `[Assert Failed] 骑术自动刷新回归 (${c.command}/${c.event}) failed (errors=${afterSnap.luaErrors.length}, riding=${afterText.includes('骑术')}, keepsOther=${afterText.includes('训练师学习新技能')})`
+        );
+      }
+      rt.destroy();
+    }
+
+    if (ridingFail) assertionFailed = true;
+    else console.log('[✓] 骑术提醒过滤回归通过（已学骑术隐藏提醒、事件刷新生效，未误伤职业军马任务）。');
+  }
+
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
     process.exit(1);
   }

@@ -597,6 +597,8 @@ function GetItemInfo(item)
 end
 function GetItemIcon() return 134400 end
 function GetSpellInfo(spell) return "技能 #" .. tostring(spell or ""), "", 134400 end
+function IsPlayerSpell(spellID) return __WOW_BRIDGE__:isPlayerSpell(tonumber(spellID) or 0) end
+function IsSpellKnown(spellID) return IsPlayerSpell(spellID) end
 function GetNumSkillLines() return __WOW_BRIDGE__:getNumSkills() end
 function GetSkillLineInfo(idx) return __WOW_BRIDGE__:getSkillInfo(idx) end
 function GetNumTradeSkills() return 0 end
