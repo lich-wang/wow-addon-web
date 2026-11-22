@@ -1,38 +1,3 @@
-// 无限服客户端（1.60.1）的 TOC 选择同时认 Camelot 与 Forever 两种 flavor 后缀。
-// 2026-11 起上游 Questie / QuestieDB / QuestieTrace 的发行包先后不再附带 *_Camelot.toc，
-// 而网页端安装器只覆盖写入、不删除旧文件，用户本地于是残留旧版 Camelot TOC，
-// 形成「代码已是新版、TOC 还是旧版」的半更新状态：例如 12.10.0 的 Questie_Camelot.toc
-// 缺 12.12.0 新增的 Modules\Map\ProfessionStations.lua，客户端按 Camelot 加载后
-// QuestieMenu:OnLogin 访问 ProfessionStations.stations 即为 nil，初始化直接报错。
-// 打包时把 Camelot TOC 补成与同期 Forever TOC 完全一致的副本，即可在下次更新时覆盖掉陈旧文件。
-const CAMELOT_TOC_ALIASES = [
-  ['Questie/Questie_Forever.toc', 'Questie/Questie_Camelot.toc'],
-  ['QuestieTrace/QuestieTrace-Forever.toc', 'QuestieTrace/QuestieTrace-Camelot.toc'],
-  ['QuestieDB/QuestieDB_Forever.toc', 'QuestieDB/QuestieDB_Camelot.toc'],
-];
-
-/**
- * 让 Camelot flavor 的 TOC 与对应 Forever TOC 保持字节级一致，缺失时补建、内容不同时覆盖
- * @param {import('jszip')} zip - 已完成 Questie / QuestieDB 合并与本地化补丁的压缩包
- * @returns {Promise<string[]>} 实际写入或更新的 TOC 路径
- */
-export async function syncCamelotTocs(zip) {
-  const synced = [];
-  for (const [sourcePath, aliasPath] of CAMELOT_TOC_ALIASES) {
-    const source = zip.file(sourcePath);
-    if (!source) continue;
-    const sourceBuf = await source.async('nodebuffer');
-    const alias = zip.file(aliasPath);
-    if (alias) {
-      const aliasBuf = await alias.async('nodebuffer');
-      if (aliasBuf.equals(sourceBuf)) continue;
-    }
-    zip.file(aliasPath, sourceBuf);
-    synced.push(aliasPath);
-  }
-  return synced;
-}
-
 export async function patchQuestie(zip) {
   const tocFiles = [
     'Questie/Questie.toc',
@@ -90,13 +55,13 @@ export async function patchQuestieDB(zip) {
       zip.file(tocPath, toc);
     }
   }
-  // Also create QuestieDB/QuestieDB.toc metadata copy so scanners immediately find exact match
+  // 不再额外生成 QuestieDB/QuestieDB.toc 副本：这份 TOC 内嵌了 18 MB 的 Base64+CBOR 元数据，
+  // 每多一份副本就要多压 ~8 MB，三份会把 zip 顶到 Cloudflare Pages 的 25 MiB 单文件上限
+  // （实测 25.6 MiB 直接部署失败）。客户端按 flavor 选 Forever / Camelot，仓库内也没有读取
+  // QuestieDB.toc 的代码，保留 Forever + Camelot 两份即可。
   const foreverToc = zip.file('QuestieDB/QuestieDB_Forever.toc');
   if (foreverToc) {
     const content = await foreverToc.async('string');
-    if (!zip.file('QuestieDB/QuestieDB.toc')) {
-      zip.file('QuestieDB/QuestieDB.toc', content);
-    }
     // 将 QuestieDB 版本同步写入 Questie/Questie.toc 的 ## Version，确保本地扫描与版本清单一致
     const dbMatch = content.match(/^##\s*Version:\s*(.+?)\s*$/m);
     if (dbMatch) {

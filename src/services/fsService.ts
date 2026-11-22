@@ -383,13 +383,40 @@ export async function scanAddOns(dirHandle: FileSystemDirectoryHandle): Promise<
 }
 
 /**
+ * 收集插件目录中不在本次安装包里的 *.toc 清单
+ * 无限服客户端会优先加载 Camelot flavor 清单，本地残留的旧清单会压过新下载的代码
+ * （Questie 12.10.0 的清单缺 ProfessionStations.lua，配 12.12.0 模块就会初始化报错），
+ * 所以安装时要把包里已经不存在的 TOC 一并清掉。
+ */
+async function collectStaleTocFiles(
+  dirHandle: any,
+  prefix: string,
+  keepPaths: Set<string>,
+  found: Array<{ dir: any; name: string; path: string }>
+): Promise<void> {
+  const iter = dirHandle.entries ? dirHandle.entries() : dirHandle;
+  const children: Array<[string, any]> = [];
+  for await (const [name, handle] of iter) {
+    children.push([name, handle]);
+  }
+  for (const [name, handle] of children) {
+    const childPath = `${prefix}/${name}`;
+    if (handle.kind === 'directory') {
+      await collectStaleTocFiles(handle, childPath, keepPaths, found);
+    } else if (/\.toc$/i.test(name) && !keepPaths.has(childPath.toLowerCase())) {
+      found.push({ dir: dirHandle, name, path: childPath });
+    }
+  }
+}
+
+/**
  * Recursively write files from a JSZip archive into the target directory handle
  */
 export async function installAddonFromZip(
   targetDirHandle: FileSystemDirectoryHandle,
   zipBlob: Blob | ArrayBuffer,
   onProgress?: (progress: InstallProgress) => void
-): Promise<{ installedFolders: string[] }> {
+): Promise<{ installedFolders: string[]; removedTocCount: number }> {
   onProgress?.({
     status: 'extracting',
     addonName: '插件压缩包',
@@ -449,14 +476,32 @@ export async function installAddonFromZip(
     }
   }
 
+  // 清理包里已不存在的 *.toc：旧清单会被客户端优先加载，造成「新代码 + 旧清单」错配
+  const keepPaths = new Set(fileEntries.map((path) => path.toLowerCase()));
+  const staleTocs: Array<{ dir: any; name: string; path: string }> = [];
+  for (const folder of topLevelFolders) {
+    const folderHandle = await targetDirHandle.getDirectoryHandle(folder).catch(() => null);
+    if (folderHandle) {
+      await collectStaleTocFiles(folderHandle, folder, keepPaths, staleTocs);
+    }
+  }
+  for (const stale of staleTocs) {
+    try {
+      await stale.dir.removeEntry(stale.name);
+    } catch {
+      // 删除失败（权限 / 文件被占用）不阻断安装，下次更新再清理
+    }
+  }
+
+  const staleNote = staleTocs.length > 0 ? `，清理 ${staleTocs.length} 个过期清单` : '';
   onProgress?.({
     status: 'completed',
     addonName: Array.from(topLevelFolders).join(', '),
     percent: 100,
-    message: `安装成功！已写入 ${topLevelFolders.size} 个插件目录`,
+    message: `安装成功！已写入 ${topLevelFolders.size} 个插件目录${staleNote}`,
   });
 
-  return { installedFolders: Array.from(topLevelFolders) };
+  return { installedFolders: Array.from(topLevelFolders), removedTocCount: staleTocs.length };
 }
 
 /**
