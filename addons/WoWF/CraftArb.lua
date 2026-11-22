@@ -527,34 +527,39 @@ end
 ---@param itemID number
 ---@return number|nil price
 ---@return table|nil record
+---@return string|nil priceSource "min" | "rivalMin" | "market" | "api" | nil
 function Arb.SellQuote(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
   local cached = sellCache[id]
-  if cached then return cached.price, cached.record end
+  if cached then return cached.price, cached.record, cached.priceSource end
   local api = Arb.Market()
   if api and type(api.GetRecord) == "function" then
     local ok, record = pcall(api.GetRecord, id)
     if not ok or type(record) ~= "table" then return nil end
-    local price = tonumber(record.min) or tonumber(record.rivalMin) or tonumber(record.market)
-    sellCache[id] = { price = price, record = record }
-    return price, record
+    local price, priceSource = tonumber(record.min), "min"
+    if not price then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
+    if not price then price, priceSource = tonumber(record.market), "market" end
+    sellCache[id] = { price = price, record = record, priceSource = priceSource }
+    return price, record, priceSource
   end
   local btPrices = blackthornesPriceTable()
   local record = btPrices and btPrices[id]
   if type(record) == "table" then
-    local price = tonumber(record.min) or tonumber(record.rivalMin) or tonumber(record.market)
+    local price, priceSource = tonumber(record.min), "min"
+    if not price then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
+    if not price then price, priceSource = tonumber(record.market), "market" end
     if price and price > 0 then
-      sellCache[id] = { price = price, record = record }
-      return price, record
+      sellCache[id] = { price = price, record = record, priceSource = priceSource }
+      return price, record, priceSource
     end
   end
   local btApi = blackthornesApi()
   if btApi then
     local ok, price = pcall(btApi.GetPrice, id)
     if ok and type(price) == "number" and price > 0 then
-      sellCache[id] = { price = price, record = nil }
-      return price, nil
+      sellCache[id] = { price = price, record = nil, priceSource = "api" }
+      return price, nil, "api"
     end
   end
   return nil
@@ -595,8 +600,9 @@ function Arb.ListedSupply(itemID)
     local btApi = blackthornesApi()
     if btApi and type(btApi.GetDepth) == "function" then
       local ok, depth = pcall(btApi.GetDepth, id)
-      if ok and type(depth) == "table" and tonumber(depth.totalQuantity) then
-        return tonumber(depth.totalQuantity), "depth"
+      if ok and type(depth) == "table" and depth.complete == true then
+        local qty = tonumber(depth.totalQuantity)
+        if qty and qty >= 0 then return qty, "depth" end
       end
     end
   end
@@ -1165,7 +1171,7 @@ function Arb.VendorArbitrage(options)
   if vendorRowsCache.stamp ~= stamp then
     local rows = {}
     for _, offer in ipairs(Arb.VendorOffers()) do
-      local price, record = Arb.SellQuote(offer.itemID)
+      local price, record, priceSource = Arb.SellQuote(offer.itemID)
       -- 单件买入价即最低档价（批量时按档位逐段计价，见 VendorBuyFor）
       local buyForOne = Arb.VendorBuyFor(offer.itemID, 1)
       local buyPrice = (buyForOne and buyForOne.unit) or offer.price
@@ -1176,7 +1182,7 @@ function Arb.VendorArbitrage(options)
         vendorStock = offer.stock, vendorStack = offer.stack, vendorInfinite = offer.infinite == true,
         vendorSources = offer.sources, vendorTotalStock = offer.totalStock,
         vendorAt = offer.at,
-        price = price, record = record,
+        price = price, record = record, priceSource = priceSource,
       }
       if price and price > 0 then
         row.revenue = price
@@ -1710,8 +1716,8 @@ local function buildRows(mode, crossOwner)
     row.listedSupply = Arb.ListedSupply(recipe.output)
     if row.craftable then
       priced = priced + 1
-      local price, record = Arb.SellQuote(recipe.output)
-      row.price, row.record = price, record
+      local price, record, priceSource = Arb.SellQuote(recipe.output)
+      row.price, row.record, row.priceSource = price, record, priceSource
       row.sellRevenue = price and price * row.yield or nil
       if mode == "de" then
         local de = Arb.Disenchant(recipe.output)

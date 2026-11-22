@@ -5174,6 +5174,14 @@ local function SupplyText(supply)
   return string.format("|cff44ff88%d 件|r", supply)
 end
 
+---售价口径说明：优先 min，回退 rivalMin / market 时如实标注
+local function PriceSourceText(source)
+  if source == "min" or source == nil then return "观测到的最低价 min" end
+  if source == "rivalMin" then return "对手最低价 rivalMin（min 缺失）" end
+  if source == "market" then return "行情估计 market（min/rivalMin 缺失）" end
+  return "行情接口报价"
+end
+
 local function AttachTooltip(widget, title, bodyOrFn)
   widget:SetScript("OnEnter", function(self)
     if not GameTooltip then return end
@@ -5409,7 +5417,7 @@ local function RenderTabCraftArb()
     sortKey == "roi" and "ROI" or "单次净利润",
     state.craftPreferVendor == true and "|cff00ffcc含商人价|r" or "|cffaaaaaa仅拍卖行|r",
     state.craftMinSupply == true and "|cff00ffcc在售≥100|r" or "|cffaaaaaa不限|r",
-    "|cff99e6ff最低价(min)|r"))
+    "|cff99e6ff优先最低价(min)|r"))
 
   list:Add({
     title = "|cff00ffcc[制造套利] 用拍卖行行情筛选「当前可制作且能盈利」的配方|r",
@@ -5579,8 +5587,8 @@ local function RenderTabCraftArb()
     if row.kind == "vendor" then
       local vendorLines = {}
       table.insert(vendorLines, string.format(
-        "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（最低售价 min）  ·  |cff99e6ff在售:|r %s",
-        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0), SupplyText(row.listedSupply)))
+        "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（%s）  ·  |cff99e6ff在售:|r %s",
+        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0), PriceSourceText(row.priceSource), SupplyText(row.listedSupply)))
       local availableStock, hasAnyInfinite, hasAnyStock = nil, false, false
       for _, source in ipairs(row.vendorSources or {}) do
         local s = tonumber(source.stock) or -1
@@ -5716,9 +5724,10 @@ local function RenderTabCraftArb()
         row.disenchant.incomplete and " |cffff8800部分材料无报价，期望值仅为下界|r" or ""
       ))
     end
+    table.insert(bodyLines, string.format("|cff99e6ff在售:|r %s", SupplyText(row.listedSupply)))
     if row.price then
-      table.insert(bodyLines, string.format("|cff99e6ff拍卖行售价:|r %s|r / 件（观测到的最低价 min）  ·  |cff99e6ff在售:|r %s",
-        FormatMoney(row.price), SupplyText(row.listedSupply)))
+      table.insert(bodyLines, string.format("|cff99e6ff拍卖行售价:|r %s|r / 件（%s）",
+        FormatMoney(row.price), PriceSourceText(row.priceSource)))
     end
     if row.disenchantEV then
       local verdict
