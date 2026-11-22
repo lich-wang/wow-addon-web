@@ -7,6 +7,9 @@ early_access: false
 reviews:
   profile: "chill"
   request_changes_workflow: true
+  # 生成的数据快照（由 scripts/generate-reputation-data.mjs 产出）不参与代码评审
+  path_filters:
+    - "!scripts/locales/wowf-reputation-data.json"
   high_level_summary: true
   poem: false
   collapse_walkthrough: false
