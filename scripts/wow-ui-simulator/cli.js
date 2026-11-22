@@ -871,6 +871,14 @@ async function main() {
         options: { knownSpells: [33388, 23214] },
         expectMount: false,
       },
+      {
+        label: '圣骑士仅完成战马任务',
+        classKey: 'PALADIN',
+        marker: '审判和救赎',
+        level: 60,
+        options: { knownSpells: [33388], completedQuests: [7647] },
+        expectMount: false,
+      },
     ];
     for (const c of classMountCases) {
       const rt = new WoWSimulatorRuntime({
