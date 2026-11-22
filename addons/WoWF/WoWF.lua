@@ -6170,7 +6170,7 @@ local function RenderTabReputations()
           if sideOk then
             if IsQuestCompletedById(q.id) and not q.repeatable then
               completedCount = completedCount + 1
-            elseif (tonumber(q.minLevel) or 1) > lvl + 2 then
+            elseif (tonumber(q.minLevel) or 1) > lvl then
               higherCount = higherCount + 1
             elseif not QuestRepOk(q.id) then
               repLockedCount = repLockedCount + 1
@@ -6242,7 +6242,7 @@ local function RenderTabReputations()
 
           if groupIdx == #groups then
             if higherCount > 0 then
-              table.insert(lines, string.format("|cff8899aa另有 %d 条任务需更高等级（Lv.%d+）|r", higherCount, lvl + 3))
+              table.insert(lines, string.format("|cff8899aa另有 %d 条任务需更高等级（Lv.%d+）|r", higherCount, lvl + 1))
             end
             if repLockedCount > 0 then
               table.insert(lines, string.format("|cff8899aa另有 %d 条任务需更高声望|r", repLockedCount))
