@@ -4,28 +4,28 @@
     "source": "https://edge.forgecdn.net/files/9688/481/Bagnon-12.1.12.zip"
   },
   "blackthornes-tradeskills": {
-    "version": "v1.39.0",
-    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.39.0/Blackthornes_TS-v1.39.0-forever.zip"
+    "version": "v1.40.0",
+    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.40.0/Blackthornes_TS-v1.40.0-forever.zip"
   },
   "dungeonsforever": {
-    "version": "v2.1.122",
-    "source": "https://edge.forgecdn.net/files/9742/882/DungeonsForever2.1.122.zip"
+    "version": "v2.1.126",
+    "source": "https://edge.forgecdn.net/files/9767/221/DungeonsForever2.1.126.zip"
   },
   "forever-mouse-tooltip": {
     "version": "v0.2.0",
     "source": "https://github.com/Ninjaskurk/forever-mouse-tooltip/releases/download/v0.2.0/ForeverMouseTooltip-0.2.0.zip"
   },
   "icehud": {
-    "version": "v1.17.32",
-    "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.32/IceHUD-v1.17.32.zip"
+    "version": "v1.17.33",
+    "source": "https://github.com/parnic/ice-hud/releases/download/v1.17.33/IceHUD-v1.17.33.zip"
   },
   "lueur": {
     "version": "v2.0.0",
     "source": "https://edge.forgecdn.net/files/9661/950/Lueur-2.0.0.zip"
   },
   "openmap": {
-    "version": "v0.8.12",
-    "source": "https://github.com/openmap-world/openmap/releases/download/v0.8.12/OpenMap-v0.8.12-forever.zip"
+    "version": "v0.8.13",
+    "source": "https://github.com/openmap-world/openmap/releases/download/v0.8.13/OpenMap-v0.8.13-forever.zip"
   },
   "questie-forever": {
     "version": "v12.12.0 + DB v1.1.4",
@@ -40,7 +40,7 @@
     "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v3.0.0/SpellActivationOverlay-3.0.0-universal.zip"
   },
   "wowf": {
-    "version": "v1.2.64 + DB v2026.11.20",
+    "version": "v1.2.58 + DB v2026.11.20",
     "source": "local-snapshot (DB v2026.11.20)"
   }
 }
