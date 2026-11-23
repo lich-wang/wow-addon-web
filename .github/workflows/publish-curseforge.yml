@@ -80,7 +80,7 @@ jobs:
             if [ -n "$WOWF_LOG" ]; then echo "$WOWF_LOG"; else echo "- WoWF 数据同步与细节修复"; fi
             echo
             echo
-            echo "数据同步自 https://wowf.io/zh 。"
+            echo "百科数据来自随仓库提交的离线快照（scripts/locales/wowf-dataset.json）。"
           } > changelog.md
           cat changelog.md
 

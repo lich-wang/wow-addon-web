@@ -4,6 +4,7 @@ import { Navbar } from './components/Navbar';
 import { DirectoryBanner } from './components/DirectoryBanner';
 import { AddonList } from './components/AddonList';
 import { AddonMarket } from './components/AddonMarket';
+import { WikiExplorer } from './components/WikiExplorer';
 import { AddonDetailModal } from './components/AddonDetailModal';
 import { ZipInstallModal } from './components/ZipInstallModal';
 import { ShareModal } from './components/ShareModal';
@@ -76,9 +77,12 @@ export function App() {
       return '';
     }
   });
-  const [activeTab, setActiveTab] = useState<'installed' | 'market' | 'voice'>(() => {
+  const [activeTab, setActiveTab] = useState<'installed' | 'market' | 'voice' | 'wiki'>(() => {
     try {
-      return new URLSearchParams(window.location.search).get('voiceRoom') ? 'voice' : 'market';
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('voiceRoom')) return 'voice';
+      if (params.get('tab') === 'wiki' || window.location.pathname === '/wiki') return 'wiki';
+      return 'market';
     } catch {
       return 'market';
     }
@@ -633,7 +637,7 @@ export function App() {
         )}
 
         {/* Directory Banner when not authorized (hidden on voice tab) */}
-        {activeTab !== 'voice' && !directoryState.isAuthorized && !needsResumeAuth && (
+        {activeTab !== 'voice' && activeTab !== 'wiki' && !directoryState.isAuthorized && !needsResumeAuth && (
           <DirectoryBanner
             onPickDirectory={handlePickDirectory}
             isPicking={isPicking}
@@ -647,7 +651,9 @@ export function App() {
         )}
 
         {/* Voice Chat tab rendered independently of directory scanning isLoading */}
-        {activeTab === 'voice' ? (
+        {activeTab === 'wiki' ? (
+          <WikiExplorer />
+        ) : activeTab === 'voice' ? (
           <VoiceChat
             voiceState={voiceState}
             initialRoomId={initialVoiceRoomId}

@@ -892,7 +892,7 @@ async function processSpellActivationOverlay() {
 }
 
 // ---------------------------------------------------------------------------
-// 11. 巫妖王的无限百科 (wowf.io In-Game Dynamic Guide for WoW Forever)
+// 11. 巫妖王的无限百科 (Offline In-Game Guide for WoW Forever)
 // ---------------------------------------------------------------------------
 async function processWoWF(questieDbBuf = null) {
   const { zip, source } = await buildWoWFAddon(OUTPUT_DIR, UPSTREAM_CACHE_DIR, getHeadersForUrl, questieDbBuf);

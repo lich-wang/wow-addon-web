@@ -203,7 +203,7 @@ function defaultChangelog() {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
-    return [`### ${tag}`, '', log || '- WoWF 数据同步与细节修复', '', '数据来源：https://wowf.io/zh'].join('\n');
+    return [`### ${tag}`, '', log || '- WoWF 数据更新与细节修复', '', '百科数据：仓库内置离线快照（scripts/locales/wowf-dataset.json）'].join('\n');
   } catch {
     return 'WoWF 数据同步与细节修复。';
   }

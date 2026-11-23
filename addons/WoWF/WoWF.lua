@@ -1,5 +1,5 @@
 -- ============================================================================
--- 巫妖王的无限百科 (wowf.io 无限服游戏内动态智能指南)
+-- 巫妖王的无限百科 (无限服游戏内离线智能指南)
 -- 专为《魔兽世界：无限服》(Interface: 16001) 打造
 -- 支持根据当前角色等级、职业、专精、种族与阵营自动匹配升级路线、输出循环、天赋、宏与副本
 -- ============================================================================
@@ -4363,7 +4363,7 @@ local function RenderTabSmartMatch()
     title = string.format("|cff00ffcc>> Lv.%d %s·%s·%s 智能匹配仪表盘|r", lvl, route and route.name or "", cls and cls.name or "", spec and spec.name or ""),
     body = table.concat(overviewLines, "\n"),
     theme = "header",
-    badge = "|cff00ffccwowf.io 实时引擎|r",
+    badge = "|cff00ffcc内置数据快照|r",
   })
 
   -- 2. 当前等级推荐区域与营地导航摘要（完整阶段与区域任务链见「升级路线」页）
@@ -5478,7 +5478,7 @@ local function RenderTabMacros()
 
   list:Add({
     title = string.format("|cff00ffcc[宏库] %s 实用一键宏命令库 (共 %d 个)|r", cls and cls.name or "", #macros),
-    body = "同步自 |cffffd100wowf.io/zh/macros|r。点击每个宏卡片右上角的 |cff00ff00[一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击将弹出 Ctrl+C 复制窗口。",
+    body = "内置精选职业宏库。点击每个宏卡片右上角的 |cff00ff00[一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击将弹出 Ctrl+C 复制窗口。",
     theme = "header",
     badge = "支持一键生成",
   })
@@ -6938,7 +6938,7 @@ local function RenderTabForeverAndNews()
     end
   end
 
-  -- 2. 12 大专业 1-300 冲级与无限服特色指南 (同步自 wowf.io/zh/professions)
+  -- 2. 12 大专业 1-300 冲级与无限服特色指南 (内置数据)
   if Data.professions and #Data.professions > 0 then
     for _, prof in ipairs(Data.professions) do
       local isRec = (recProfs ~= "" and string.find(recProfs, prof.name or "", 1, true) ~= nil)
@@ -6974,7 +6974,7 @@ local function RenderTabForeverAndNews()
     end
   end
 
-  -- 3. wowf.io 最新热修公告
+  -- 3. 最新热修公告 (内置快照)
   local newsLines = {}
   for _, n in ipairs(Data.news or {}) do
     table.insert(newsLines, string.format("- |cffffd100[%s] %s|r\n  %s", n.date or "", n.title or "", LinkifyInlineCoords(n.summary or "", "", n.title or "公告")))
@@ -6982,10 +6982,10 @@ local function RenderTabForeverAndNews()
   if #newsLines > 0 then
     local meta = Data.meta or {}
     list:Add({
-      title = string.format("|cffffa500[公告] wowf.io 无限服最新热修与官方公告 (数据版本: %s)|r", meta.updatedAt or "最新"),
+      title = string.format("|cffffa500[公告] 无限服最新热修与官方公告 (数据版本: %s)|r", meta.updatedAt or "最新"),
       body = table.concat(newsLines, "\n\n"),
       theme = "news",
-      badge = meta.deployId and string.sub(meta.deployId, 1, 15) or "wowf.io",
+      badge = meta.dbVersion and (string.format("DB v%s", meta.dbVersion)) or "内置快照",
     })
   end
 
@@ -7186,7 +7186,7 @@ local function CreateMainWindow()
   -- 标题栏
   local titleText = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   titleText:SetPoint("TOPLEFT", 16, -14)
-  titleText:SetText("|cff00ffcc巫妖王的无限百科|r  |cffffd100魔兽世界：无限服 (wowf.io) 游戏内智能动态百科|r")
+  titleText:SetText("|cff00ffcc巫妖王的无限百科|r  |cffffd100魔兽世界：无限服 游戏内智能百科|r")
 
   local closeBtn = CreateFrame("Button", nil, mainFrame, "UIPanelCloseButton")
   closeBtn:SetPoint("TOPRIGHT", -4, -4)
@@ -7514,7 +7514,7 @@ local function CreateMinimapButton()
     local step = GetMatchedTalentStep(spec, state.level)
 
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:AddLine("|cff00ffcc巫妖王的无限百科|r |cffffd100(wowf.io 无限服百科)|r")
+    GameTooltip:AddLine("|cff00ffcc巫妖王的无限百科|r |cffffd100(无限服百科)|r")
     local zoneList = {}
     local seenZones = {}
     if band and band.zone and band.zone ~= "" then
@@ -7599,7 +7599,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
       local cls = GetCurrentClassData()
       local spec = GetCurrentSpecData()
       DEFAULT_CHAT_FRAME:AddMessage(string.format(
-        "|cff00ffcc[巫妖王的无限百科]|r 已加载 |cffffd100wowf.io|r 动态数据库并自动匹配当前角色: |cffffd100Lv.%d %s·%s (%s)|r！输入 |cffffd100/wowf|r 或点击小地图图标查看。",
+        "|cff00ffcc[巫妖王的无限百科]|r 已加载 |cffffd100内置百科数据库|r并自动匹配当前角色: |cffffd100Lv.%d %s·%s (%s)|r！输入 |cffffd100/wowf|r 或点击小地图图标查看。",
         state.level,
         route and route.name or "",
         cls and cls.name or "",

@@ -4,9 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 
-const DEFAULT_DEPLOY_ID = 'deploy-fd0c249c-1794727615234';
 const WOWF_LOCALES_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WOWF_ADDON_DIR = path.resolve(WOWF_LOCALES_DIR, '../../addons/WoWF');
+
+// 升级路线 / 专精循环 / 天赋 / 副本元数据的固化快照。
+// 打包只读这份随仓库提交的本地文件，构建期不再请求任何外部站点；
+// 需要刷新时由维护者手动执行 scripts/wowf-refresh-snapshot.mjs 生成新快照并提交。
+const WOWF_SNAPSHOT_FILE = path.join(WOWF_LOCALES_DIR, 'wowf-dataset.json');
 
 // 16 个新增第三方声望的任务快照（由 scripts/generate-reputation-data.mjs 生成）
 const REPUTATION_DATA = JSON.parse(
@@ -633,7 +637,7 @@ const DUNGEON_ENTRANCE_COORDS = {
 // - honored    需尊敬 9,000：白骨之谷（辛德拉）新任务链
 // - repeatable 可重复：交 5 个雕刻半人马图腾 → +750 声望（需先完成收买友谊）
 //
-// 数据来源：wowf.io 任务链页、Wowhead Forever 声望指南与国服 1.60 任务数据。
+// 数据来源：Wowhead Forever 声望指南与国服 1.60 任务数据。
 // ---------------------------------------------------------------------------
 const centaurQuest = (id, name, level, extra = {}) => ({ id, name, level, ...extra });
 const centaurItem = (id, name, count) => ({ id, name, count });
@@ -1016,25 +1020,25 @@ const FALLBACK_NEWS = [
     date: '2026-11-15',
     title: '根据玩家等级的地下城经验值调整（11月15日 UTC+8）',
     summary: '热修复放宽了队伍中有高等级玩家时地下城敌人经验值被清零的限制。现在只有当该玩家比敌人高出超过 12 级时经验值才会被清零。',
-    href: 'https://wowf.io/zh/news/dungeon-xp-trivial-adjustment-nov-14',
+    href: '',
   },
   {
     date: '2026-11-14',
     title: '魔兽世界：无限 热修复汇总（11月14日 UTC+8）',
     summary: '修复多处无限服新地下城（领主大厅、挖掘场、克罗多克要塞）任务物品掉落率与首领技能数值问题，优化营地帐篷休息经验结算。',
-    href: 'https://wowf.io/zh/news',
+    href: '',
   },
   {
     date: '2026-11-12',
     title: '暴雪回应“60级任务金币”：热修复为 48 级及以上的任务增加金币奖励',
     summary: '48 级及以上高等级区域任务与满级经验转化金币奖励大幅上调，缓解满级千金马与技能学习金币压力。',
-    href: 'https://wowf.io/zh/news',
+    href: '',
   },
   {
     date: '2026-11-11',
     title: '魔兽世界：无限 职业专精与天赋平衡性调整公告',
     summary: '强化圣骑士十字军打击、战士乘胜追击与穿刺打击、萨满图腾机制与德鲁伊野性战斗在练级与五人本中的表现。',
-    href: 'https://wowf.io/zh/news',
+    href: '',
   },
 ];
 
@@ -1180,7 +1184,7 @@ function extractQuestId(q) {
 }
 
 /**
- * 将 wowf.io API 的富文本片段数组转换为魔兽世界原生颜色转义与超链接字符串
+ * 将富文本片段数组转换为魔兽世界原生颜色转义与超链接字符串
  * @param {Array<string | object> | string | undefined} segments
  * @returns {string}
  */
@@ -1241,67 +1245,7 @@ function formatSkillList(list) {
     .join(' → ');
 }
 
-/**
- * 动态探测 wowf.io 当前线上部署版本号 (deployId)
- * @param {(url: string) => Record<string, string>} getHeaders
- * @returns {Promise<string>}
- */
-async function discoverDeployId(getHeaders) {
-  try {
-    const res = await fetch('https://wowf.io/zh/level-up', {
-      headers: { ...getHeaders('https://wowf.io/zh/level-up'), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.ok) {
-      const html = await res.text();
-      const directMatch = html.match(/deploy-[a-zA-Z0-9]+-\d+/);
-      if (directMatch) {
-        return directMatch[0];
-      }
-      // 扫描引用的 chunk 脚本
-      const scriptUrls = [...html.matchAll(/src="(https:\/\/assets\.wowf\.io\/_next\/static\/chunks\/[^"]+\.js)"/g)]
-        .map(m => m[1])
-        .slice(0, 8);
-      for (const scriptUrl of scriptUrls) {
-        try {
-          const jsRes = await fetch(scriptUrl, {
-            headers: getHeaders(scriptUrl),
-            signal: AbortSignal.timeout(8000),
-          });
-          if (!jsRes.ok) continue;
-          const jsText = await jsRes.text();
-          const m = jsText.match(/deploy-[a-zA-Z0-9]+-\d+/);
-          if (m) return m[0];
-        } catch {
-          // ignore single chunk error
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[WoWF] Failed to auto-discover deployId (${err.message}), using default ${DEFAULT_DEPLOY_ID}`);
-  }
-  return DEFAULT_DEPLOY_ID;
-}
 
-/**
- * 请求 wowf.io /api/level-up 接口
- * @param {string} classSlug
- * @param {string} raceSlug
- * @param {string} faction
- * @param {string} deployId
- * @param {(url: string) => Record<string, string>} getHeaders
- */
-async function fetchLevelUpPayload(classSlug, raceSlug, faction, deployId, getHeaders) {
-  const url = `https://wowf.io/api/level-up?l=zh&c=${encodeURIComponent(classSlug)}&r=${encodeURIComponent(raceSlug)}&f=${encodeURIComponent(faction)}&v=${encodeURIComponent(deployId)}`;
-  const res = await fetch(url, {
-    headers: { ...getHeaders(url), Accept: 'application/json' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} for ${url}`);
-  }
-  return await res.json();
-}
 
 /**
  * 精简并转换阶段内的关键任务/职业起始任务
@@ -2088,206 +2032,12 @@ function mergeDungeonIntoMap(dungeonMap, d, faction) {
   }
 }
 
-/**
- * 提取 Next.js App Router 页面中的 __next_f 序列化文本块
- */
-function extractNextFText(html) {
-  const chunks = [];
-  const re = /self\.__next_f\.push\(\[1,"([\s\S]*?)"\]\)/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    try {
-      chunks.push(JSON.parse('"' + m[1] + '"'));
-    } catch {
-      // 忽略异常转义片段
-    }
-  }
-  return chunks.join('');
-}
 
-/**
- * 从指定下标开始提取括号平衡的 JSON 对象或数组字符串
- */
-function extractBalancedJson(str, startIdx) {
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = startIdx; i < str.length; i++) {
-    const c = str[i];
-    if (inStr) {
-      if (esc) {
-        esc = false;
-        continue;
-      }
-      if (c === '\\') {
-        esc = true;
-        continue;
-      }
-      if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') {
-      inStr = true;
-      continue;
-    }
-    if (c === '{' || c === '[') {
-      depth++;
-    } else if (c === '}' || c === ']') {
-      depth--;
-      if (depth === 0) return str.slice(startIdx, i + 1);
-    }
-  }
-  return null;
-}
 
-/**
- * 通用并发执行器
- */
-async function runWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const idx = cursor++;
-      results[idx] = await worker(items[idx], idx);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
 
-function normalizeWowfFaction(f) {
-  if (f === 'a' || f === 'alliance') return 'alliance';
-  if (f === 'h' || f === 'horde') return 'horde';
-  return 'both';
-}
 
-function parseQuestSideData(sideObj) {
-  if (!sideObj || typeof sideObj !== 'object') return null;
-  const stages = Array.isArray(sideObj.stages) ? sideObj.stages : [];
-  const findStagePlace = key => {
-    const stg = stages.find(s => s?.key === key);
-    if (!stg || !Array.isArray(stg.blocks)) return null;
-    for (const blk of stg.blocks) {
-      if (Array.isArray(blk?.places) && blk.places[0]) {
-        return blk.places[0];
-      }
-    }
-    return null;
-  };
-  const startPlace = findStagePlace('start');
-  const endPlace = findStagePlace('end');
-  const flow = Array.isArray(sideObj.flow)
-    ? sideObj.flow
-        .filter(st => st && st.id && st.name)
-        .map(st => ({
-          id: Number(st.id),
-          name: st.name,
-          level: st.lv || st.rl || 1,
-          minLevel: st.rl || st.lv || 1,
-          faction: normalizeWowfFaction(st.f),
-          self: Boolean(st.self),
-        }))
-    : [];
-  return {
-    npc: startPlace?.name || '',
-    zone: startPlace?.zone || '',
-    x: startPlace?.at?.x ?? null,
-    y: startPlace?.at?.y ?? null,
-    endNpc: endPlace?.name || '',
-    endZone: endPlace?.zone || '',
-    endX: endPlace?.at?.x ?? null,
-    endY: endPlace?.at?.y ?? null,
-    inside: Boolean(startPlace?.instance),
-    objective: sideObj.objective || '',
-    flow,
-  };
-}
 
-async function fetchWithRetry(url, init, retries = 2, timeoutMs = 12000) {
-  let lastErr;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const attemptSignal = init?.signal
-        ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
-        : AbortSignal.timeout(timeoutMs);
-      const res = await fetch(url, { ...init, signal: attemptSignal });
-      if (res.ok || (res.status !== 502 && res.status !== 503 && res.status !== 429 && res.status !== 504)) {
-        return res;
-      }
-      await res.body?.cancel().catch(() => {});
-      lastErr = new Error(`HTTP ${res.status}`);
-    } catch (err) {
-      lastErr = err;
-      if (init?.signal?.aborted) throw err;
-    }
-    if (attempt < retries) {
-      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
-    }
-  }
-  if (lastErr) throw lastErr;
-  throw new Error(`Fetch failed for ${url}`);
-}
 
-/**
- * 抓取单个任务的详细信息（阵营、职业限定、起始/交付 NPC 与坐标、完整前置/后续任务链）
- */
-async function fetchQuestDetail(questId, questCache, getHeaders) {
-  const key = String(questId);
-  if (questCache[key] && questCache[key].v === 3) {
-    return questCache[key];
-  }
-  try {
-    const url = `https://wowf.io/zh/quests/${questId}`;
-    const res = await fetchWithRetry(url, {
-      headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-    });
-    if (!res.ok) return questCache[key] || null;
-    const html = await res.text();
-    const full = extractNextFText(html);
-    const idx = full.indexOf('"quest":{');
-    if (idx < 0) return questCache[key] || null;
-    const jsonStr = extractBalancedJson(full, idx + 8);
-    if (!jsonStr) return questCache[key] || null;
-    const q = JSON.parse(jsonStr);
-
-    let classes;
-    const clsMatch = full.slice(Math.max(0, idx - 900), idx).match(/"classes":(\[[^\]]*\])/);
-    if (clsMatch) {
-      try {
-        const arr = JSON.parse(clsMatch[1]);
-        const mapped = arr.map(s => CLASS_SLUG_TO_KEY[String(s).toLowerCase()]).filter(Boolean);
-        if (mapped.length > 0) classes = mapped;
-      } catch {
-        // 忽略无效职业数组
-      }
-    }
-
-    const sides = {};
-    if (q.sides?.one) {
-      sides.one = parseQuestSideData(q.sides.one);
-    } else {
-      if (q.sides?.alliance) sides.alliance = parseQuestSideData(q.sides.alliance);
-      if (q.sides?.horde) sides.horde = parseQuestSideData(q.sides.horde);
-    }
-
-    const detail = {
-      v: 3,
-      id: Number(q.id || questId),
-      name: q.name || '',
-      faction: normalizeWowfFaction(q.f),
-      level: q.lv || q.rl || 1,
-      minLevel: q.rl || q.lv || 1,
-      zone: q.zone || '',
-      ...(classes ? { classes } : {}),
-      sides,
-    };
-    questCache[key] = detail;
-    return detail;
-  } catch {
-    return questCache[key] || null;
-  }
-}
 
 /**
  * 极简 CBOR 解码器（用于解析 QuestieDB_Forever.toc 中的 Base64+CBOR 任务前置元数据）
@@ -2381,7 +2131,7 @@ function decodeCborValue(buf, state = { offset: 0 }) {
 
 /**
  * 从本地缓存的 questie-db-forever.zip 读取无限服官方 QuestieDB 的任务前置关系 (preQuestSingle / preQuestGroup)
- * 用于补全 wowf.io 网页端遗漏的前置任务链
+ * 用于补全任务链前置
  */
 async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zip', zipBuffer = null) {
   const dbMap = new Map();
@@ -2633,104 +2383,6 @@ async function loadQuestiePrereqs(cacheDir, zipFilename = 'questie-db-forever.zi
   return dbMap;
 }
 
-/**
- * 基于 QuestieDB 向前追溯缺失的前置任务，返回补全后的任务链步骤列表
- * 若传入 questCache，则仅当所有新增前置步骤均已抓到详情时才使用补全流程，否则回退到 sideData.flow
- */
-function buildEffectiveFlow(mainQuest, sideData, questiePrereqs, questCache = null) {
-  const baseFlow = Array.isArray(sideData?.flow) ? [...sideData.flow] : [];
-  if (!questiePrereqs || questiePrereqs.size === 0) return baseFlow;
-
-  const sourceSteps =
-    baseFlow.length > 0
-      ? baseFlow
-      : [
-          {
-            id: mainQuest.id,
-            name: mainQuest.name,
-            level: mainQuest.level || 1,
-            minLevel: mainQuest.minLevel || mainQuest.level || 1,
-            faction: mainQuest.faction || 'both',
-            self: true,
-          },
-        ];
-
-  // 过滤掉仅作为可选引导（breadcrumb）的前置步骤：无需前置即可直接接取的任务不展示前置链
-  let workingSteps = sourceSteps;
-  let cutIdx = 0;
-  const selfIdx = workingSteps.findIndex(st => st?.self || st?.id === mainQuest.id);
-  if (selfIdx > 0) {
-    for (let j = selfIdx; j > 0; j--) {
-      const curId = workingSteps[j]?.id;
-      const prevId = workingSteps[j - 1]?.id;
-      if (!curId || !prevId) break;
-      const info = questiePrereqs.get(curId);
-      if (!info) break;
-      const bc = Array.isArray(info.breadcrumbs) ? info.breadcrumbs : [];
-      const preS = Array.isArray(info.preSingle) ? info.preSingle : [];
-      const preG = Array.isArray(info.preGroup) ? info.preGroup : [];
-      if (bc.includes(prevId) && !preS.includes(prevId) && !preG.includes(prevId)) {
-        if (preS.length === 0 && preG.length === 0) {
-          cutIdx = j;
-          break;
-        }
-      }
-    }
-    if (cutIdx > 0) {
-      workingSteps = workingSteps.slice(cutIdx);
-    }
-  }
-
-  const visited = new Set(workingSteps.map(st => st?.id).filter(Boolean));
-  const addedSteps = [];
-  const mergedFlow = [];
-
-  const collectPrereqs = (questId, depth, outSteps) => {
-    if (depth >= 12) return;
-    const info = questiePrereqs.get(questId);
-    if (!info) return;
-
-    let directPreIds = [];
-    if (Array.isArray(info.preSingle) && info.preSingle.length === 1) {
-      directPreIds = [info.preSingle[0]];
-    } else if (Array.isArray(info.preGroup) && info.preGroup.length > 0) {
-      directPreIds = info.preGroup;
-    }
-
-    for (const preId of directPreIds) {
-      if (!preId || visited.has(preId)) continue;
-      visited.add(preId);
-      collectPrereqs(preId, depth + 1, outSteps);
-      const preInfo = questiePrereqs.get(preId);
-      const stepObj = {
-        id: preId,
-        name: preInfo?.name || `Quest ${preId}`,
-        level: preInfo?.level || mainQuest.level || 1,
-        minLevel: preInfo?.minLevel || mainQuest.minLevel || 1,
-        faction: mainQuest.faction || 'both',
-        self: false,
-      };
-      outSteps.push(stepObj);
-      addedSteps.push(stepObj);
-    }
-  };
-
-  for (const st of workingSteps) {
-    if (st?.id) {
-      const missingBeforeStep = [];
-      collectPrereqs(st.id, 0, missingBeforeStep);
-      mergedFlow.push(...missingBeforeStep);
-    }
-    mergedFlow.push(st);
-  }
-
-  const fallbackFlow = cutIdx > 0 ? workingSteps : baseFlow;
-  if (addedSteps.length === 0) return fallbackFlow;
-  if (questCache && addedSteps.some(st => !questCache[String(st.id)]?.name)) {
-    return fallbackFlow;
-  }
-  return mergedFlow;
-}
 
 /**
  * 为任务链步骤标注 QuestieDB 的前置依赖关系 (reqAll: 多前置全部完成, preId: 单前置)
@@ -3151,7 +2803,7 @@ function questieRacesToFaction(races) {
 
 /**
  * 完全基于本地 QuestieDB（questie-db-forever.zip）补全所有副本的双阵营任务、阵营标记与任务链，
- * 不再依赖 wowf.io 网页抓取。
+ * 全部来自本地 QuestieDB，构建期不访问任何外部站点。
  */
 function enrichDungeonsWithQuestieDB(dungeonMap, questiePrereqs) {
   const allIds = [...dungeonMap.keys()];
@@ -3225,104 +2877,7 @@ function applyDungeonQuestFallbackSupplements(dungeonMap, targetIds) {
   }
 }
 
-/**
- * 动态抓取 wowf.io/zh/news 最新热修与公告
- */
-async function fetchLiveNews(getHeaders) {
-  try {
-    const url = 'https://wowf.io/zh/news';
-    const res = await fetch(url, {
-      headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const html = await res.text();
-    const articles = [];
-    const linkRegex = /<a[^>]+href="(\/zh\/news\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-    let match;
-    while ((match = linkRegex.exec(html)) !== null && articles.length < 8) {
-      const href = `https://wowf.io${match[1]}`;
-      const rawText = match[2]
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!rawText || rawText.length < 10) continue;
 
-      const dateMatch = rawText.match(/(\d{4}年\d{1,2}月\d{1,2}日(?:\s*\d{1,2}:\d{2})?)/);
-      const date = dateMatch ? dateMatch[1] : '最新公告';
-      const cleaned = rawText
-        .replace(/^Blizzard\s*公告\s*/i, '')
-        .replace(dateMatch ? dateMatch[0] : '', '')
-        .replace(/UTC\+8/g, '')
-        .trim();
-      const parts = cleaned.split(/\s{2,}|\s*\|\s*/);
-      const title = parts[0] ? parts[0].slice(0, 60) : cleaned.slice(0, 50);
-      const summary = cleaned.length > title.length ? cleaned.slice(title.length).trim() : cleaned;
-      if (title && !articles.some(a => a.title === title)) {
-        articles.push({ date, title, summary: summary || title, href });
-      }
-    }
-    if (articles.length > 0) return articles;
-  } catch (err) {
-    console.warn(`[WoWF] News fetch fallback (${err.message})`);
-  }
-  return FALLBACK_NEWS;
-}
-
-/**
- * 动态抓取 wowf.io/zh/macros/{class} 页面上的职业宏并与内置精选宏库合并
- */
-async function fetchLiveClassMacros(classSlug, classKey, getHeaders) {
-  const baseMacros = FALLBACK_MACROS[classKey] || [];
-  try {
-    const url = `https://wowf.io/zh/macros/${classSlug}`;
-    const res = await fetch(url, {
-      headers: { ...getHeaders(url), 'Accept-Language': 'zh-CN,zh;q=0.9' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return baseMacros;
-    const html = await res.text();
-    // 匹配页面中的 #showtooltip 宏代码块
-    const scraped = [];
-    const cardRegex = /<h[23][^>]*>([^<]+)<\/h[23]>[\s\S]{0,800}?(#showtooltip[\s\S]{1,400}?)(?:<\/pre>|<\/code>|<\/div>)/gi;
-    let m;
-    while ((m = cardRegex.exec(html)) !== null && scraped.length < 8) {
-      const title = m[1].replace(/<[^>]+>/g, '').trim();
-      const code = m[2]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&#x27;/g, "'")
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, '&')
-        .replace(/&gt;/g, '>')
-        .replace(/&lt;/g, '<')
-        .trim();
-      if (title && code.includes('/')) {
-        scraped.push({
-          title,
-          level: 1,
-          isForeverNew: code.includes('乘胜追击') || code.includes('穿刺打击') || code.includes('十字军打击'),
-          desc: `来自 wowf.io/zh/macros/${classSlug} 的实用职业宏。`,
-          code,
-        });
-      }
-    }
-    if (scraped.length > 0) {
-      const merged = [...baseMacros];
-      for (const s of scraped) {
-        if (!merged.some(b => b.title === s.title)) {
-          merged.push(s);
-        }
-      }
-      return merged;
-    }
-  } catch {
-    // use fallback macros
-  }
-  return baseMacros;
-}
 
 /**
  * 将 JavaScript 值安全序列化为格式化的 Lua 字面量
@@ -3370,50 +2925,70 @@ function toLuaValue(val, indent = 0) {
 }
 
 /**
- * 构建完整数据集：优先从 wowf.io 实时抓取并缓存，断网或局部请求失败时按粒度回退到已有缓存
+ * 读取固化的百科数据快照。缺失或损坏时直接抛错，避免静默产出残缺插件包。
+ * @returns {any}
  */
-async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
-  const cacheFile = path.join(cacheDir, 'wowf-dataset.json');
-  let cachedDataset = null;
-  if (fs.existsSync(cacheFile)) {
-    try {
-      cachedDataset = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
-    } catch {
-      cachedDataset = null;
-    }
+function loadWowfSnapshot() {
+  if (!fs.existsSync(WOWF_SNAPSHOT_FILE)) {
+    throw new Error(
+      `[WoWF] 缺少数据快照 ${WOWF_SNAPSHOT_FILE}；该文件随仓库提交，请确认未被误删。`
+    );
   }
+  try {
+    return JSON.parse(fs.readFileSync(WOWF_SNAPSHOT_FILE, 'utf8'));
+  } catch (err) {
+    throw new Error(`[WoWF] 数据快照解析失败：${err.message}`);
+  }
+}
 
-  const deployId = await discoverDeployId(getHeaders);
-  console.log(`[WoWF] Using wowf.io deployId: ${deployId}`);
+/**
+ * 深拷贝快照片段，避免下游就地改写（bands / quests）污染被复用的快照对象
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+function cloneSnapshotValue(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
 
-  const classesData = {};
-  const routesData = {};
-  const dungeonMap = new Map();
-  const notableItemsMap = new Map();
+/**
+ * 组装 巫妖王的无限百科 数据集。
+ *
+ * 数据来源全部在本地：
+ * - 升级路线 / 专精循环 / 天赋 / timeline / 副本元数据 / 精选掉落 / 公告：固化快照 wowf-dataset.json
+ * - 副本任务链与前置：随包 QuestieDB（questie-db-forever.zip）
+ * - 专业指南 / 无限服特色系统 / 阵营任务 / 声望：本文件内置 + wowf-reputation-data.json
+ *
+ * 构建期不发起任何网络请求；快照缺失即抛错，避免静默产出残缺插件包。
+ *
+ * @param {string} cacheDir 上游缓存目录（仅用于读取 QuestieDB）
+ * @param {(url: string) => Record<string, string>} _getHeaders 保留签名兼容，当前实现不再发请求
+ * @param {Buffer | { questieDbBuf?: Buffer | null, useSnapshotOnly?: boolean, snapshot?: any } | null} questieSource
+ * @returns {Promise<any>}
+ */
+async function buildWoWFDataset(cacheDir, _getHeaders, questieSource = null) {
+  const snapshot = loadWowfSnapshot();
+
+  // 先预填 12 大专业冲级与无限服特色指南元数据（人工校对的坐标版始终优先于快照里的纯文字版）
   const professionsMap = new Map();
-
-  // 先预填 12 大专业冲级与无限服特色指南元数据
   for (const prof of PROFESSION_GUIDES_META) {
     professionsMap.set(prof.id, { ...prof });
   }
-  if (Array.isArray(cachedDataset?.professions)) {
-    for (const cp of cachedDataset.professions) {
-      if (cp?.id) {
-        const prev = professionsMap.get(cp.id) || {};
-        // 内置指南的 trainers/brackets/foreverNote 是人工校对的坐标版，始终优先于旧缓存里的纯文字版
-        const curated = PROFESSION_GUIDES_META.find(p => p.id === cp.id) || {};
-        professionsMap.set(cp.id, {
-          ...prev,
-          ...cp,
-          ...(curated.trainers ? { trainers: curated.trainers } : {}),
-          ...(curated.brackets ? { brackets: curated.brackets } : {}),
-          ...(curated.foreverNote ? { foreverNote: curated.foreverNote } : {}),
-        });
-      }
-    }
+  for (const cp of snapshot.professions || []) {
+    if (!cp?.id) continue;
+    const prev = professionsMap.get(cp.id) || {};
+    const curated = PROFESSION_GUIDES_META.find(p => p.id === cp.id) || {};
+    professionsMap.set(cp.id, {
+      ...prev,
+      ...cp,
+      ...(curated.trainers ? { trainers: curated.trainers } : {}),
+      ...(curated.brackets ? { brackets: curated.brackets } : {}),
+      ...(curated.foreverNote ? { foreverNote: curated.foreverNote } : {}),
+    });
   }
 
-  // 先预填 11 个无限服新增地下城与团本元数据，确保任何情况下都完整收录
+  // 先预填 11 个无限服新增地下城与团本元数据，确保快照缺项时仍完整收录
+  const dungeonMap = new Map();
   for (const meta of FOREVER_NEW_DUNGEONS_META) {
     const ent = DUNGEON_ENTRANCE_COORDS[meta.id] || null;
     dungeonMap.set(meta.id, {
@@ -3433,352 +3008,30 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     });
   }
 
-  let liveFetchCount = 0;
-  let hasPartialFailure = false;
-  let hasRouteFailure = false;
-  const liveDungeonIds = new Set();
-  const payloadCache = new Map();
-
-  // 1. 抓取所有种族 × 职业组合升级路线 (bands + trainersByClass + questsByClass + classRunsByClass + timelineSteps + dungeons + professions)
-  for (const route of RACE_ROUTES) {
-    const isSkyborne = route.id === 'skyborne-alliance' || route.id === 'skyborne-horde';
-    const routeClasses = Array.isArray(route.classes) && route.classes.length > 0 ? route.classes : [route.sampleClass];
-    let resolvedApiRace = null;
-    let basePayload = null;
-    let lastErr = null;
-    const baseClassKey = CLASS_SLUG_TO_KEY[route.sampleClass] || 'WARRIOR';
-
-    for (const candidateRace of route.apiRaces || [route.id]) {
-      try {
-        basePayload = await fetchLevelUpPayload(route.sampleClass, candidateRace, route.faction, deployId, getHeaders);
-        resolvedApiRace = candidateRace;
-        payloadCache.set(`${route.id}:${route.sampleClass}`, basePayload);
-        payloadCache.set(`${candidateRace}:${route.sampleClass}:${route.faction}`, basePayload);
-        break;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-
-    if (!basePayload) {
-      const cachedRoute = cachedDataset?.routes?.[route.id];
-
-      // 非天裔常规路线若请求失败，优先复用已有缓存并标记局部失败
-      if (!isSkyborne && Array.isArray(cachedRoute?.bands) && cachedRoute.bands.length > 0) {
-        hasPartialFailure = true;
-        hasRouteFailure = true;
-        routesData[route.id] = cachedRoute;
-        continue;
-      }
-
-      if (isSkyborne) {
-        const baseKey = route.faction === 'horde' ? 'orc' : 'human';
-        const druidSourceKey = route.faction === 'horde' ? 'tauren' : 'night-elf';
-        const liveBaseRoute = routesData[baseKey];
-        const baseRoute = liveBaseRoute || cachedDataset?.routes?.[baseKey];
-        const druidRoute = routesData[druidSourceKey] || cachedDataset?.routes?.[druidSourceKey];
-        if (!liveBaseRoute) {
-          hasPartialFailure = true;
-          hasRouteFailure = true;
-        }
-        const tailBands = Array.isArray(baseRoute?.bands)
-          ? baseRoute.bands
-              .filter(b => (b.to ?? b.from ?? 0) >= 12)
-              .map(b => {
-                const cloned = {
-                  ...b,
-                  from: (b.from ?? 1) < 12 ? 12 : b.from,
-                  trainersByClass: { ...(b.trainersByClass || {}) },
-                  questsByClass: { ...(b.questsByClass || {}) },
-                };
-                if (!cloned.trainersByClass.DRUID && Array.isArray(druidRoute?.bands)) {
-                  const db = druidRoute.bands.find(x => x.zone === b.zone) || druidRoute.bands.find(x => Math.abs((x.from || 1) - (b.from || 1)) <= 4);
-                  if (db?.trainersByClass?.DRUID) {
-                    cloned.trainersByClass.DRUID = db.trainersByClass.DRUID;
-                  }
-                }
-                return cloned;
-              })
-          : [];
-        if (tailBands.length > 0) {
-          const zephrasTrainersByClass = {};
-          for (const cSlug of routeClasses) {
-            const cKey = CLASS_SLUG_TO_KEY[cSlug];
-            const clsCfg = CLASS_CONFIGS.find(c => c.key === cKey);
-            if (cKey) {
-              zephrasTrainersByClass[cKey] = {
-                name: `天裔${clsCfg?.name || '职业'}导师`,
-                title: `${clsCfg?.name || '全职业'}训练师`,
-                place: '泽风岛主营地 (天裔前哨)',
-                x: 49.2,
-                y: 51.4,
-              };
-            }
-          }
-          const mergedClassRunsByClass = { ...(baseRoute?.classRunsByClass || {}) };
-          if (druidRoute?.classRunsByClass?.DRUID) {
-            mergedClassRunsByClass.DRUID = druidRoute.classRunsByClass.DRUID;
-          }
-          routesData[route.id] = {
-            id: route.id,
-            name: route.name,
-            faction: route.faction,
-            wowRaceKeys: route.wowRaceKeys,
-            synthesized: true,
-            classRunsByClass: mergedClassRunsByClass,
-            timelineSteps: Array.isArray(baseRoute?.timelineSteps)
-              ? baseRoute.timelineSteps.filter(t => (t.level || 1) >= 12)
-              : [],
-            bands: [
-              {
-                from: 1,
-                to: 12,
-                zone: '泽风岛 (Zephras Isle)',
-                hub: { name: '泽风庇护所 / 天裔前哨', zone: '泽风岛', x: 48.5, y: 52.0 },
-                hubs: [
-                  { from: 1, to: 6, name: '天裔登陆点', x: 51.0, y: 62.0 },
-                  { from: 6, to: 12, name: '泽风庇护所 / 天裔前哨', x: 48.5, y: 52.0 },
-                ],
-                flights: [
-                  { name: '泽风岛航线管理员', place: '泽风庇护所', x: 48.8, y: 51.8 },
-                ],
-                trainer: { name: '天裔导师', title: '全职业训练师', place: '泽风岛主营地', x: 49.2, y: 51.4 },
-                trainersByClass: zephrasTrainersByClass,
-                quests: [],
-                questsByClass: {},
-                professions: [
-                  { id: 'first-aid', name: '急救', trainer: '天裔医师', place: '泽风岛', x: 48.0, y: 53.0 },
-                ],
-                dungeonQuests: [],
-              },
-              ...tailBands,
-            ],
-          };
-        } else if (cachedRoute) {
-          hasPartialFailure = true;
-          hasRouteFailure = true;
-          routesData[route.id] = cachedRoute;
-        }
-        continue;
-      }
-
-      hasPartialFailure = true;
-      hasRouteFailure = true;
-      console.warn(`[WoWF] Route fetch failed for ${route.id}: ${lastErr?.message}`);
-      continue;
-    }
-
-    liveFetchCount++;
-    const bands = Array.isArray(basePayload.bands)
-      ? basePayload.bands.map(b => transformBand(b, baseClassKey))
-      : [];
-    const classRunsByClass = {
-      [baseClassKey]: transformClassRuns(basePayload.classRuns, route.faction, route.id, route.name),
-    };
-    const timelineSteps = transformTimelineSteps(basePayload.timeline, basePayload.dungeons);
-
-    // 并发拉取该种族支持的其他职业路线，提取各职业专属训练师 (trainersByClass)、职业起始任务 (questsByClass) 与种族专属职业任务链 (classRunsByClass)
-    const otherClasses = routeClasses.filter(c => c !== route.sampleClass);
-    const cachedRoute = cachedDataset?.routes?.[route.id];
-    const results = await Promise.allSettled(
-      otherClasses.map(async classSlug => {
-        const p = await fetchLevelUpPayload(classSlug, resolvedApiRace, route.faction, deployId, getHeaders);
-        payloadCache.set(`${route.id}:${classSlug}`, p);
-        payloadCache.set(`${resolvedApiRace}:${classSlug}:${route.faction}`, p);
-        return { classSlug, payload: p };
-      })
-    );
-
-    for (let i = 0; i < otherClasses.length; i++) {
-      const classSlug = otherClasses[i];
-      const classKey = CLASS_SLUG_TO_KEY[classSlug];
-      if (!classKey) continue;
-      const res = results[i];
-      if (res.status === 'fulfilled' && res.value?.payload) {
-        liveFetchCount++;
-        const cp = res.value.payload;
-        classRunsByClass[classKey] = transformClassRuns(cp.classRuns, route.faction, route.id, route.name);
-        if (Array.isArray(cp.bands)) {
-          for (let bIdx = 0; bIdx < bands.length; bIdx++) {
-            const targetBand = bands[bIdx];
-            const cb =
-              cp.bands.find(x => x.from === targetBand.from && x.to === targetBand.to && x.zone === targetBand.zone) ||
-              cp.bands[bIdx];
-            if (cb?.trainer?.name) {
-              targetBand.trainersByClass[classKey] = {
-                name: cb.trainer.name || '',
-                title: cb.trainer.title || '职业训练师',
-                place: cb.trainer.place || cb.trainer.zone || targetBand.zone || '',
-                zone: cb.trainer.zone || targetBand.zone || '',
-                x: cb.trainer.at?.x ?? null,
-                y: cb.trainer.at?.y ?? null,
-              };
-            }
-            const cQuests = transformBandQuests(cb?.quests, targetBand.from, targetBand.zone);
-            if (cQuests.length > 0) {
-              targetBand.questsByClass[classKey] = cQuests;
-            }
-          }
-        }
-      } else {
-        hasPartialFailure = true;
-        console.warn(`[WoWF] Route class fetch failed for ${route.id}/${classSlug}: ${res.reason?.message}`);
-        if (cachedRoute?.classRunsByClass?.[classKey]) {
-          classRunsByClass[classKey] = cachedRoute.classRunsByClass[classKey];
-        }
-        if (Array.isArray(cachedRoute?.bands)) {
-          for (let bIdx = 0; bIdx < bands.length && bIdx < cachedRoute.bands.length; bIdx++) {
-            const cachedBand = cachedRoute.bands[bIdx];
-            if (cachedBand?.trainersByClass?.[classKey]) {
-              bands[bIdx].trainersByClass[classKey] = cachedBand.trainersByClass[classKey];
-            }
-            if (cachedBand?.questsByClass?.[classKey]) {
-              bands[bIdx].questsByClass[classKey] = cachedBand.questsByClass[classKey];
-            }
-          }
-        }
-      }
-    }
-
-    routesData[route.id] = {
-      id: route.id,
-      name: route.name,
-      faction: route.faction,
-      wowRaceKeys: route.wowRaceKeys,
-      classRunsByClass,
-      timelineSteps,
-      bands,
-    };
-
-    if (Array.isArray(basePayload.dungeons)) {
-      for (const d of basePayload.dungeons) {
-        if (d?.id) liveDungeonIds.add(d.id);
-        mergeDungeonIntoMap(dungeonMap, d, route.faction);
-      }
-    }
-    if (Array.isArray(basePayload.professions)) {
-      for (const p of basePayload.professions) {
-        if (!p || !p.id) continue;
-        const meta = professionsMap.get(p.id) || {};
-        professionsMap.set(p.id, {
-          id: p.id,
-          name: p.name || meta.name || PROF_NAMES_ZH[p.id] || p.id,
-          type: p.type || meta.type || 'crafting',
-          pairs: Array.isArray(p.pairs) && p.pairs.length > 0 ? p.pairs : (meta.pairs || []),
-          makes: Array.isArray(p.makes) && p.makes.length > 0 ? p.makes : (meta.makes || []),
-          brackets: meta.brackets || '1–75 初级 → 75–150 中级 → 150–225 高级 → 225–300 大师级',
-          trainers: meta.trainers || '各大主城及对应等级营地专业训练师',
-          foreverNote: meta.foreverNote || '',
-        });
-      }
-    }
-    if (basePayload.items && typeof basePayload.items === 'object') {
-      for (const [id, item] of Object.entries(basePayload.items)) {
-        if (item && item.quality >= 3 && (notableItemsMap.has(id) || notableItemsMap.size < 180)) {
-          notableItemsMap.set(id, {
-            id: Number(id),
-            name: item.name || '',
-            quality: item.quality || 3,
-            reqLevel: item.requiredLevel || 1,
-            ilvl: item.itemLevel || 1,
-            slot: item.slot || '',
-            type: item.type || '',
-            stats: Array.isArray(item.stats) ? item.stats.map(s => `${s.label}+${s.value}`).join(' ') : '',
-            effect: Array.isArray(item.effects) && item.effects[0]?.text ? item.effects[0].text : '',
-          });
-        }
-      }
+  // 1. 合并快照中的副本元数据（分级/入口/首领/简介以快照为准，任务列表随后由 QuestieDB 重建）
+  for (const cd of snapshot.dungeons || []) {
+    if (!cd?.id) continue;
+    const existing = dungeonMap.get(cd.id);
+    const snapshotQuests = Array.isArray(cd.quests) ? cloneSnapshotValue(cd.quests) : [];
+    if (existing) {
+      dungeonMap.set(cd.id, {
+        ...existing,
+        ...cd,
+        isNew: existing.isNew || Boolean(cd.isNew),
+        bosses: Array.isArray(cd.bosses) && cd.bosses.length > 0 ? cd.bosses : existing.bosses,
+        summary: cd.summary || existing.summary,
+        quests: snapshotQuests,
+      });
+    } else {
+      dungeonMap.set(cd.id, { ...cd, quests: snapshotQuests });
     }
   }
 
-  // 若天裔合成路线在 human/orc/night-elf/tauren 之前或之后生成，用已抓取的完整阵营路线补齐天裔全职业训练师与任务链
-  for (const skyId of ['skyborne-alliance', 'skyborne-horde']) {
-    const skyRoute = routesData[skyId];
-    if (skyRoute && skyRoute.synthesized) {
-      const baseKey = skyRoute.faction === 'horde' ? 'orc' : 'human';
-      const druidSourceKey = skyRoute.faction === 'horde' ? 'tauren' : 'night-elf';
-      const baseRoute = routesData[baseKey] || cachedDataset?.routes?.[baseKey];
-      const druidRoute = routesData[druidSourceKey] || cachedDataset?.routes?.[druidSourceKey];
-      if (baseRoute) {
-        skyRoute.classRunsByClass = {
-          ...(baseRoute.classRunsByClass || {}),
-          ...(druidRoute?.classRunsByClass?.DRUID ? { DRUID: druidRoute.classRunsByClass.DRUID } : {}),
-        };
-        skyRoute.timelineSteps = Array.isArray(baseRoute.timelineSteps)
-          ? baseRoute.timelineSteps.filter(t => (t.level || 1) >= 12)
-          : [];
-        if (Array.isArray(skyRoute.bands) && skyRoute.bands.length > 1 && Array.isArray(baseRoute.bands)) {
-          const tailBands = baseRoute.bands
-            .filter(b => (b.to ?? b.from ?? 0) >= 12)
-            .map(b => {
-              const cloned = {
-                ...b,
-                from: (b.from ?? 1) < 12 ? 12 : b.from,
-                trainersByClass: { ...(b.trainersByClass || {}) },
-                questsByClass: { ...(b.questsByClass || {}) },
-              };
-              if (!cloned.trainersByClass.DRUID && Array.isArray(druidRoute?.bands)) {
-                const db = druidRoute.bands.find(x => x.zone === b.zone) || druidRoute.bands.find(x => Math.abs((x.from || 1) - (b.from || 1)) <= 4);
-                if (db?.trainersByClass?.DRUID) {
-                  cloned.trainersByClass.DRUID = db.trainersByClass.DRUID;
-                }
-              }
-              return cloned;
-            });
-          skyRoute.bands = [skyRoute.bands[0], ...tailBands];
-        }
-      }
-    }
-  }
-
-  // 当存在路线请求失败时，用本地缓存补齐缺失的地下城、副本任务（保留双阵营属性）与精选掉落；
-  // 当所有路线请求均成功时，本轮实时阵营合并结果即为完整权威数据，不受旧缓存阵营干扰
-  if (hasRouteFailure && Array.isArray(cachedDataset?.dungeons)) {
-    for (const cd of cachedDataset.dungeons) {
-      if (!cd?.id) continue;
-      if (!dungeonMap.has(cd.id)) {
-        dungeonMap.set(cd.id, { ...cd, quests: Array.isArray(cd.quests) ? [...cd.quests] : [] });
-      } else {
-        const existing = dungeonMap.get(cd.id);
-        if (!liveDungeonIds.has(cd.id)) {
-          if (cd.name) existing.name = cd.name;
-          if (cd.minLevel != null) existing.minLevel = cd.minLevel;
-          if (cd.maxLevel != null) existing.maxLevel = cd.maxLevel;
-          if (cd.visit != null) existing.visit = cd.visit;
-          if (cd.zone) existing.zone = cd.zone;
-        }
-        const questIndexByKey = new Map(existing.quests.map((q, idx) => [`${q.name}:${q.npc}`, idx]));
-        for (const cq of cd.quests || []) {
-          const key = `${cq.name}:${cq.npc}`;
-          if (!questIndexByKey.has(key)) {
-            questIndexByKey.set(key, existing.quests.length);
-            existing.quests.push(cq);
-          } else {
-            const idx = questIndexByKey.get(key);
-            const liveQuest = existing.quests[idx];
-            if (
-              cq.faction === 'both' ||
-              (cq.faction && liveQuest?.faction && cq.faction !== liveQuest.faction)
-            ) {
-              existing.quests[idx] = { ...liveQuest, faction: 'both' };
-            }
-          }
-        }
-      }
-    }
-  }
-  if (hasRouteFailure && Array.isArray(cachedDataset?.items)) {
-    for (const ci of cachedDataset.items) {
-      if (ci?.id && !notableItemsMap.has(String(ci.id)) && notableItemsMap.size < 180) {
-        notableItemsMap.set(String(ci.id), ci);
-      }
-    }
-  }
-
-  // 2. 整理 9 大职业的专精循环、10-60 天赋加点、全种族专属职业任务与宏命令（优先复用上方已抓取的 payloadCache）
+  // 2. 升级路线与 9 大职业（专精循环 / 天赋 / 种族职业任务链 / 宏）直接取自快照
+  const routesData = cloneSnapshotValue(snapshot.routes || {});
+  const classesData = {};
   for (const cls of CLASS_CONFIGS) {
-    const cachedClass = cachedDataset?.classes?.[cls.key];
-    let specs = [];
+    const snapClass = snapshot.classes?.[cls.key] || {};
     const classRuns = [];
     const seenRunKeys = new Set();
     const appendClassRuns = list => {
@@ -3791,78 +3044,31 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
         }
       }
     };
-
-    const primaryFaction = cls.hordeRace && !cls.allianceRace ? 'horde' : (cls.key === 'DRUID' ? 'horde' : 'alliance');
-    const primaryRace = primaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
-    const secondaryFaction = primaryFaction === 'alliance' ? 'horde' : 'alliance';
-    const secondaryRace = secondaryFaction === 'horde' ? cls.hordeRace : cls.allianceRace;
-
-    try {
-      const cachedPrimary = payloadCache.get(`${primaryRace}:${cls.slug}:${primaryFaction}`);
-      const primaryPayload =
-        cachedPrimary || (await fetchLevelUpPayload(cls.slug, primaryRace, primaryFaction, deployId, getHeaders));
-      if (!cachedPrimary) liveFetchCount++;
-      specs = transformTalentBuilds(primaryPayload.talentBuilds);
-      appendClassRuns(transformClassRuns(primaryPayload.classRuns, primaryFaction, primaryRace));
-
-      if (secondaryRace) {
-        try {
-          const cachedSecondary = payloadCache.get(`${secondaryRace}:${cls.slug}:${secondaryFaction}`);
-          const secondaryPayload =
-            cachedSecondary ||
-            (await fetchLevelUpPayload(cls.slug, secondaryRace, secondaryFaction, deployId, getHeaders));
-          if (!cachedSecondary) liveFetchCount++;
-          appendClassRuns(transformClassRuns(secondaryPayload.classRuns, secondaryFaction, secondaryRace));
-        } catch (secErr) {
-          hasPartialFailure = true;
-          console.warn(`[WoWF] Secondary faction classRuns fetch failed for ${cls.key} (${secondaryFaction}): ${secErr.message}`);
-          if (Array.isArray(cachedClass?.classRuns)) {
-            appendClassRuns(cachedClass.classRuns.filter(cr => cr.faction === secondaryFaction));
-          }
-        }
-      }
-
-      // 将各路线中该职业的种族特有职业任务链一并去重收录
-      for (const route of RACE_ROUTES) {
-        const rRuns = routesData[route.id]?.classRunsByClass?.[cls.key];
-        if (Array.isArray(rRuns)) {
-          appendClassRuns(rRuns);
-        }
-      }
-    } catch (err) {
-      hasPartialFailure = true;
-      console.warn(`[WoWF] Class fetch failed for ${cls.key}: ${err.message}`);
-      if (Array.isArray(cachedClass?.specs) && cachedClass.specs.length > 0) {
-        specs = cachedClass.specs;
-      }
-      if (Array.isArray(cachedClass?.classRuns) && cachedClass.classRuns.length > 0) {
-        appendClassRuns(cachedClass.classRuns);
+    appendClassRuns(cloneSnapshotValue(snapClass.classRuns || []));
+    // 将各路线中该职业的种族特有职业任务链一并去重收录
+    for (const route of RACE_ROUTES) {
+      const rRuns = routesData[route.id]?.classRunsByClass?.[cls.key];
+      if (Array.isArray(rRuns)) {
+        appendClassRuns(rRuns);
       }
     }
-
-    const macros = await fetchLiveClassMacros(cls.slug, cls.key, getHeaders);
-    if (Array.isArray(cachedClass?.macros)) {
-      for (const cm of cachedClass.macros) {
-        if (cm?.title && !macros.some(m => m.title === cm.title)) {
-          macros.push(cm);
-        }
-      }
-    }
-
     classesData[cls.key] = {
       key: cls.key,
       slug: cls.slug,
       name: cls.name,
       color: cls.color,
-      specs,
+      specs: cloneSnapshotValue(snapClass.specs || []),
       classRuns,
-      macros,
+      macros: cloneSnapshotValue(
+        Array.isArray(snapClass.macros) && snapClass.macros.length > 0 ? snapClass.macros : FALLBACK_MACROS[cls.key] || []
+      ),
     };
   }
 
-  // 3. 抓取最新热修新闻
-  const news = await fetchLiveNews(getHeaders);
-
+  // 3. 公告与精选掉落同样取自快照
+  const news =
+    Array.isArray(snapshot.news) && snapshot.news.length > 0 ? cloneSnapshotValue(snapshot.news) : FALLBACK_NEWS;
+  const itemsList = cloneSnapshotValue(snapshot.items || []).sort((a, b) => a.reqLevel - b.reqLevel);
   const professionsList = [...professionsMap.values()];
 
   const useSnapshotOnly = Boolean(
@@ -3879,60 +3085,21 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     ? null
     : await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
 
-  // 如果路由接口离线导致没有抓到实时路由数据，加载已有完整缓存并用 QuestieDB 补全所有副本任务
-  if (liveFetchCount === 0 && cachedDataset) {
-    console.log(`[WoWF] Offline mode detected, loading cached dataset from ${cacheFile}`);
-    const offlineDungeonMap = new Map(
-      (Array.isArray(cachedDataset.dungeons) ? cachedDataset.dungeons : [])
-        .filter(d => d && d.id != null)
-        .map(d => [d.id, { ...d, quests: Array.isArray(d.quests) ? [...d.quests] : [] }])
-    );
-    enrichDungeonsWithQuestieDB(offlineDungeonMap, livePrereqs);
-    const enrichedDungeons = [...offlineDungeonMap.values()].sort(
-      (a, b) => a.minLevel - b.minLevel || a.visit - b.visit
-    );
-    const cachedDbVersion = cachedDataset.meta?.dbVersion || '2026.11.15';
-    return annotateDatasetPrereqs({
-      ...cachedDataset,
-      dungeons: enrichedDungeons.length > 0 ? enrichedDungeons : cachedDataset.dungeons,
-      meta: {
-        ...cachedDataset.meta,
-        version: `${WOWF_VERSION} + DB v${cachedDbVersion}`,
-      },
-      professions: professionsList,
-      foreverSystems: FOREVER_SYSTEMS_DATA,
-      factionQuests: FACTION_QUESTS_DATA,
-      reputationGuides: REPUTATION_DATA,
-    }, livePrereqs);
-  }
-
-  // 4. 基于本地 QuestieDB（questie-db-forever.zip）补全全阵营副本任务，不再依赖 wowf.io 网页抓取
+  // 4. 基于本地 QuestieDB 补全全阵营副本任务与任务链
   enrichDungeonsWithQuestieDB(dungeonMap, livePrereqs);
 
   const dungeonsList = [...dungeonMap.values()].sort((a, b) => a.minLevel - b.minLevel || a.visit - b.visit);
-  const itemsList = [...notableItemsMap.values()].sort((a, b) => a.reqLevel - b.reqLevel);
 
-  // 从最新热修公告提取日期作为动态数据库版本号 (如 2026.11.15)
-  let dbVersion = '2026.11.15';
-  if (Array.isArray(news) && news.length > 0) {
-    const firstDate = news[0].date || '';
-    const zhMatch = firstDate.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
-    const isoMatch = firstDate.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (zhMatch) {
-      dbVersion = `${zhMatch[1]}.${Number(zhMatch[2])}.${Number(zhMatch[3])}`;
-    } else if (isoMatch) {
-      dbVersion = `${isoMatch[1]}.${Number(isoMatch[2])}.${Number(isoMatch[3])}`;
-    }
-  }
+  // 数据库版本号取自快照（原先由线上最新公告日期推导，现在完全离线可复现）
+  const dbVersion = snapshot.meta?.dbVersion || '2026.11.15';
 
   enrichRoutesWithAltZones(routesData);
 
   const dataset = {
     meta: {
-      site: 'https://wowf.io/zh',
+      site: 'local-snapshot',
       version: `${WOWF_VERSION} + DB v${dbVersion}`,
       dbVersion,
-      deployId,
       updatedAt: dbVersion.replace(/\./g, '-'),
     },
     routes: routesData,
@@ -3954,33 +3121,18 @@ async function buildWoWFDataset(cacheDir, getHeaders, questieSource = null) {
     if (prevalidatedSnapshot.questieDbVersion) {
       dataset.meta.questieDbVersion = prevalidatedSnapshot.questieDbVersion;
     }
-  } else if (!useSnapshotOnly) {
+  } else {
     annotateDatasetPrereqs(dataset, livePrereqs);
   }
-  if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds) && cachedDataset?.zoneQuests && cachedDataset?.zoneAreaIds) {
-    dataset.zoneQuests = cachedDataset.zoneQuests;
-    dataset.zoneAreaIds = cachedDataset.zoneAreaIds;
-    if (cachedDataset.zoneCoveredIds) {
-      dataset.zoneCoveredIds = cachedDataset.zoneCoveredIds;
+  if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds) && snapshot.zoneQuests && snapshot.zoneAreaIds) {
+    dataset.zoneQuests = cloneSnapshotValue(snapshot.zoneQuests);
+    dataset.zoneAreaIds = cloneSnapshotValue(snapshot.zoneAreaIds);
+    if (snapshot.zoneCoveredIds) {
+      dataset.zoneCoveredIds = cloneSnapshotValue(snapshot.zoneCoveredIds);
     }
-    if (cachedDataset.meta?.questieDbVersion) {
-      dataset.meta.questieDbVersion = cachedDataset.meta.questieDbVersion;
+    if (snapshot.meta?.questieDbVersion) {
+      dataset.meta.questieDbVersion = snapshot.meta.questieDbVersion;
     }
-  }
-
-  // 仅当本次抓取完整（或尚无本地缓存快照）时才写入缓存文件，防止局部网络波动覆盖完整缓存
-  const hasCompleteRoutes = Object.keys(routesData).length >= RACE_ROUTES.length;
-  const hasCompleteClasses = CLASS_CONFIGS.every(c => Array.isArray(classesData[c.key]?.specs) && classesData[c.key].specs.length > 0);
-  const hasZoneQuests = isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds);
-  if ((!hasPartialFailure && hasCompleteRoutes && hasCompleteClasses && hasZoneQuests) || !cachedDataset) {
-    try {
-      fs.mkdirSync(cacheDir, { recursive: true });
-      fs.writeFileSync(cacheFile, JSON.stringify(dataset, null, 2), 'utf-8');
-    } catch {
-      // ignore cache write error
-    }
-  } else {
-    console.warn('[WoWF] Partial fetch failure occurred; preserved existing cache snapshot and merged missing entries.');
   }
 
   return dataset;
@@ -3997,14 +3149,14 @@ function generateWoWFToc(version, updatedAt, dataset) {
 ## Title: 巫妖王的无限百科
 ## Title-zhCN: |cff00ffcc[巫妖王的无限百科]|r 无限服动态指南
 ## OptionalDeps: Questie, QuestieDB
-## Notes: In-game smart companion for wowf.io on WoW Forever (16001). Dynamically matches leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
-## Notes-zhCN: 同步 wowf.io 最新数据的《魔兽世界：无限服》专属游戏内动态百科！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/传承天赋/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
+## Notes: Offline in-game companion for WoW Forever (16001). Bundles the full knowledge base matching leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
+## Notes-zhCN: 《魔兽世界：无限服》专属离线百科（内置完整数据快照，无需联网）！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/传承天赋/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
 ## OptionalDeps: EasyAuction
-## Author: lich.tech & wowf.io
+## Author: lich.tech
 ## Version: ${version}
 ## Dependencies: QuestieDB
 ## SavedVariables: WoWFDB
-## X-Website: https://wowf.io/zh
+## X-Website: https://wow.lich.tech/wiki
 ## X-Category: Guide
 
 Data.lua
@@ -4017,7 +3169,7 @@ WoWF.lua
  * 生成 WoWF/Data.lua 文件内容
  */
 function generateWoWFDataLua(dataset) {
-  return `-- Auto-generated from https://wowf.io/zh (${dataset.meta.deployId} @ ${dataset.meta.updatedAt})
+  return `-- Auto-generated from local dataset snapshot (DB v${dataset.meta.dbVersion} @ ${dataset.meta.updatedAt})
 WoWF_Data = ${toLuaValue(dataset, 0)}
 `;
 }
@@ -4029,15 +3181,15 @@ WoWF_Data = ${toLuaValue(dataset, 0)}
  * @param {(url: string) => Record<string, string>} getHeaders
  * @returns {Promise<{ zip: JSZip, outPath: string, version: string, source: string }>}
  */
-export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbBuf = null) {
+export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDbBuf = null) {
   const headSnapshot = getGitHeadOid();
   const craftLuaContent = readWoWFLuaFile('CraftArb.lua');
   const coreLuaContent = readWoWFLuaFile('WoWF.lua');
 
-  console.log('Synchronizing live data from https://wowf.io/zh for 巫妖王的无限百科...');
-  const dataset = await buildWoWFDataset(cacheDir, getHeaders, questieDbBuf);
+  console.log('Building 巫妖王的无限百科 from local dataset snapshot (no network access)...');
+  const dataset = await buildWoWFDataset(cacheDir, _getHeaders, questieDbBuf);
   if (headSnapshot && getGitHeadOid() !== headSnapshot) {
-    throw new Error('[WoWF] 异步抓取期间仓库 HEAD 发生变化，请重新执行打包以保证源码与版本号一致。');
+    throw new Error('[WoWF] 构建期间仓库 HEAD 发生变化，请重新执行打包以保证源码与版本号一致。');
   }
   if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds)) {
     throw new Error('[WoWF] 缺少完整的区域任务链索引 (zoneQuests/zoneAreaIds)，请确认 .cache/upstream-addons/questie-db-forever.zip 可读。');
@@ -4062,12 +3214,22 @@ export async function buildWoWFAddon(outputDir, cacheDir, getHeaders, questieDbB
     compressionOptions: { level: 9 },
   });
   fs.writeFileSync(outPath, outBuf);
-  console.log(`[✓] wowf.zip generated (${(outBuf.length / 1024).toFixed(1)} KB, version: ${fullVersion}, deployId: ${dataset.meta.deployId})`);
+  console.log(`[✓] wowf.zip generated (${(outBuf.length / 1024).toFixed(1)} KB, version: ${fullVersion}, snapshot DB: ${dataset.meta.dbVersion})`);
+
+  // 网页「无限百科」页面直接读取这三份 Lua，而不是去抓 wowf.zip。
+  // 原因：.zip 链接常被下载器（迅雷等）浏览器扩展拦截，fetch 会拿到空响应。
+  const wikiDir = path.resolve(outputDir, '..', 'wiki');
+  fs.mkdirSync(wikiDir, { recursive: true });
+  fs.writeFileSync(path.join(wikiDir, 'data.lua'), dataLuaContent);
+  fs.writeFileSync(path.join(wikiDir, 'core.lua'), coreLuaContent);
+  fs.writeFileSync(path.join(wikiDir, 'craftarb.lua'), craftLuaContent);
+  console.log(`[✓] wiki assets written to ${wikiDir}`);
 
   return {
     zip,
     outPath,
+    wikiDir,
     version: fullVersion,
-    source: `https://wowf.io/zh (${dataset.meta.deployId})`,
+    source: `local-snapshot (DB v${dataset.meta.dbVersion})`,
   };
 }

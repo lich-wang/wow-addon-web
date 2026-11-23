@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Download,
   Headphones,
+  BookOpen,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 import type { DirectoryState } from '../types/addon';
@@ -15,8 +16,8 @@ import type { AgentStatus } from '../services/agentService';
 
 interface NavbarProps {
   directoryState: DirectoryState;
-  activeTab: 'installed' | 'market' | 'voice';
-  setActiveTab: (tab: 'installed' | 'market' | 'voice') => void;
+  activeTab: 'installed' | 'market' | 'voice' | 'wiki';
+  setActiveTab: (tab: 'installed' | 'market' | 'voice' | 'wiki') => void;
   onPickDirectory: () => void;
   onRefreshDirectory: () => void;
   onOpenZipModal: () => void;
@@ -94,6 +95,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                     {outdatedCount} 可更新
                   </span>
                 )}
+              </button>
+              <button
+                onClick={() => setActiveTab('wiki')}
+                className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer flex items-center space-x-1.5 ${
+                  activeTab === 'wiki'
+                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>无限百科</span>
               </button>
               <button
                 onClick={() => setActiveTab('voice')}
