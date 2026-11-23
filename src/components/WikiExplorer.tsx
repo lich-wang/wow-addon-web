@@ -47,10 +47,22 @@ export function WikiExplorer() {
   const [tabId, setTabId] = useState('home');
   const [tabsOpen, setTabsOpen] = useState(false);
   const [renderSeq, setRenderSeq] = useState(0);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const getClient = useCallback(() => {
     if (!clientRef.current) clientRef.current = new WikiClient();
     return clientRef.current;
+  }, []);
+
+  /** 就地重试：销毁当前 Worker 并重新初始化，不刷新页面（刷新会回到插件市场） */
+  const handleReload = useCallback(() => {
+    setError(null);
+    setSnapshot(null);
+    setMeta(null);
+    setLoadMs(null);
+    setRenderMs(null);
+    setLoading(true);
+    setReloadToken((token) => token + 1);
   }, []);
 
   // 启动 Worker 并加载插件包
@@ -81,7 +93,7 @@ export function WikiExplorer() {
       client.dispose();
       clientRef.current = null;
     };
-  }, [getClient]);
+  }, [getClient, reloadToken]);
 
   const availableClasses = useMemo(() => {
     if (!meta) return [];
@@ -305,7 +317,7 @@ export function WikiExplorer() {
             <p>百科加载失败：{error}</p>
             <button
               type="button"
-              onClick={() => window.location.reload()}
+              onClick={handleReload}
               className="flex items-center gap-1.5 rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-500/10"
             >
               <RefreshCw className="h-3.5 w-3.5" />

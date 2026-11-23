@@ -2955,7 +2955,15 @@ function validateWowfSnapshot(snapshot) {
     return `快照缺少路线：${missingRoutes.join(', ')}`;
   }
 
-  // 2. 路线必须提供 bands，且 1-60 每个等级都被某个阶段覆盖（阶段之间允许重叠）
+  // 2. 路线阵营必须与 RACE_ROUTES 一致：错阵营会让部落角色被当成联盟、拿到错的练级区域
+  for (const route of RACE_ROUTES) {
+    const faction = routes[route.id]?.faction;
+    if (faction !== route.faction) {
+      return `路线 ${route.id} 的阵营应为 ${route.faction}，实际为 ${JSON.stringify(faction)}`;
+    }
+  }
+
+  // 3. 路线必须提供 bands，且 1-60 每个等级都被某个阶段覆盖（阶段之间允许重叠）
   for (const route of RACE_ROUTES) {
     const bands = routes[route.id]?.bands;
     if (!Array.isArray(bands) || bands.length === 0) {
@@ -3022,14 +3030,19 @@ function validateWowfSnapshot(snapshot) {
     const minLevel = dungeon?.minLevel;
     const maxLevel = dungeon?.maxLevel;
     // 不接受 null/字符串：toLuaValue 会丢掉 null 字段，插件随后对 nil 做算术会直接报错
-    if (
-      !Number.isInteger(minLevel) ||
+    if (!Number.isInteger(minLevel) ||
       !Number.isInteger(maxLevel) ||
       minLevel < 1 ||
       maxLevel > 60 ||
       minLevel > maxLevel
     ) {
       return `副本 ${dungeon.id} 的等级区间非法：${JSON.stringify({ minLevel, maxLevel })}（要求 1-60 整数且 minLevel<=maxLevel）`;
+    }
+    // visit 是排序用的到访推荐等级，缺省时插件回退到 minLevel
+    if (dungeon.visit !== undefined) {
+      if (!Number.isInteger(dungeon.visit) || dungeon.visit < 1 || dungeon.visit > 60) {
+        return `副本 ${dungeon.id} 的 visit 非法：${JSON.stringify(dungeon.visit)}（要求 1-60 整数）`;
+      }
     }
   }
 
@@ -3147,6 +3160,13 @@ async function buildWoWFDataset(cacheDir, _getHeaders, questieSource = null) {
 
   // 2. 升级路线与 9 大职业（专精循环 / 天赋 / 种族职业任务链 / 宏）直接取自快照
   const routesData = cloneSnapshotValue(snapshot.routes || {});
+  // 把「该种族可选职业」白名单写进路线数据：网页百科据此渲染职业下拉框，
+  // 不再从 classRunsByClass 推导（推导会漏掉暂无职业任务链的合法职业，也可能混入越界职业）。
+  for (const route of RACE_ROUTES) {
+    const target = routesData[route.id];
+    if (!target) continue;
+    target.classes = route.classes.map(slug => CLASS_SLUG_TO_KEY[slug]).filter(Boolean);
+  }
   const classesData = {};
   for (const cls of CLASS_CONFIGS) {
     const snapClass = snapshot.classes?.[cls.key] || {};

@@ -984,12 +984,36 @@ async function finalizeBundledTocs(fileNames) {
   }
 }
 
+/**
+ * 为「仅打包 WoWF」准备 QuestieDB 来源（纯离线）：
+ * - 本地缓存通过完整性校验 → 用这份缓存补全副本任务
+ * - 缓存缺失或无效 → 明确回退到仓库快照内的区域索引，并给出告警，绝不发起下载
+ * @returns {Promise<Buffer | { useSnapshotOnly: true }>}
+ */
+async function resolveOfflineQuestieDbSource() {
+  const cacheZip = path.join(UPSTREAM_CACHE_DIR, 'questie-db-forever.zip');
+  if (!fs.existsSync(cacheZip)) {
+    console.warn('[WoWF] 本地无 QuestieDB 缓存，回退到仓库快照内的区域任务索引（不下载）。');
+    return { useSnapshotOnly: true };
+  }
+  let valid = false;
+  try {
+    valid = await hasValidZoneQuestsIndex(UPSTREAM_CACHE_DIR);
+  } catch {
+    valid = false;
+  }
+  if (!valid) {
+    console.warn('[WoWF] 本地 QuestieDB 缓存未通过完整性校验，回退到仓库快照内的区域任务索引（不下载）。');
+    return { useSnapshotOnly: true };
+  }
+  return fs.readFileSync(cacheZip);
+}
+
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
-    // 仅打包 WoWF 时走纯离线路径：百科数据来自仓库内快照，
-    // QuestieDB 只读本地缓存（存在则用于补全副本任务，缺失则回退快照内的区域索引），不发起任何下载。
-    await processWoWF(null);
+    // 仅打包 WoWF 时走纯离线路径：百科数据来自仓库内快照，QuestieDB 只用通过校验的本地缓存
+    await processWoWF(await resolveOfflineQuestieDbSource());
     await finalizeBundledTocs(['wowf.zip']);
     writeBundledVersions();
     return;

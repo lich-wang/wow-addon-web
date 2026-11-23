@@ -29,15 +29,23 @@ for key, cls in pairs(D.classes or {}) do
 end
 for id, route in pairs(D.routes or {}) do
   local classKeys = {}
-  for classKey, _ in pairs(route.classRunsByClass or {}) do
-    classKeys[#classKeys + 1] = tostring(classKey)
-  end
-  if #classKeys == 0 then
-    for bandIndex = 1, #(route.bands or {}) do
-      for classKey, _ in pairs(route.bands[bandIndex].trainersByClass or {}) do
-        classKeys[#classKeys + 1] = tostring(classKey)
+  -- 优先使用构建时写入的职业白名单（RACE_ROUTES.classes），保证下拉框既不越界也不漏项
+  if type(route.classes) == "table" and #route.classes > 0 then
+    for _, classKey in ipairs(route.classes) do
+      classKeys[#classKeys + 1] = tostring(classKey)
+    end
+  else
+    -- 兼容旧数据：没有白名单时退回 classRunsByClass / trainersByClass 推导
+    for classKey, _ in pairs(route.classRunsByClass or {}) do
+      classKeys[#classKeys + 1] = tostring(classKey)
+    end
+    if #classKeys == 0 then
+      for bandIndex = 1, #(route.bands or {}) do
+        for classKey, _ in pairs(route.bands[bandIndex].trainersByClass or {}) do
+          classKeys[#classKeys + 1] = tostring(classKey)
+        end
+        if #classKeys > 0 then break end
       end
-      if #classKeys > 0 then break end
     end
   end
   out[#out + 1] = "ROUTE\\t" .. tostring(id) .. "\\t" .. tostring(route.name or id) .. "\\t" .. tostring(route.faction or "")
@@ -96,7 +104,8 @@ async function loadAddon(baseUrl: string): Promise<{ meta: WikiMeta; loadMs: num
 
   runtime?.destroy();
   const candidate = new WoWSimulatorRuntimeCore(
-    { level: 1, classKey: 'WARRIOR', raceKey: 'human', faction: 'Alliance' },
+    // zone 置空：模拟器默认的「暴风城」不是玩家真实位置，页面不应把角色当成在主城
+    { level: 1, classKey: 'WARRIOR', raceKey: 'human', faction: 'Alliance', zone: '' },
     { shimSource: wowShimSource }
   );
   const loaded = candidate.loadAddon('WoWF', [
@@ -110,15 +119,25 @@ async function loadAddon(baseUrl: string): Promise<{ meta: WikiMeta; loadMs: num
     candidate.destroy();
     throw new Error(`插件 Lua 初始化失败：${reason || '未知错误'}`);
   }
-  runtime = candidate;
 
-  if (!runtime.execLua(EXTRACT_META_LUA, 'extract-meta.lua')) {
-    const reason = runtime.getSnapshot().luaErrors.map((e) => `[${e.source}] ${e.message}`).join('；');
-    runtime.destroy();
-    runtime = null;
+  if (!candidate.execLua(EXTRACT_META_LUA, 'extract-meta.lua')) {
+    const reason = candidate.getSnapshot().luaErrors.map((e) => `[${e.source}] ${e.message}`).join('；');
+    candidate.destroy();
     throw new Error(`读取百科元数据失败：${reason || '未知错误'}`);
   }
-  meta = parseMeta(runtime.takeEmittedStrings());
+  meta = parseMeta(candidate.takeEmittedStrings());
+
+  // 真正跑一次首页命令并确认主窗口已生成：斜杠命令没注册时 shim 只返回 false、不报错，
+  // 若直接发 ready，页面会卡在“只有 Lua 报错、看不到窗口”的状态而无法重试。
+  candidate.runSlashCommand('/wowf');
+  const hasMainFrame = Object.values(candidate.getSnapshot().frames).some((frame) => frame.name === 'WoWFMainFrame');
+  if (!hasMainFrame) {
+    const reason = candidate.getSnapshot().luaErrors.map((e) => `[${e.source}] ${e.message}`).join('；');
+    candidate.destroy();
+    throw new Error(`插件主窗口未能渲染（/wowf 未生效）${reason ? `：${reason}` : ''}`);
+  }
+
+  runtime = candidate;
   return { meta, loadMs: Math.round(performance.now() - startedAt) };
 }
 

@@ -118,12 +118,16 @@ export class WikiClient {
     return requestId === this.latestRequestId;
   }
 
-  /** Worker 已不可用：终止它、清空 ready 并拒绝所有在途渲染 */
+  /** Worker 已不可用：先结束未完成的初始化，再终止 Worker 并拒绝在途渲染 */
   private failWorker(reason?: Error): void {
+    // initCleanup 内部会清掉初始化计时器并拒绝尚未完成的 load()，
+    // 必须在终止 Worker 之前调用，否则旧计时器可能在新实例上触发
+    const cleanup = this.initCleanup;
+    this.initCleanup = null;
+    cleanup?.(reason);
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
-    this.initCleanup = null;
     for (const entry of this.pending.values()) {
       entry.reject(reason ?? new Error('百科渲染线程已崩溃'));
     }
@@ -132,7 +136,6 @@ export class WikiClient {
 
   dispose(): void {
     // 先让未完成的 load() 结束并清掉初始化计时器，再终止 Worker
-    this.initCleanup?.(new Error('百科渲染线程已关闭'));
     this.failWorker(new Error('百科渲染线程已关闭'));
   }
 }
