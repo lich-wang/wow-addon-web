@@ -565,12 +565,12 @@ function Arb.SellQuote(itemID)
   return nil
 end
 
----读取拍卖行当前在售件数（只认全量扫描的完整快照；没有完整快照返回 nil 表示「未知」）
----数据源：EasyAuction GetRecord().bookQuantity（bookComplete）/ GetDepth().totalQuantity（complete），
----并兼容黑石交易技能价格表里同名字段。
+---读取拍卖行当前在售件数（最近一次扫描数到的总挂单件数；没有扫描记录返回 nil 表示「未知」）
+---数据源：EasyAuction GetRecord().bookQuantity（bookComplete）/ GetDepth().totalQuantity（complete）；
+---黑石交易技能价格表 record.quantity（必须带 record.seen，与它物品提示里的「现在在售」同源）。
 ---@param itemID number
 ---@return number|nil quantity 在售件数，nil 表示未知
----@return string|nil source 快照来源 "record" | "depth" | nil
+---@return string|nil source 数据来源 "record" | "depth" | "quantity" | nil
 function Arb.ListedSupply(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
@@ -593,6 +593,13 @@ function Arb.ListedSupply(itemID)
   else
     local prices = blackthornesPriceTable()
     local record = prices and prices[id]
+    -- 黑石没有 EasyAuction 那种「完整快照」标记：record.quantity 是它最近一次扫描
+    -- 该物品时数到的挂单总件数（record.seen 是那次扫描时间），物品提示的「现在在售」
+    -- 就是它。旧版/别名存档里可能写成 bookQuantity，一并兼容。
+    if type(record) == "table" and type(record.seen) == "number" then
+      local qty = tonumber(record.quantity)
+      if qty and qty >= 0 then return qty, "quantity" end
+    end
     if type(record) == "table" and record.bookComplete == true then
       local qty = tonumber(record.bookQuantity)
       if qty and qty >= 0 then return qty, "record" end
