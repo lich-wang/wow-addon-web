@@ -165,8 +165,10 @@ export function WikiExplorer() {
       <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:p-5 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {/* 等级 */}
-          <label className="block">
-            <span className="mb-1.5 block text-[11px] font-medium text-slate-400">角色等级</span>
+          <div className="block">
+            <span id="wiki-level-label" className="mb-1.5 block text-[11px] font-medium text-slate-400">
+              角色等级
+            </span>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -176,7 +178,8 @@ export function WikiExplorer() {
                 value={level}
                 onChange={(e) => setLevel(clampLevel(e.target.value))}
                 className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-amber-400"
-                aria-label="角色等级"
+                aria-label="角色等级（滑块）"
+                aria-describedby="wiki-level-label"
               />
               <input
                 type="number"
@@ -185,15 +188,17 @@ export function WikiExplorer() {
                 step={1}
                 value={level}
                 onChange={(e) => setLevel(clampLevel(e.target.value))}
+                aria-label="角色等级（数字输入）"
+                aria-describedby="wiki-level-label"
                 className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-center text-sm font-bold text-amber-300 outline-none focus:border-amber-500"
               />
             </div>
-            <div className="mt-1 flex justify-between text-[10px] text-slate-600">
+            <div className="mt-1 flex justify-between text-[10px] text-slate-600" aria-hidden="true">
               {LEVEL_TICKS.map((tick) => (
                 <span key={tick}>{tick}</span>
               ))}
             </div>
-          </label>
+          </div>
 
           {/* 种族 */}
           <label className="block">

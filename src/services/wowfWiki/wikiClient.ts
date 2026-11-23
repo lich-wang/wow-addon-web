@@ -102,11 +102,12 @@ export class WikiClient {
       this.pending.set(id, { resolve, reject });
       worker.postMessage({ type: 'render', id, character, slash } satisfies WikiWorkerRequest);
       window.setTimeout(() => {
+        // 只清理当前这个 Worker 的请求：Worker 已被替换/销毁时，旧计时器不应再影响新实例
+        if (this.worker !== worker) return;
         const entry = this.pending.get(id);
-        if (entry) {
-          this.pending.delete(id);
-          entry.reject(new Error('百科渲染超时，请刷新重试'));
-        }
+        if (!entry) return;
+        // 超时视为该 Worker 已不可用：连同其他在途渲染一起结束，页面可以立即提示重试
+        this.failWorker(new Error('百科渲染超时，请刷新重试'));
       }, RENDER_TIMEOUT_MS);
     });
     const { snapshot, renderMs } = await promise;

@@ -159,7 +159,8 @@ export class WoWSimulatorRuntimeCore {
       frameClearAllPoints: (id) => { const f = this.frames.get(id); if (f) f.points = []; },
       frameSetPoint: (id, point, relativeToId, relativePoint, x, y) => {
         const f = this.frames.get(id);
-        if (f) f.points.push({ point, relativeToId, relativePoint, x, y });
+        // Lua 的 nil 经 interop 会变成 undefined：统一规范成 null，和快照消费者保持一致
+        if (f) f.points.push({ point, relativeToId: relativeToId ?? null, relativePoint, x, y });
       },
       frameShow: (id, shown) => { const f = this.frames.get(id); if (f) f.shown = shown; },
       frameIsShown: (id) => this.frames.get(id)?.shown ?? false,
@@ -340,6 +341,13 @@ export class WoWSimulatorRuntimeCore {
   }
 
   recomputeScrollRangeIfNeeded(frameId) {
+    const changed = this.frames.get(frameId);
+    // 尺寸变化的控件本身可能就是一个滚动框：先重算它自己的可滚动范围
+    if (changed && changed.frameType === 'ScrollFrame' && changed.scrollChildId) {
+      const child = this.frames.get(changed.scrollChildId);
+      changed.verticalScrollRange = Math.max(0, (child?.height ?? 0) - (changed.height ?? 400));
+      if (changed.verticalScroll > changed.verticalScrollRange) changed.verticalScroll = changed.verticalScrollRange;
+    }
     for (const f of this.frames.values()) {
       if (f.frameType === 'ScrollFrame' && f.scrollChildId === frameId) {
         const child = this.frames.get(frameId);
@@ -403,16 +411,17 @@ export class WoWSimulatorRuntimeCore {
   loadAddon(addonName, files) {
     this.loadedFiles = [];
     let allOk = true;
+    // 基线取在执行任何 Lua 之前：文件执行期间（如创建控件触发的 OnShow）产生的错误也要算进初始化失败
+    const errorBase = this.luaErrors.length;
     for (const file of files) {
       const ok = this.execLua(file.content, file.filename, [addonName]);
       if (!ok) allOk = false;
       this.loadedFiles.push(ok ? file.filename : `${file.filename} (ERR)`);
     }
-    const errorBase = this.luaErrors.length;
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'ADDON_LOADED', addonName);
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'PLAYER_LOGIN');
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'PLAYER_ENTERING_WORLD', true, false);
-    // 初始化阶段（含登录事件）的报错同样意味着插件没起来，不能对外宣称就绪
+    // 初始化阶段（文件执行 + 登录事件）的报错同样意味着插件没起来，不能对外宣称就绪
     if (this.luaErrors.length !== errorBase) allOk = false;
     return allOk;
   }
@@ -473,7 +482,14 @@ export class WoWSimulatorRuntimeCore {
       dropdown: { ...this.dropdown, items: this.dropdown.items.map((i) => ({ ...i })) },
       chatMessages: this.chatMessages.map((m) => ({ ...m })),
       luaErrors: this.luaErrors.map((e) => ({ ...e })),
-      charState: { ...this.charState },
+      charState: {
+        ...this.charState,
+        // 数组/对象要深拷贝：浅拷贝会让后续原地修改回写到已导出的快照里
+        completedQuests: [...this.charState.completedQuests],
+        activeQuests: [...this.charState.activeQuests],
+        knownSpells: [...this.charState.knownSpells],
+        skills: this.charState.skills.map((skill) => ({ ...skill })),
+      },
       loadedFiles: [...this.loadedFiles],
     };
   }

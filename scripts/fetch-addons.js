@@ -987,8 +987,9 @@ async function finalizeBundledTocs(fileNames) {
 async function main() {
   const onlyArg = process.argv.find(a => a.startsWith('--only='))?.split('=')[1];
   if (onlyArg === 'wowf') {
-    const questieSource = await ensureValidQuestieDBCache();
-    await processWoWF(questieSource);
+    // 仅打包 WoWF 时走纯离线路径：百科数据来自仓库内快照，
+    // QuestieDB 只读本地缓存（存在则用于补全副本任务，缺失则回退快照内的区域索引），不发起任何下载。
+    await processWoWF(null);
     await finalizeBundledTocs(['wowf.zip']);
     writeBundledVersions();
     return;

@@ -29,11 +29,16 @@ function getGitHeadOid() {
   }
 }
 
-function getAutoWowfVersion() {
+/**
+ * 按指定提交统计 WoWF 相关改动次数，生成版本号。
+ * @param {string} [rev] Git 引用；默认 HEAD。打包时传入打包开始时的快照，避免中途 HEAD 变化导致版本与内容不一致
+ * @returns {string}
+ */
+function getAutoWowfVersion(rev = 'HEAD') {
   try {
     const raw = execFileSync(
       'git',
-      ['rev-list', '--count', 'HEAD', '--', 'scripts/locales/wowf.js', 'scripts/locales/wowf-dataset.json', 'addons/WoWF'],
+      ['rev-list', '--count', rev, '--', 'scripts/locales/wowf.js', 'scripts/locales/wowf-dataset.json', 'addons/WoWF'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
     ).trim();
     const count = Number.parseInt(raw, 10);
@@ -2974,34 +2979,48 @@ function validateWowfSnapshot(snapshot) {
     }
   }
 
-  // 3. 每个职业都要有专精，且每个专精都带阶段数据（插件按 phases 渲染循环与天赋）
+  // 3. 每个职业都要有专精，且每个专精都带合法阶段数据（插件按 phases 渲染循环与天赋）
   for (const cls of CLASS_CONFIGS) {
     const specs = classes[cls.key]?.specs;
     if (!Array.isArray(specs) || specs.length === 0) {
       return `职业 ${cls.key} 缺少 specs`;
     }
     for (const spec of specs) {
+      const specLabel = `职业 ${cls.key} 的专精「${spec?.name || spec?.specKey || '未命名'}」`;
       if (!Array.isArray(spec?.phases) || spec.phases.length === 0) {
-        return `职业 ${cls.key} 的专精「${spec?.name || spec?.specKey || '未命名'}」缺少 phases`;
+        return `${specLabel}缺少 phases`;
+      }
+      for (const phase of spec.phases) {
+        const from = phase?.from;
+        const to = phase?.to;
+        if (!Number.isInteger(from) || !Number.isInteger(to)) {
+          return `${specLabel}存在缺少 from/to 或端点非整数的阶段：${JSON.stringify({ from, to })}`;
+        }
+        if (from > to) {
+          return `${specLabel}存在起点大于终点的阶段：${JSON.stringify({ from, to })}`;
+        }
       }
       // 种族职业任务链才有 steps，专精本身不要求；存在时必须是数组
       if (spec.steps !== undefined && !Array.isArray(spec.steps)) {
-        return `职业 ${cls.key} 的专精「${spec?.name || spec?.specKey || '未命名'}」的 steps 不是数组`;
+        return `${specLabel}的 steps 不是数组`;
       }
     }
   }
 
-  // 4. 副本元数据必须能渲染出名字与等级区间
+  // 4. 副本元数据必须能渲染出名字与等级区间；id 会被后续合并流程当作键，必须是有效字符串
   if (!Array.isArray(snapshot.dungeons) || snapshot.dungeons.length === 0) {
     return '快照缺少 dungeons（副本元数据）';
   }
   for (const dungeon of snapshot.dungeons) {
-    const id = dungeon?.id || '(无 id)';
-    if (!dungeon?.name) return `副本 ${id} 缺少 name`;
+    const name = dungeon?.name || '(无名称)';
+    if (typeof dungeon?.id !== 'string' || dungeon.id.trim() === '') {
+      return `副本「${name}」的 id 不是非空字符串：${JSON.stringify(dungeon?.id)}`;
+    }
+    if (!dungeon.name) return `副本 ${dungeon.id} 缺少 name`;
     const minLevel = Number(dungeon?.minLevel);
     const maxLevel = Number(dungeon?.maxLevel);
     if (!Number.isFinite(minLevel) || !Number.isFinite(maxLevel) || minLevel > maxLevel) {
-      return `副本 ${id} 的等级区间非法：${JSON.stringify({ minLevel: dungeon?.minLevel, maxLevel: dungeon?.maxLevel })}`;
+      return `副本 ${dungeon.id} 的等级区间非法：${JSON.stringify({ minLevel: dungeon?.minLevel, maxLevel: dungeon?.maxLevel })}`;
     }
   }
 
@@ -3314,6 +3333,8 @@ export async function buildWoFWikiAssets(publicDir, cacheDir) {
  */
 export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDbBuf = null) {
   const headSnapshot = getGitHeadOid();
+  // 版本号基于打包开始时的提交计算，确保与本次读到的快照/源码属于同一提交
+  const buildVersion = getAutoWowfVersion(headSnapshot || 'HEAD');
   const craftLuaContent = readWoWFLuaFile('CraftArb.lua');
   const coreLuaContent = readWoWFLuaFile('WoWF.lua');
 
@@ -3327,7 +3348,8 @@ export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDb
     throw new Error('[WoWF] 缺少完整的区域任务链索引 (zoneQuests/zoneAreaIds)，请确认 .cache/upstream-addons/questie-db-forever.zip 可读。');
   }
   normalizeWowfDatasetText(dataset);
-  const fullVersion = dataset.meta.version || `${WOWF_VERSION} + DB v2026.11.15`;
+  dataset.meta.version = `${buildVersion} + DB v${dataset.meta.dbVersion || '2026.11.15'}`;
+  const fullVersion = dataset.meta.version;
 
   const zip = new JSZip();
   const tocContent = generateWoWFToc(fullVersion, dataset.meta.updatedAt, dataset);
