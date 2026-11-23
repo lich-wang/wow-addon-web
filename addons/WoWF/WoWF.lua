@@ -3886,6 +3886,12 @@ local function OnCardHyperlinkEnter(self, link)
     GameTooltip:AddLine("已完成的前置任务已自动折叠")
     GameTooltip:AddLine("|cff00ff00点击 [+] 展开 · 点击 [-] 收起|r")
     GameTooltip:Show()
+  elseif linkType == "wowftab" then
+    local label = string.match(payload or "", "^%d+:(.*)$")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine("|cff00ffcc[页面入口]|r")
+    GameTooltip:AddLine((label and label ~= "") and ("点击切换到 |cffffd100" .. label .. "|r") or "点击切换到对应页面")
+    GameTooltip:Show()
   else
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
     GameTooltip:Show()
@@ -3968,6 +3974,12 @@ local function OnCardHyperlinkClick(self, link, text, button)
         state.expandedChains[foldKey] = true
       end
       RefreshUI(true)
+    end
+  elseif linkType == "wowftab" then
+    local tabID = tonumber(string.match(payload or "", "^(%d+)"))
+    if tabID and tabButtons[tabID] then
+      state.activeTab = tabID
+      RefreshUI()
     end
   else
     if (IsModifiedClick and IsModifiedClick("CHATLINK")) or (IsShiftKeyDown and IsShiftKeyDown()) then
@@ -4573,7 +4585,7 @@ local function RenderTabSmartMatch()
     end
   end
   if #matchedClassRuns > 0 then
-    table.insert(milestoneLines, "|cff00ffcc[职业任务]|r 本职业专属任务链与坐标见「职业与天赋」页。")
+    table.insert(milestoneLines, "|cff00ffcc[职业任务]|r 本职业专属任务链与坐标见 |cff00ffcc|Hwowftab:3:「职业与天赋」页|h[「职业与天赋」页]|h|r，点击可直接跳转。")
   end
   if #milestoneLines > 0 then
     list:Add({

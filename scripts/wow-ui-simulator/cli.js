@@ -139,8 +139,13 @@ function summarizeCards(snapshot) {
 }
 
 // 职业任务链标签：旧版路线里程碑卡「Lv.N …·法师职业任务]」与阶段卡「★Lv.N 法师专属职业任务链]」。
-// 现在链只在「职业与天赋」页展示，路线页不应再出现这些标签；解析器保留用于阻止回归与自检。
+// 现在链只在「职业与天赋」页展示，路线页不应再出现；解析器同时识别新版任务链卡片标题与步数格式，
+// 避免只换一种展示格式就绕过回归。
 const CHAIN_TAG_RE = /\[★?Lv\.(\d+) ([^\]\n]*?)(?:专属职业任务链|专属任务链|职业任务)\]/g;
+
+// 新版「职业与天赋」页任务链卡片：标题含「职业任务链与坐标指引」，正文为「Lv.30–40 职业任务链 (5 步)」
+const CLASS_CHAIN_CARD_TITLE = '职业任务链与坐标指引';
+const CLASS_CHAIN_RANGE_RE = /Lv\.(\d+)[–-](\d+) 职业任务链 \((\d+) 步\)/g;
 
 // 旧版路线页同一任务链在里程碑卡与阶段卡里的标签前缀不同（「天裔 (联盟)·法师」vs「法师」），
 // 因此链身份用「等级 + 归一化职业名」：取标签最后一个「·」后的部分，忽略种族/路线前缀。
@@ -149,20 +154,35 @@ function normalizeChainOwner(label) {
   return parts[parts.length - 1].replace(/专属$/, '').trim();
 }
 
-function analyzeRouteDedupe(cards) {
-  // key = `${等级}|${职业}`，value = 出现过的卡片下标集合
+function collectChainKeys(cards) {
+  // key = 链身份，value = 出现过的卡片下标集合
   const chainKeys = new Map();
+  const record = (key, idx) => {
+    if (!chainKeys.has(key)) chainKeys.set(key, new Set());
+    chainKeys.get(key).add(idx);
+  };
   cards.forEach((c, idx) => {
-    for (const m of c.body.matchAll(CHAIN_TAG_RE)) {
-      const key = `${m[1]}|${normalizeChainOwner(m[2])}`;
-      if (!chainKeys.has(key)) chainKeys.set(key, new Set());
-      chainKeys.get(key).add(idx);
+    const title = String(c.title || '');
+    const body = String(c.body || '');
+    for (const m of body.matchAll(CHAIN_TAG_RE)) {
+      record(`${m[1]}|${normalizeChainOwner(m[2])}`, idx);
+    }
+    if (title.includes(CLASS_CHAIN_CARD_TITLE)) {
+      record(`card|${CLASS_CHAIN_CARD_TITLE}`, idx);
+    }
+    for (const m of body.matchAll(CLASS_CHAIN_RANGE_RE)) {
+      record(`range|${m[1]}|${m[2]}`, idx);
     }
   });
+  return chainKeys;
+}
+
+function analyzeRouteDedupe(cards) {
+  const chainKeys = collectChainKeys(cards);
   return {
     chainKeys,
     dupChains: [...chainKeys.entries()].filter(([, set]) => set.size > 1),
-    zoneBlockCards: cards.filter((c) => c.body.includes('本阶段适龄练级区域')),
+    zoneBlockCards: cards.filter((c) => String(c.body || '').includes('本阶段适龄练级区域')),
   };
 }
 
@@ -186,23 +206,46 @@ function selfTestBareCoord() {
   return null;
 }
 
+// 自检：确保「重复链 → 判定重复」「同等级但不同职业 → 不误报」「新版卡片/步数格式 → 能识别」
 function selfTestRouteDedupe() {
   const cases = [
     {
-      name: '同一任务链跨卡重复',
+      name: '旧版同一任务链跨卡重复',
       cards: [{ body: '[Lv.20 人类·法师职业任务]' }, { body: '[★Lv.20 法师专属职业任务链]' }],
+      expectDetected: true,
       expectDup: true,
     },
     {
       name: '同等级但不同职业的两条链',
       cards: [{ body: '[Lv.20 人类·法师职业任务]' }, { body: '[Lv.20 人类·战士职业任务]' }],
+      expectDetected: true,
+      expectDup: false,
+    },
+    {
+      name: '新版职业任务链卡片出现在路线页',
+      cards: [{ title: '[任务链] 法师·奥术 职业任务链与坐标指引', body: 'Lv.30–40 职业任务链 (5 步)' }],
+      expectDetected: true,
+      expectDup: false,
+    },
+    {
+      name: '仅正文步数格式也能识别',
+      cards: [{ title: 'Lv.30–40 升级路线阶段', body: 'Lv.35–40 职业任务链 (6 步)' }],
+      expectDetected: true,
+      expectDup: false,
+    },
+    {
+      name: '普通职业关键任务不误报',
+      cards: [{ title: 'Lv.30 阶段', body: '[★法师职业任务] [奥达曼的能量源]' }],
+      expectDetected: false,
       expectDup: false,
     },
   ];
   for (const c of cases) {
-    const dup = analyzeRouteDedupe(c.cards).dupChains.length > 0;
-    if (dup !== c.expectDup) {
-      return `去重自检失败：${c.name}（期望 ${c.expectDup ? '判定重复' : '不判定重复'}）`;
+    const result = analyzeRouteDedupe(c.cards);
+    const detected = result.chainKeys.size > 0;
+    const dup = result.dupChains.length > 0;
+    if (detected !== c.expectDetected || dup !== c.expectDup) {
+      return `去重自检失败：${c.name}（期望 detected=${c.expectDetected} / dup=${c.expectDup}，实际 detected=${detected} / dup=${dup}）`;
     }
   }
   return null;
@@ -256,8 +299,8 @@ async function main() {
     }
     if (opts.assert && cmd === '/wowf route') {
       // 职业任务链只在「职业与天赋」页展示：升级路线页不得再渲染同一批链。
-      // 按「链身份（等级 + 标签）」统计，而不是按“职业任务”字样计数，
-      // 这样阶段卡里合法的普通职业关键任务不会被误判成重复链。
+      // 同时识别旧版「Lv.N …职业任务]」标签、新版「职业任务链与坐标指引」卡片标题
+      // 与「Lv.30–40 职业任务链 (5 步)」步数格式，避免换一种展示方式就绕过回归。
       const { chainKeys, dupChains, zoneBlockCards } = analyzeRouteDedupe(cards);
       if (chainKeys.size > 0 || dupChains.length > 0) {
         console.error(
@@ -1769,11 +1812,28 @@ async function main() {
 
     // 2.1) 智能匹配页只保留「职业任务」入口，不再铺开任务链
     mageRt.runSlashCommand('/wowf');
-    const mageSmartText = summarizeCards(mageRt.getSnapshot()).map((c) => c.title + '\n' + c.body).join('\n');
+    const mageSmartSnap = mageRt.getSnapshot();
+    const mageSmartText = summarizeCards(mageSmartSnap).map((c) => c.title + '\n' + c.body).join('\n');
+    const mageSmartRaw = Object.values(mageSmartSnap.fontStrings).map((fs) => fs.text || '').join('\n');
     layoutAndMageChecks.push([
       '智能匹配页不再重复职业任务链',
       mageQuestNames.every((name) => !mageSmartText.includes(name)) && mageSmartText.includes('职业与天赋'),
     ]);
+    layoutAndMageChecks.push(['智能匹配页职业任务入口为可点击链接', mageSmartRaw.includes('|Hwowftab:3')]);
+    const smartEntryCard = Object.values(mageSmartSnap.frames).find((f) => {
+      if (f.frameType !== 'Frame' || !f.backdrop) return false;
+      return f.fontStrings.some((fid) => String(mageSmartSnap.fontStrings[fid]?.text || '').includes('|Hwowftab:3'));
+    });
+    layoutAndMageChecks.push(['智能匹配页职业任务入口所在卡片存在', Boolean(smartEntryCard)]);
+    if (smartEntryCard) {
+      mageRt.triggerFrameScript(smartEntryCard.id, 'OnHyperlinkClick', 'wowftab:3:「职业与天赋」页', '「职业与天赋」页', 'LeftButton');
+      const smartAfterClick = mageRt.getSnapshot();
+      const smartAfterText = summarizeCards(smartAfterClick).map((c) => c.title + '\n' + c.body).join('\n');
+      layoutAndMageChecks.push([
+        '点击职业任务入口切换到职业与天赋页',
+        smartAfterClick.luaErrors.length === 0 && smartAfterText.includes('战斗循环、天赋与职业任务'),
+      ]);
+    }
 
     // 3) 祖尔法拉克 #2861 联盟视角仅 1 条且为铁炉堡彬克；不同拾取 NPC 与「显示全部副本」不同职业同 ID 任务不被误删
     mageRt.charState.level = 46;
