@@ -541,6 +541,7 @@ function UIDropDownMenu_Refresh(dropDownFrame, useValue, dropdownLevel)
   __PopulateDropDown__(target, lvl)
 end
 function __WOW_CLICK_DROPDOWN_ITEM__(index)
+  if not __WOW_BRIDGE__:dropdownIsOpen() then return end
   local item = __DROPDOWN_ITEMS__[tonumber(index) or 0]
   if not item or item.disabled or item.isTitle then return end
   if type(item.func) == "function" then
@@ -552,7 +553,10 @@ function __WOW_CLICK_DROPDOWN_ITEM__(index)
   end
 end
 function CloseDropDownMenus()
+  __DROPDOWN_ITEMS__ = {}
+  __DROPDOWN_FRAME__ = nil
   __DROPDOWN_ANCHOR__ = nil
+  __WOW_BRIDGE__:dropdownClear()
   __WOW_BRIDGE__:dropdownClose()
 end
 

@@ -3031,12 +3031,10 @@ local function MarkCuratedClassRuns(runs)
   if type(runs) ~= "table" then return {} end
   local out = {}
   local seenKey = {}
-  local seenLastStep = {}
   for _, cr in ipairs(runs) do
     if type(cr) == "table" then
       local stepIds = {}
       local seenStep = {}
-      local lastStepId = nil
       if type(cr.steps) == "table" and #cr.steps > 0 then
         -- 保留内置手工整理的完整多步职业任务链，避免被 QuestieDB 截断或覆盖标题/NPC
         cr._preserveCuratedChain = true
@@ -3045,11 +3043,12 @@ local function MarkCuratedClassRuns(runs)
           if sid and sid > 0 and not seenStep[sid] then
             seenStep[sid] = true
             table.insert(stepIds, tostring(sid))
-            lastStepId = sid
           end
         end
       end
       local runId = tonumber(cr.id or cr.questId)
+      -- 去重键必须包含完整步骤序列：只按「阵营 + 末步」合并，会把起始步骤/种族不同的
+      -- 同终步链（如萨满兽人 2983 与牛头人 2984 都收束到 1527）误判为重复而隐藏。
       local dedupKey
       if #stepIds > 0 then
         dedupKey = tostring(cr.faction or "") .. ":steps:" .. table.concat(stepIds, ",")
@@ -3058,10 +3057,8 @@ local function MarkCuratedClassRuns(runs)
       else
         dedupKey = tostring(cr.faction or "") .. ":name:" .. tostring(cr.name or "") .. ":" .. tostring(cr.level or "")
       end
-      local lastKey = lastStepId and (tostring(cr.faction or "") .. ":last:" .. tostring(lastStepId)) or nil
-      if not seenKey[dedupKey] and (not lastKey or not seenLastStep[lastKey]) then
+      if not seenKey[dedupKey] then
         seenKey[dedupKey] = true
-        if lastKey then seenLastStep[lastKey] = true end
         table.insert(out, cr)
       end
     end
@@ -5762,25 +5759,23 @@ local function RenderTabDungeons()
       if d.quests and #d.quests > 0 then
         local filteredQuests = {}
         local sharedQuests = {}
-        local seenInThisDungeon = {}
         local otherFactionOrClassCount = 0
         for _, q in ipairs(DedupeQuestieQuests(d.quests)) do
           if not IsQuestCompleted(q) then
             local qFactionOk = (not q.faction or q.faction == "" or q.faction == "both" or q.faction == state.faction)
             if state.dungeonFilter ~= "MATCH" or (qFactionOk and MatchesQuestClass(q)) then
               -- 同一任务常同时挂在多个副本分区（如血色军械库/大教堂共享任务），
-              -- 后续分区只做引用提示，不再整条重复展开；同副本同阵营相同任务 ID 只保留一条
+              -- 后续分区只做引用提示，不再整条重复展开。
+              -- 这里不再按「任务 ID + 阵营」二次去重：DedupeQuestieQuests 已比较职业集合、
+              -- 步骤依赖与拾取/交付位置，等价记录才会合并；本地键会误删同 ID 但职业/NPC
+              -- 不同的副本任务（「显示全部副本」模式下尤其明显）。
               local qKey = tostring(q.id or q.name)
-              local localKey = qKey .. ":" .. tostring(q.faction or "both")
-              if not seenInThisDungeon[localKey] then
-                seenInThisDungeon[localKey] = true
-                local firstDungeon = shownQuestDungeon[qKey]
-                if firstDungeon and firstDungeon ~= d.name then
-                  table.insert(sharedQuests, string.format("%s（见 %s）", FormatQuestLink(q, d.minLevel, d.entranceZone or d.zone or ""), firstDungeon))
-                else
-                  shownQuestDungeon[qKey] = d.name
-                  table.insert(filteredQuests, q)
-                end
+              local firstDungeon = shownQuestDungeon[qKey]
+              if firstDungeon and firstDungeon ~= d.name then
+                table.insert(sharedQuests, string.format("%s（见 %s）", FormatQuestLink(q, d.minLevel, d.entranceZone or d.zone or ""), firstDungeon))
+              else
+                shownQuestDungeon[qKey] = d.name
+                table.insert(filteredQuests, q)
               end
             else
               otherFactionOrClassCount = otherFactionOrClassCount + 1

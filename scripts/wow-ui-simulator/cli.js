@@ -1459,15 +1459,22 @@ async function main() {
       snap = clickRepBtn(repRt, (l) => l.includes('清空筛选'), '点击清空筛选按钮');
       assertDetailTitles(snap, ['艾泽拉斯贸易局', '肯瑞托', '铁马兄弟会', '凄凉之地 · 半人马阵营'], ['杜隆塔尔补给后勤部'], '清空按钮恢复全部');
 
-      // 11) 打开下拉状态下切出声望页：隐藏筛选栏并关闭下拉菜单；其他页打开顶部下拉刷新不误关下拉
+      // 11) 打开下拉状态下切出声望页：隐藏筛选栏并关闭下拉菜单；关闭后陈旧点击不得改写筛选状态
       openRepDropdown(repRt, '切页前打开下拉');
       repRt.runSlashCommand('/wowf route');
       const routeSnap = repRt.getSnapshot();
       repChecks.push(['切出声望页隐藏筛选栏', !findVisibleButton(routeSnap, (l) => l.includes('筛选模式:'))]);
-      repChecks.push(['切出声望页关闭下拉菜单', routeSnap.dropdown.open === false]);
+      repChecks.push(['切出声望页关闭下拉菜单', routeSnap.dropdown.open === false && routeSnap.dropdown.items.length === 0]);
+
+      repRt.clickDropdownItem(2);
+      repRt.runSlashCommand('/wowf rep');
+      const afterStaleClickSnap = repRt.getSnapshot();
+      repChecks.push(['下拉关闭后陈旧点击无效', Boolean(findVisibleButton(afterStaleClickSnap, (l) => l.startsWith('声望筛选: 全部')))]);
+      repRt.runSlashCommand('/wowf route');
+      const routeSnap2 = repRt.getSnapshot();
 
       // 验证在其他页签打开职业下拉菜单时，HideUnusedCards 不会误关闭它
-      const classBtn = findVisibleButton(routeSnap, (l) => l.startsWith('职业:'));
+      const classBtn = findVisibleButton(routeSnap2, (l) => l.startsWith('职业:'));
       if (classBtn) {
         repRt.triggerFrameScript(classBtn.id, 'OnClick', 'LeftButton');
         const classOpenSnap = repRt.getSnapshot();
@@ -1677,6 +1684,10 @@ async function main() {
               { id = 2861, name = "塔贝萨的任务", level = 46, minLevel = 40, faction = "alliance", npc = "彬克", zone = "铁炉堡", x = 27.0, y = 8.2 },
               { id = 2861, name = "塔贝萨的任务", level = 46, minLevel = 40, faction = "alliance", npc = "彬克", zone = "铁炉堡", x = 27.0, y = 8.2 },
               { id = 2861, name = "塔贝萨的任务", level = 46, minLevel = 40, faction = "horde", npc = "安娜斯塔西娅·哈特威尔", zone = "幽暗城", x = 85.0, y = 10.2 },
+              { id = 99981, name = "职业区分副本任务", level = 46, minLevel = 40, faction = "alliance", classes = { "MAGE" }, npc = "法系NPC", zone = "塔纳利斯", x = 51.0, y = 28.0 },
+              { id = 99981, name = "职业区分副本任务", level = 46, minLevel = 40, faction = "alliance", classes = { "WARLOCK" }, npc = "术士NPC", zone = "塔纳利斯", x = 52.0, y = 29.0 },
+              { id = 99982, name = "多NPC拾取任务", level = 46, minLevel = 40, faction = "alliance", npc = "拾取NPC甲", zone = "塔纳利斯", x = 53.0, y = 30.0 },
+              { id = 99982, name = "多NPC拾取任务", level = 46, minLevel = 40, faction = "alliance", npc = "拾取NPC乙", zone = "塔纳利斯", x = 54.0, y = 31.0 },
             },
           },
         },
@@ -1740,23 +1751,39 @@ async function main() {
     layoutAndMageChecks.push(['路线页折叠已完成前置', milestoneBody.includes('已完成前 2 步')]);
     layoutAndMageChecks.push(['路线页保留Lv.30/Lv.35标识', milestoneBody.includes('Lv.30') && milestoneBody.includes('Lv.35')]);
 
-    // 3) 祖尔法拉克 #2861 联盟视角仅 1 条且为铁炉堡彬克
+    // 3) 祖尔法拉克 #2861 联盟视角仅 1 条且为铁炉堡彬克；不同拾取 NPC 与「显示全部副本」不同职业同 ID 任务不被误删
     mageRt.charState.level = 46;
     mageRt.runSlashCommand('/wowf dungeon');
     const zfSnap = mageRt.getSnapshot();
     const zfCard = summarizeCards(zfSnap).find((c) => c.title.includes('祖尔法拉克'));
+    const zfBody = zfCard ? zfCard.body : '';
     layoutAndMageChecks.push(['祖尔法拉克卡片存在', Boolean(zfCard)]);
-    if (zfCard) {
-      layoutAndMageChecks.push(['祖尔法拉克#2861仅出现1次', countOccurrences(zfCard.body, '塔贝萨的任务') === 1]);
-      layoutAndMageChecks.push(['祖尔法拉克#2861联盟显示彬克', zfCard.body.includes('彬克') && !zfCard.body.includes('安娜斯塔西娅')]);
-    }
+    layoutAndMageChecks.push(['祖尔法拉克#2861仅出现1次', countOccurrences(zfBody, '塔贝萨的任务') === 1]);
+    layoutAndMageChecks.push(['祖尔法拉克#2861联盟显示彬克', zfBody.includes('彬克') && !zfBody.includes('安娜斯塔西娅')]);
+    layoutAndMageChecks.push(['MATCH模式保留不同拾取NPC同ID任务', zfBody.includes('拾取NPC甲') && zfBody.includes('拾取NPC乙')]);
+    layoutAndMageChecks.push(['MATCH模式仅保留法师职业任务', zfBody.includes('法系NPC') && !zfBody.includes('术士NPC')]);
+    const showAllDungeonBtn = findVisibleBtn(zfSnap, (l) => l.includes('看无限服新本'));
+    layoutAndMageChecks.push(['副本筛选按钮-看无限服新本存在', Boolean(showAllDungeonBtn)]);
+    if (showAllDungeonBtn) mageRt.triggerFrameScript(showAllDungeonBtn.id, 'OnClick', 'LeftButton');
+    const zfNewSnap = mageRt.getSnapshot();
+    const showAllDungeonBtn2 = findVisibleBtn(zfNewSnap, (l) => l.includes('显示全部副本'));
+    layoutAndMageChecks.push(['副本筛选按钮-显示全部副本存在', Boolean(showAllDungeonBtn2)]);
+    if (showAllDungeonBtn2) mageRt.triggerFrameScript(showAllDungeonBtn2.id, 'OnClick', 'LeftButton');
+    const zfAllSnap = mageRt.getSnapshot();
+    const zfAllCards = summarizeCards(zfAllSnap);
+    layoutAndMageChecks.push(['已切换到全部副本模式', zfAllCards.some((c) => c.title.includes('当前筛选: 全部'))]);
+    const zfAllCard = zfAllCards.find((c) => c.title.includes('祖尔法拉克'));
+    const zfAllBody = zfAllCard ? zfAllCard.body : '';
+    layoutAndMageChecks.push(['全部副本模式保留同ID不同职业记录', zfAllBody.includes('法系NPC') && zfAllBody.includes('术士NPC')]);
+    layoutAndMageChecks.push(['全部副本模式#2861保留双阵营但不重复同阵营', countOccurrences(zfAllBody, '塔贝萨的任务') === 2]);
 
-    // 4) 单步职业任务与回退重复 classRuns 不重复渲染
+    // 4) 单步职业任务与回退重复 classRuns 不重复渲染，同时保留末步相同但起始步骤不同的种族链
     const dupFallbackMockLua = `
       WoWF_Data = {
         meta = { version = "dup-test" },
         routes = {
           dwarf = { name = "矮人", faction = "alliance", bands = { { from = 1, to = 60, zone = "丹莫罗", hub = { name = "卡拉诺斯", x = 47.0, y = 52.0 }, quests = {} } } },
+          troll = { name = "巨魔", faction = "horde", bands = { { from = 1, to = 60, zone = "杜隆塔尔", hub = { name = "森金村", x = 55.0, y = 74.0 }, quests = {} } } },
         },
         classes = {
           MAGE = {
@@ -1765,6 +1792,27 @@ async function main() {
             classRuns = {
               { id = 99910, faction = "alliance", raceId = "human", raceName = "人类", level = 40, to = 40, name = "单步职业任务", steps = { { id = 99910, name = "单步职业任务", level = 40, zone = "暴风城", npc = "詹妮亚", x = 49.6, y = 85.8 } } },
               { id = 99910, faction = "alliance", raceId = "gnome", raceName = "侏儒", level = 40, to = 40, name = "单步职业任务", steps = { { id = 99910, name = "单步职业任务", level = 40, zone = "暴风城", npc = "詹妮亚", x = 49.6, y = 85.8 } } },
+            },
+            macros = {},
+          },
+          SHAMAN = {
+            name = "萨满祭司",
+            specs = { { key = "ele", name = "元素", recommendedProfs = "", phases = {}, steps = {}, musts = {} } },
+            classRuns = {
+              {
+                id = 2983, faction = "horde", raceId = "orc", raceName = "兽人", level = 10, to = 13, name = "火焰的召唤",
+                steps = {
+                  { id = 2983, name = "火焰的召唤(兽人)", level = 10, zone = "杜隆塔尔", npc = "斯瓦特", x = 54.4, y = 42.6 },
+                  { id = 1527, name = "火焰的召唤(终步)", level = 13, zone = "杜隆塔尔", npc = "塔尔努", x = 38.5, y = 58.9 },
+                },
+              },
+              {
+                id = 2984, faction = "horde", raceId = "tauren", raceName = "牛头人", level = 10, to = 13, name = "火焰的召唤",
+                steps = {
+                  { id = 2984, name = "火焰的召唤(牛头人)", level = 10, zone = "莫高雷", npc = "纳姆·逐星", x = 48.3, y = 59.1 },
+                  { id = 1527, name = "火焰的召唤(终步)", level = 13, zone = "杜隆塔尔", npc = "塔尔努", x = 38.5, y = 58.9 },
+                },
+              },
             },
             macros = {},
           },
@@ -1786,22 +1834,39 @@ async function main() {
     const dupFallbackBody = getChainCardBody(dupFallbackRt.getSnapshot());
     layoutAndMageChecks.push(['单步及重复回退任务链仅显示1次', countOccurrences(dupFallbackBody, '单步职业任务') === 1]);
 
+    const shamanFallbackRt = new WoWSimulatorRuntime({
+      level: 10,
+      classKey: 'SHAMAN',
+      raceKey: '巨魔',
+      faction: 'Horde',
+    });
+    shamanFallbackRt.loadAddon(addonName, [
+      { filename: 'ShamanFallbackMock.lua', content: dupFallbackMockLua },
+      ...coreOnlyFiles,
+    ]);
+    shamanFallbackRt.runSlashCommand('/wowf class');
+    const shamanFallbackBody = getChainCardBody(shamanFallbackRt.getSnapshot());
+    layoutAndMageChecks.push(['回退保留末步相同但起始不同的种族链', shamanFallbackBody.includes('火焰的召唤(兽人)') && shamanFallbackBody.includes('火焰的召唤(牛头人)')]);
+
     const layoutMageFailed = layoutAndMageChecks.filter(([, ok]) => !ok);
     const mageFinalSnap = mageRt.getSnapshot();
     const dupFbSnap = dupFallbackRt.getSnapshot();
-    if (wrapSnap.luaErrors.length > 0 || mageFinalSnap.luaErrors.length > 0 || dupFbSnap.luaErrors.length > 0 || layoutMageFailed.length > 0) {
+    const shamanFbSnap = shamanFallbackRt.getSnapshot();
+    if (wrapSnap.luaErrors.length > 0 || mageFinalSnap.luaErrors.length > 0 || dupFbSnap.luaErrors.length > 0 || shamanFbSnap.luaErrors.length > 0 || layoutMageFailed.length > 0) {
       assertionFailed = true;
       console.error(
-        `[Assert Failed] 布局/法师职业任务回归 errors=${wrapSnap.luaErrors.length + mageFinalSnap.luaErrors.length + dupFbSnap.luaErrors.length}, failed=${layoutMageFailed.map(([n]) => n).join('|')}`
+        `[Assert Failed] 布局/法师职业任务回归 errors=${wrapSnap.luaErrors.length + mageFinalSnap.luaErrors.length + dupFbSnap.luaErrors.length + shamanFbSnap.luaErrors.length}, failed=${layoutMageFailed.map(([n]) => n).join('|')}`
       );
       if (wrapSnap.luaErrors.length > 0) console.error(wrapSnap.luaErrors);
       if (mageFinalSnap.luaErrors.length > 0) console.error(mageFinalSnap.luaErrors);
       if (dupFbSnap.luaErrors.length > 0) console.error(dupFbSnap.luaErrors);
+      if (shamanFbSnap.luaErrors.length > 0) console.error(shamanFbSnap.luaErrors);
     } else {
       console.log('[✓] 宽窗页签布局（含自动换行兜底）与法师职业任务去重回归通过。');
     }
     mageRt.destroy();
     dupFallbackRt.destroy();
+    shamanFallbackRt.destroy();
   }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
