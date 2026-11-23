@@ -4393,8 +4393,8 @@ local function BuildBandLines(band, opts)
     end
   end
 
-  -- 注意：职业任务链与专精要点不在阶段卡里渲染 —— 它们统一由「升级路线」页顶部的
-  -- 「核心职业任务与专精里程碑」卡展示，否则同一批职业任务会在同一页出现两遍。
+  -- 注意：职业任务链与专精要点不在阶段卡里渲染 —— 职业任务链统一由「职业与天赋」页
+  -- 的「职业任务链与坐标指引」卡展示，升级路线页只在顶部摘要卡里保留练级手法与专精里程碑。
 
   if band.professions and #band.professions > 0 then
     local pList = {}
@@ -4560,7 +4560,7 @@ local function RenderTabSmartMatch()
     })
   end
 
-  -- 5. 当前等级种族+职业专属任务链与关键里程碑摘要
+  -- 5. 当前等级专精里程碑摘要（职业任务链统一在「职业与天赋」页展示，这里只留入口）
   local milestoneLines = {}
   local milestoneFilter = BuildMilestoneFilter()
   if spec and spec.musts then
@@ -4572,30 +4572,16 @@ local function RenderTabSmartMatch()
       end
     end
   end
-  for _, cr in ipairs(matchedClassRuns) do
-    local crTo = cr.to or cr.level or 60
-    if not ShouldSkipClassRun(cr, milestoneFilter) and lvl >= (cr.level - 4) and crTo >= lvl - 2 and #milestoneLines < 5 then
-      local crLine = FormatClassRunLine(cr, {
-        prefix = "  - ",
-        routeName = route and route.name or "",
-        clsName = cls and cls.name or "",
-        fallbackZone = band and band.zone or "",
-        npcPrefix = "起始: ",
-        teachArrow = " -> 奖励技能: ",
-        indent = "      ",
-        treeRendered = false, -- 智能匹配页只放一行摘要，完整树在「升级路线」页
-        summaryStepLink = true, -- 摘要行链接用「第一步任务」，与同一行的起始 NPC 对应
-      })
-      table.insert(milestoneLines, crLine)
-    end
+  if #matchedClassRuns > 0 then
+    table.insert(milestoneLines, "|cff00ffcc[职业任务]|r 本职业专属任务链与坐标见「职业与天赋」页。")
   end
   if #milestoneLines > 0 then
     list:Add({
-      title = string.format("|cff00ff96★ 当前阶段 %s·%s 关键里程碑与专属职业任务|r", route and route.name or "", cls and cls.name or ""),
+      title = string.format("|cff00ff96★ 当前阶段 %s·%s 关键里程碑|r", route and route.name or "", cls and cls.name or ""),
       body = table.concat(milestoneLines, "\n"),
       theme = "milestone",
       action = {
-        label = "查看全部任务 ->",
+        label = "查看升级路线 ->",
         fn = function() state.activeTab = 2; RefreshUI() end,
       },
     })
@@ -5067,7 +5053,6 @@ local function RenderTabRoutes()
   end
 
   local recProfs = (spec and spec.recommendedProfs) or ""
-  local matchedClassRuns = GetCurrentClassRuns(route, cls, state.faction)
   local phase = GetMatchedPhase(spec, lvl)
   local isMatchMode = (state.routeFilter == "MATCH") and (not state.searchQuery or state.searchQuery == "")
   local toggle = FilterToggle("routeFilter", {
@@ -5103,9 +5088,9 @@ local function RenderTabRoutes()
     action = toggle.action,
   })
 
-  -- 角色专属职业任务链与当前阶段手法/专精里程碑摘要卡
-  -- 这里也承载「后续阶段才会出现的职业任务」：该窗口必须与下方阶段卡的展示范围
-  -- （当前等级起 16 级内）保持一致，否则这些任务会从整页消失。
+  -- 当前阶段练级手法与专精里程碑摘要卡。
+  -- 职业任务链只在「职业与天赋」页的「职业任务链与坐标指引」卡展示；
+  -- 升级路线页不再重复同一批任务（两页都铺一遍会让玩家误以为要跑两次）。
   local LOOKAHEAD = 16
   local charGuideLines = {}
   local milestoneFilter = BuildMilestoneFilter()
@@ -5114,23 +5099,6 @@ local function RenderTabRoutes()
       "|cff71d5ff[战斗] 当前等级 (%s·Lv.%d-%d) 练级手法:|r 常驻 %s  |  起手 %s  |  循环 %s",
       spec and spec.name or "", phase.from or 1, phase.to or 60, phase.keep or "无", phase.open or "平砍", phase.cycle or "平砍"
     ))
-  end
-  if #matchedClassRuns > 0 then
-    for _, cr in ipairs(matchedClassRuns) do
-      local crTo = cr.to or cr.level or 60
-      if not ShouldSkipClassRun(cr, milestoneFilter) and (not isMatchMode or (cr.level <= lvl + LOOKAHEAD and crTo >= lvl - 2)) then
-        local activeTag = (lvl >= cr.level and lvl <= crTo + 2) and "|cff00ff00★[当前可做]|r " or ""
-        local crLine, crTree = FormatClassRunLine(cr, {
-          prefix = "  - " .. activeTag,
-          tag = string.format("|cff00ffcc[Lv.%d %s·%s职业任务]|r", cr.level, route.name, cls and cls.name or ""),
-          npcPrefix = "起始: ",
-          indent = "      ",
-          foldCompleted = true,
-        })
-        table.insert(charGuideLines, crLine)
-        if crTree then table.insert(charGuideLines, crTree) end
-      end
-    end
   end
   if spec and spec.musts then
     for _, m in ipairs(spec.musts) do
@@ -5144,7 +5112,7 @@ local function RenderTabRoutes()
   if #charGuideLines > 0 then
     list:Add({
       -- 上一张卡已经写明「路线 · 职业(专精)」，这里只说明本卡内容，不再重复同一串身份信息
-      title = "|cff00ff96★ 核心职业任务与专精里程碑|r",
+      title = "|cff00ff96★ 当前阶段练级手法与专精里程碑|r",
       body = table.concat(charGuideLines, "\n"),
       theme = "milestone",
       badge = "角色专属匹配",
@@ -5209,8 +5177,8 @@ local function RenderTabRoutes()
     end
 
     if MatchesSearch(searchBlob) then
-      -- 职业任务链与专精要点统一由上方「核心职业任务与专精里程碑」卡展示，
-      -- 这里不再重复渲染，避免同一批职业任务在路线页出现两遍。
+      -- 职业任务链统一由「职业与天赋」页展示，专精要点与练级手法由上方
+      -- 「当前阶段练级手法与专精里程碑」卡展示；阶段卡这里不再重复渲染。
       local lines = BuildBandLines(b, {
         level = lvl,
         cls = cls,
