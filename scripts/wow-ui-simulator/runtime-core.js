@@ -77,7 +77,13 @@ export class WoWSimulatorRuntimeCore {
     interop.push(this.L, this.createBridge());
     lua.lua_setglobal(this.L, to_luastring('__WOW_BRIDGE__'));
 
-    this.execLua(this.shimSource, 'wow-shim.lua');
+    const shimOk = this.execLua(this.shimSource, 'wow-shim.lua');
+    if (!shimOk) {
+      // shim 加载失败时后续所有 Lua 调用都没有意义：清理计时器并抛出可读错误
+      const reason = this.luaErrors.map((e) => e.message).join('；') || '未知错误';
+      this.destroy();
+      throw new Error(`WoW API shim 加载失败：${reason}`);
+    }
   }
 
   createBridge() {

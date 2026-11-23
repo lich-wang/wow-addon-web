@@ -266,6 +266,8 @@ export function WikiExplorer() {
         <div className="flex flex-wrap gap-1.5 border-t border-slate-800 pt-3">
           <button
             type="button"
+            aria-expanded={tabsOpen}
+            aria-controls="wiki-tablist"
             onClick={() => setTabsOpen((v) => !v)}
             className="mb-1 flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-400 hover:border-amber-500/50 hover:text-amber-300 sm:hidden"
           >
@@ -273,6 +275,7 @@ export function WikiExplorer() {
             <ChevronDown className={`h-3 w-3 transition-transform ${tabsOpen ? 'rotate-180' : ''}`} />
           </button>
           <div
+            id="wiki-tablist"
             role="tablist"
             aria-label="百科页签"
             className={`${tabsOpen ? 'flex' : 'hidden'} flex-wrap gap-1.5 sm:flex`}

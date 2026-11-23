@@ -3007,11 +3007,9 @@ function validateWowfSnapshot(snapshot) {
       for (const phase of spec.phases) {
         const from = phase?.from;
         const to = phase?.to;
-        if (!Number.isInteger(from) || !Number.isInteger(to)) {
-          return `${specLabel}存在缺少 from/to 或端点非整数的阶段：${JSON.stringify({ from, to })}`;
-        }
-        if (from > to) {
-          return `${specLabel}存在起点大于终点的阶段：${JSON.stringify({ from, to })}`;
+        // 与 band 一致：必须是 1-60 整数，否则 Lua 侧比较出错；超大端点还会让下面的枚举死循环
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > 60 || from > to) {
+          return `${specLabel}存在非法阶段：${JSON.stringify({ from, to })}（要求 1-60 整数且 from<=to）`;
         }
       }
       // 专精阶段需覆盖其全部等级区间：中间缺口会让该等级段选不到循环（阶段重叠是合法的）
@@ -3049,11 +3047,11 @@ function validateWowfSnapshot(snapshot) {
     return `快照缺少无限服内置副本：${missingBuiltinDungeons.join(', ')}`;
   }
   for (const dungeon of snapshot.dungeons) {
-    const name = dungeon?.name || '(无名称)';
+    const name = typeof dungeon?.name === 'string' ? dungeon.name : '';
     if (typeof dungeon?.id !== 'string' || dungeon.id.trim() === '') {
-      return `副本「${name}」的 id 不是非空字符串：${JSON.stringify(dungeon?.id)}`;
+      return `副本「${name || '(无名称)'}」的 id 不是非空字符串：${JSON.stringify(dungeon?.id)}`;
     }
-    if (!dungeon.name) return `副本 ${dungeon.id} 缺少 name`;
+    if (name.trim() === '') return `副本 ${dungeon.id} 缺少 name`;
     const minLevel = dungeon?.minLevel;
     const maxLevel = dungeon?.maxLevel;
     // 不接受 null/字符串：toLuaValue 会丢掉 null 字段，插件随后对 nil 做算术会直接报错
@@ -3246,9 +3244,14 @@ async function buildWoWFDataset(cacheDir, _getHeaders, questieSource = null) {
     : questieSource && typeof questieSource === 'object'
       ? questieSource.questieDbBuf || null
       : null;
-  const livePrereqs = useSnapshotOnly
+  let livePrereqs = useSnapshotOnly
     ? null
     : await loadQuestiePrereqs(cacheDir, 'questie-db-forever.zip', questieDbBuf);
+  // 缓存可能残缺（缺前置任务分片/解析出错）：此时宁可不补全，也不要让半截数据覆盖快照里的 preId
+  if (livePrereqs && (livePrereqs.size === 0 || (livePrereqs._parseErrors || 0) > 0)) {
+    console.warn('[WoWF] QuestieDB 数据不可用或不完整，跳过任务补全并使用仓库快照的区域索引。');
+    livePrereqs = null;
+  }
 
   // 4. 基于本地 QuestieDB 补全全阵营副本任务与任务链
   enrichDungeonsWithQuestieDB(dungeonMap, livePrereqs);
@@ -3350,9 +3353,32 @@ WoWF_Data = ${toLuaValue(dataset, 0)}
  */
 function writeWikiAssets(wikiDir, assets) {
   fs.mkdirSync(wikiDir, { recursive: true });
-  fs.writeFileSync(path.join(wikiDir, 'data.lua'), assets.dataLua);
-  fs.writeFileSync(path.join(wikiDir, 'core.lua'), assets.coreLua);
-  fs.writeFileSync(path.join(wikiDir, 'craftarb.lua'), assets.craftLua);
+  const files = [
+    ['data.lua', assets.dataLua],
+    ['core.lua', assets.coreLua],
+    ['craftarb.lua', assets.craftLua],
+  ];
+  // 先全部写临时文件，再统一重命名：中途失败时旧文件保持完整，
+  // 下游按修改时间复用资源时不会把“写了一半”的产物当成有效内容。
+  const tempPaths = files.map(([name, content]) => {
+    const tempPath = path.join(wikiDir, `.${name}.tmp`);
+    fs.writeFileSync(tempPath, content);
+    return [tempPath, path.join(wikiDir, name)];
+  });
+  try {
+    for (const [tempPath, finalPath] of tempPaths) {
+      fs.renameSync(tempPath, finalPath);
+    }
+  } catch (err) {
+    for (const [tempPath] of tempPaths) {
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch {
+        // 清理失败不掩盖原始错误
+      }
+    }
+    throw err;
+  }
   console.log(`[✓] wiki assets written to ${wikiDir}`);
 }
 
@@ -3368,6 +3394,10 @@ function writeWikiAssets(wikiDir, assets) {
  */
 export async function buildWoFWikiAssets(publicDir, cacheDir) {
   const dataset = await buildWoWFDataset(cacheDir, () => ({}), null);
+  // 最终区域索引必须完整，否则网页的任务链页签会缺数据；不要带着无效索引“构建成功”
+  if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds)) {
+    throw new Error('[WoWF] 区域任务链索引无效（zoneQuests/zoneAreaIds），请确认数据快照或 QuestieDB 缓存完整。');
+  }
   normalizeWowfDatasetText(dataset);
   const wikiDir = path.join(publicDir, 'wiki');
   writeWikiAssets(wikiDir, {

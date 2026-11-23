@@ -5478,7 +5478,7 @@ local function RenderTabMacros()
 
   list:Add({
     title = string.format("|cff00ffcc[宏库] %s 实用一键宏命令库 (共 %d 个)|r", cls and cls.name or "", #macros),
-    body = "内置精选职业宏库。点击每个宏卡片右上角的 |cff00ff00[一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击将弹出 Ctrl+C 复制窗口。",
+    body = "内置精选职业宏库。游戏内点击每个宏卡片右上角的 |cff00ff00[一键写入宏]|r 按钮，即可直接将该宏创建到您的游戏角色宏槽位中（输入 |cffffd100/macro|r 即可拖入技能栏）；战斗中点击会弹出 Ctrl+C 复制窗口。网页版无法写入游戏宏槽位，请直接复制宏代码。",
     theme = "header",
     badge = "支持一键生成",
   })

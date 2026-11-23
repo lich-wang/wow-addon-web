@@ -21,10 +21,14 @@ const wikiDir = path.join(publicDir, 'wiki');
 const cacheDir = path.resolve('.cache/upstream-addons');
 
 const OUTPUTS = ['data.lua', 'core.lua', 'craftarb.lua'];
+// 输入指纹：插件 Lua 源码、数据快照，以及生成器本身与它读取的声望数据
 const INPUTS = [
   path.resolve('addons/WoWF/WoWF.lua'),
   path.resolve('addons/WoWF/CraftArb.lua'),
   path.resolve('scripts/locales/wowf-dataset.json'),
+  path.resolve('scripts/locales/wowf-reputation-data.json'),
+  path.resolve('scripts/locales/wowf.js'),
+  path.resolve('scripts/build-wiki-assets.mjs'),
 ];
 
 const force = process.argv.includes('--force');
