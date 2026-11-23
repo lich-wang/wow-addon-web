@@ -110,14 +110,15 @@ export type WowSnapshot = {
 };
 
 export class WoWSimulatorRuntimeCore {
-  constructor(initialChar?: Partial<WowCharState>, options?: { shimSource: string });
+  /** 第二个参数是必填项：缺少 shim 源码时实现会立即抛错 */
+  constructor(initialChar: Partial<WowCharState> | undefined, options: { shimSource: string });
   charState: WowCharState;
   execLua(code: string, chunkName?: string, varargs?: string[]): boolean;
   callLuaGlobal(fnName: string, ...args: unknown[]): void;
   loadAddon(
     addonName: string,
     files: { filename: string; content: string }[]
-  ): void;
+  ): boolean;
   runSlashCommand(cmdLine: string): void;
   triggerFrameScript(frameId: string, scriptName: string, ...args: unknown[]): void;
   takeEmittedStrings(): string[];

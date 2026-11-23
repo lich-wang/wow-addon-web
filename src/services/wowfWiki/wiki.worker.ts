@@ -95,18 +95,28 @@ async function loadAddon(baseUrl: string): Promise<{ meta: WikiMeta; loadMs: num
   ]);
 
   runtime?.destroy();
-  runtime = new WoWSimulatorRuntimeCore(
+  const candidate = new WoWSimulatorRuntimeCore(
     { level: 1, classKey: 'WARRIOR', raceKey: 'human', faction: 'Alliance' },
     { shimSource: wowShimSource }
   );
-  runtime.loadAddon('WoWF', [
+  const loaded = candidate.loadAddon('WoWF', [
     { filename: 'Data.lua', content: dataLua },
     { filename: 'CraftArb.lua', content: craftLua },
     { filename: 'WoWF.lua', content: coreLua },
   ]);
+  if (!loaded) {
+    // 任一文件语法/运行期出错都不要对外宣称就绪，否则页面只会显示一个空窗口
+    const reason = candidate.getSnapshot().luaErrors.map((e) => `[${e.source}] ${e.message}`).join('；');
+    candidate.destroy();
+    throw new Error(`插件 Lua 初始化失败：${reason || '未知错误'}`);
+  }
+  runtime = candidate;
 
   if (!runtime.execLua(EXTRACT_META_LUA, 'extract-meta.lua')) {
-    throw new Error('读取百科元数据失败');
+    const reason = runtime.getSnapshot().luaErrors.map((e) => `[${e.source}] ${e.message}`).join('；');
+    runtime.destroy();
+    runtime = null;
+    throw new Error(`读取百科元数据失败：${reason || '未知错误'}`);
   }
   meta = parseMeta(runtime.takeEmittedStrings());
   return { meta, loadMs: Math.round(performance.now() - startedAt) };
@@ -117,13 +127,17 @@ function render(id: number, character: { level: number; classKey: string; routeI
   const startedAt = performance.now();
 
   const route = meta?.routes.find((r) => r.id === character.routeId);
-  runtime.charState.level = character.level;
+  runtime.charState.level = Math.round(character.level);
   runtime.charState.classKey = character.classKey;
   runtime.charState.raceKey = character.routeId;
   runtime.charState.faction = route?.faction === 'horde' ? 'Horde' : 'Alliance';
 
+  // 运行时的 luaErrors 是累计的：只把本次渲染新增的错误交给页面，
+  // 否则用户改回有效角色后仍会看到上一次的报错。
+  const errorBase = runtime.getSnapshot().luaErrors.length;
   runtime.runSlashCommand(slash);
   const snapshot = runtime.getSnapshot();
+  snapshot.luaErrors = snapshot.luaErrors.slice(errorBase);
   ctx.postMessage({
     type: 'snapshot',
     id,

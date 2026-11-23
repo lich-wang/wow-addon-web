@@ -9,7 +9,7 @@ const WOWF_ADDON_DIR = path.resolve(WOWF_LOCALES_DIR, '../../addons/WoWF');
 
 // 升级路线 / 专精循环 / 天赋 / 副本元数据的固化快照。
 // 打包只读这份随仓库提交的本地文件，构建期不再请求任何外部站点；
-// 需要刷新时由维护者手动执行 scripts/wowf-refresh-snapshot.mjs 生成新快照并提交。
+// 需要刷新时，请生成新的 scripts/locales/wowf-dataset.json 并提交。
 const WOWF_SNAPSHOT_FILE = path.join(WOWF_LOCALES_DIR, 'wowf-dataset.json');
 
 // 16 个新增第三方声望的任务快照（由 scripts/generate-reputation-data.mjs 生成）
@@ -33,7 +33,7 @@ function getAutoWowfVersion() {
   try {
     const raw = execFileSync(
       'git',
-      ['rev-list', '--count', 'HEAD', '--', 'scripts/locales/wowf.js', 'addons/WoWF'],
+      ['rev-list', '--count', 'HEAD', '--', 'scripts/locales/wowf.js', 'scripts/locales/wowf-dataset.json', 'addons/WoWF'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
     ).trim();
     const count = Number.parseInt(raw, 10);
@@ -2925,7 +2925,44 @@ function toLuaValue(val, indent = 0) {
 }
 
 /**
- * 读取固化的百科数据快照。缺失或损坏时直接抛错，避免静默产出残缺插件包。
+ * 校验快照内容是否完整。
+ *
+ * 仅校验 JSON 结构不够：一份合法 JSON `{}` 也能被解析，随后产出的插件会没有升级路线、
+ * 没有专精，且区域索引校验发现不了（区域索引来自 QuestieDB，与这些数据无关），最终静默发布残缺包。
+ *
+ * @param {any} snapshot
+ * @returns {string | null} 不合法时返回原因，合法返回 null
+ */
+function validateWowfSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return '快照不是对象';
+  const routes = snapshot.routes;
+  const classes = snapshot.classes;
+  if (!routes || typeof routes !== 'object' || Object.keys(routes).length === 0) {
+    return '快照缺少 routes（升级路线）';
+  }
+  if (!classes || typeof classes !== 'object' || Object.keys(classes).length === 0) {
+    return '快照缺少 classes（职业与专精）';
+  }
+  const missingBands = Object.entries(routes)
+    .filter(([, route]) => !Array.isArray(route?.bands) || route.bands.length === 0)
+    .map(([id]) => id);
+  if (missingBands.length > 0) {
+    return `以下路线缺少 bands：${missingBands.join(', ')}`;
+  }
+  const missingSpecs = CLASS_CONFIGS.filter(
+    cls => !Array.isArray(classes[cls.key]?.specs) || classes[cls.key].specs.length === 0
+  ).map(cls => cls.key);
+  if (missingSpecs.length > 0) {
+    return `以下职业缺少 specs：${missingSpecs.join(', ')}`;
+  }
+  if (!Array.isArray(snapshot.dungeons) || snapshot.dungeons.length === 0) {
+    return '快照缺少 dungeons（副本元数据）';
+  }
+  return null;
+}
+
+/**
+ * 读取固化的百科数据快照。缺失、损坏或内容不完整时直接抛错，避免静默产出残缺插件包。
  * @returns {any}
  */
 function loadWowfSnapshot() {
@@ -2934,11 +2971,17 @@ function loadWowfSnapshot() {
       `[WoWF] 缺少数据快照 ${WOWF_SNAPSHOT_FILE}；该文件随仓库提交，请确认未被误删。`
     );
   }
+  let snapshot;
   try {
-    return JSON.parse(fs.readFileSync(WOWF_SNAPSHOT_FILE, 'utf8'));
+    snapshot = JSON.parse(fs.readFileSync(WOWF_SNAPSHOT_FILE, 'utf8'));
   } catch (err) {
     throw new Error(`[WoWF] 数据快照解析失败：${err.message}`);
   }
+  const reason = validateWowfSnapshot(snapshot);
+  if (reason) {
+    throw new Error(`[WoWF] 数据快照内容不完整：${reason}（${WOWF_SNAPSHOT_FILE}）`);
+  }
+  return snapshot;
 }
 
 /**
@@ -3175,11 +3218,52 @@ WoWF_Data = ${toLuaValue(dataset, 0)}
 }
 
 /**
- * 构建并打包 巫妖王的无限百科 插件压缩包 (public/addons/wowf.zip)
+ * 把插件的三份 Lua 写入网页百科用到的静态目录。
+ *
+ * 网页「无限百科」页面直接读这些文件，而不是去抓 wowf.zip：
+ * .zip 链接常被下载器（迅雷等）浏览器扩展拦截，fetch 会拿到空响应。
+ *
+ * @param {string} wikiDir 目标目录（通常是 public/wiki）
+ * @param {{ dataLua: string, coreLua: string, craftLua: string }} assets
+ */
+function writeWikiAssets(wikiDir, assets) {
+  fs.mkdirSync(wikiDir, { recursive: true });
+  fs.writeFileSync(path.join(wikiDir, 'data.lua'), assets.dataLua);
+  fs.writeFileSync(path.join(wikiDir, 'core.lua'), assets.coreLua);
+  fs.writeFileSync(path.join(wikiDir, 'craftarb.lua'), assets.craftLua);
+  console.log(`[✓] wiki assets written to ${wikiDir}`);
+}
+
+/**
+ * 只生成网页百科所需的 Lua 资源（不打包 zip，不需要网络）。
+ *
+ * 供 npm 的 predev / prebuild 使用：保证干净检出的仓库也能直接 `npm run dev` /
+ * `npm run build` 得到可用的 `/wiki/*.lua`，而不必先跑完整的 addons 打包流程。
+ *
+ * @param {string} publicDir 站点 public 目录
+ * @param {string} cacheDir 上游缓存目录（仅用于可选读取 QuestieDB）
+ * @returns {Promise<string>} 实际写入的 wiki 目录
+ */
+export async function buildWoFWikiAssets(publicDir, cacheDir) {
+  const dataset = await buildWoWFDataset(cacheDir, () => ({}), null);
+  normalizeWowfDatasetText(dataset);
+  const wikiDir = path.join(publicDir, 'wiki');
+  writeWikiAssets(wikiDir, {
+    dataLua: generateWoWFDataLua(dataset),
+    coreLua: readWoWFLuaFile('WoWF.lua'),
+    craftLua: readWoWFLuaFile('CraftArb.lua'),
+  });
+  return wikiDir;
+}
+
+/**
+ * 构建并打包 巫妖王的无限百科 插件压缩包 (public/addons/wowf.zip)，
+ * 同时生成网页百科使用的 public/wiki/*.lua。
+ *
  * @param {string} outputDir
  * @param {string} cacheDir
  * @param {(url: string) => Record<string, string>} getHeaders
- * @returns {Promise<{ zip: JSZip, outPath: string, version: string, source: string }>}
+ * @returns {Promise<{ zip: JSZip, outPath: string, wikiDir: string, version: string, source: string }>}
  */
 export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDbBuf = null) {
   const headSnapshot = getGitHeadOid();
@@ -3187,6 +3271,7 @@ export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDb
   const coreLuaContent = readWoWFLuaFile('WoWF.lua');
 
   console.log('Building 巫妖王的无限百科 from local dataset snapshot (no network access)...');
+  // buildWoWFDataset 内部已完成 enrichRoutesWithAltZones，无需重复执行
   const dataset = await buildWoWFDataset(cacheDir, _getHeaders, questieDbBuf);
   if (headSnapshot && getGitHeadOid() !== headSnapshot) {
     throw new Error('[WoWF] 构建期间仓库 HEAD 发生变化，请重新执行打包以保证源码与版本号一致。');
@@ -3194,7 +3279,6 @@ export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDb
   if (!isValidZoneQuestsData(dataset.zoneQuests, dataset.zoneAreaIds)) {
     throw new Error('[WoWF] 缺少完整的区域任务链索引 (zoneQuests/zoneAreaIds)，请确认 .cache/upstream-addons/questie-db-forever.zip 可读。');
   }
-  enrichRoutesWithAltZones(dataset.routes);
   normalizeWowfDatasetText(dataset);
   const fullVersion = dataset.meta.version || `${WOWF_VERSION} + DB v2026.11.15`;
 
@@ -3216,14 +3300,8 @@ export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDb
   fs.writeFileSync(outPath, outBuf);
   console.log(`[✓] wowf.zip generated (${(outBuf.length / 1024).toFixed(1)} KB, version: ${fullVersion}, snapshot DB: ${dataset.meta.dbVersion})`);
 
-  // 网页「无限百科」页面直接读取这三份 Lua，而不是去抓 wowf.zip。
-  // 原因：.zip 链接常被下载器（迅雷等）浏览器扩展拦截，fetch 会拿到空响应。
   const wikiDir = path.resolve(outputDir, '..', 'wiki');
-  fs.mkdirSync(wikiDir, { recursive: true });
-  fs.writeFileSync(path.join(wikiDir, 'data.lua'), dataLuaContent);
-  fs.writeFileSync(path.join(wikiDir, 'core.lua'), coreLuaContent);
-  fs.writeFileSync(path.join(wikiDir, 'craftarb.lua'), craftLuaContent);
-  console.log(`[✓] wiki assets written to ${wikiDir}`);
+  writeWikiAssets(wikiDir, { dataLua: dataLuaContent, coreLua: coreLuaContent, craftLua: craftLuaContent });
 
   return {
     zip,

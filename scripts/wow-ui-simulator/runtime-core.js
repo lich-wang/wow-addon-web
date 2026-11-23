@@ -280,7 +280,11 @@ export class WoWSimulatorRuntimeCore {
       texSetVertexColor: (id, r, g, b, a) => { const t = this.textures.get(id); if (t) t.vertexColor = [r, g, b, a]; },
       texSetSize: (id, w, h) => {
         const t = this.textures.get(id);
-        if (t) { if (w !== null) t.width = w; if (h !== null) t.height = h; }
+        // Lua 的 nil 经 fengari-interop 会变成 undefined：单独设宽/设高时不能把另一维清掉
+        if (t) {
+          if (w !== null && w !== undefined) t.width = w;
+          if (h !== null && h !== undefined) t.height = h;
+        }
       },
       texShow: (id, s) => { const t = this.textures.get(id); if (t) t.shown = s; },
       texSetAlpha: (id, a) => { const t = this.textures.get(id); if (t) t.alpha = a; },
@@ -387,15 +391,22 @@ export class WoWSimulatorRuntimeCore {
     }
   }
 
+  /**
+   * 按 TOC 顺序加载插件文件并派发登录事件。
+   * @returns {boolean} 所有文件都成功执行时才为 true
+   */
   loadAddon(addonName, files) {
     this.loadedFiles = [];
+    let allOk = true;
     for (const file of files) {
       const ok = this.execLua(file.content, file.filename, [addonName]);
+      if (!ok) allOk = false;
       this.loadedFiles.push(ok ? file.filename : `${file.filename} (ERR)`);
     }
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'ADDON_LOADED', addonName);
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'PLAYER_LOGIN');
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'PLAYER_ENTERING_WORLD', true, false);
+    return allOk;
   }
 
   runSlashCommand(cmdLine) {

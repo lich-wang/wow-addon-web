@@ -10,6 +10,16 @@ const WIKI_ASSET_BASE = '/wiki';
 
 const LEVEL_TICKS = [1, 10, 20, 30, 40, 50, 60];
 
+/**
+ * 等级必须是 1-60 的整数：
+ * 插件侧用 string.format("Lv.%d", level) 渲染，Lua 5.3 下小数会让 %d 报错并中断刷新。
+ */
+function clampLevel(raw: string | number): number {
+  const value = Math.round(Number(raw));
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(60, Math.max(1, value));
+}
+
 function classColor(meta: WikiMeta | null, classKey: string): string {
   const raw = meta?.classes.find((c) => c.key === classKey)?.color || '';
   return raw.length === 6 ? `#${raw}` : '#e2e8f0';
@@ -33,6 +43,7 @@ export function WikiExplorer() {
   const [classKey, setClassKey] = useState('MAGE');
   const [tabId, setTabId] = useState('home');
   const [tabsOpen, setTabsOpen] = useState(false);
+  const [renderSeq, setRenderSeq] = useState(0);
 
   const getClient = useCallback(() => {
     if (!clientRef.current) clientRef.current = new WikiClient();
@@ -100,6 +111,8 @@ export function WikiExplorer() {
         .then(({ snapshot: snap, renderMs: ms, requestId }) => {
           if (cancelled || !client.isLatest(requestId)) return;
           setSnapshot(snap);
+          // 换页签/换角色后重新挂载渲染树，让内部滚动容器回到顶部
+          setRenderSeq((seq) => seq + 1);
           setRenderMs(ms);
           setError(null);
           setRendering(false);
@@ -156,8 +169,9 @@ export function WikiExplorer() {
                 type="range"
                 min={1}
                 max={60}
+                step={1}
                 value={level}
-                onChange={(e) => setLevel(Number(e.target.value))}
+                onChange={(e) => setLevel(clampLevel(e.target.value))}
                 className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-amber-400"
                 aria-label="角色等级"
               />
@@ -165,8 +179,9 @@ export function WikiExplorer() {
                 type="number"
                 min={1}
                 max={60}
+                step={1}
                 value={level}
-                onChange={(e) => setLevel(Math.min(60, Math.max(1, Number(e.target.value) || 1)))}
+                onChange={(e) => setLevel(clampLevel(e.target.value))}
                 className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-center text-sm font-bold text-amber-300 outline-none focus:border-amber-500"
               />
             </div>
@@ -299,7 +314,7 @@ export function WikiExplorer() {
                 </ul>
               </div>
             ) : null}
-            <WowFrameView snapshot={snapshot} />
+            <WowFrameView key={renderSeq} snapshot={snapshot} />
           </>
         ) : (
           <div className="py-24 text-center text-sm text-slate-500">暂无内容</div>

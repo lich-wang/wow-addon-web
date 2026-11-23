@@ -16,7 +16,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "predev": "node scripts/build-wiki-assets.mjs",
     "build": "tsc -b && vite build",
+    "prebuild": "node scripts/build-wiki-assets.mjs",
+    "wiki:assets": "node scripts/build-wiki-assets.mjs",
     "fetch:client": "node scripts/fetch-client.js",
     "generate:reputation": "node scripts/generate-reputation-data.mjs",
     "tauri": "tauri",

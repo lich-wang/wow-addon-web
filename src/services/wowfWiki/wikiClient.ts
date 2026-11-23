@@ -9,6 +9,11 @@ type Pending = {
   reject: (reason: Error) => void;
 };
 
+/** 首次载入插件 Lua 的兜底超时（含下载三份 Lua 与编译） */
+const INIT_TIMEOUT_MS = 45_000;
+/** 单次渲染的兜底超时，避免 Worker 卡死时页面永远停在“渲染中” */
+const RENDER_TIMEOUT_MS = 30_000;
+
 export class WikiClient {
   private worker: Worker | null = null;
   private ready: Promise<{ meta: WikiMeta; loadMs: number }> | null = null;
@@ -16,7 +21,7 @@ export class WikiClient {
   private seq = 0;
   private latestRequestId = 0;
 
-  /** 启动 Worker 并加载插件包（仅首次真正下载，后续复用） */
+  /** 启动 Worker 并加载插件资源（仅首次真正下载，后续复用） */
   load(baseUrl: string): Promise<{ meta: WikiMeta; loadMs: number }> {
     if (this.ready) return this.ready;
     this.ready = new Promise((resolve, reject) => {
@@ -28,10 +33,24 @@ export class WikiClient {
         return;
       }
       this.worker = worker;
+
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        fn();
+      };
+
+      const timer = window.setTimeout(() => {
+        finish(() => reject(new Error(`百科载入超时（超过 ${INIT_TIMEOUT_MS / 1000} 秒），请刷新重试`)));
+        this.failWorker();
+      }, INIT_TIMEOUT_MS);
+
       worker.onmessage = (event: MessageEvent<WikiWorkerResponse>) => {
         const msg = event.data;
         if (msg.type === 'ready') {
-          resolve({ meta: msg.meta, loadMs: msg.loadMs });
+          finish(() => resolve({ meta: msg.meta, loadMs: msg.loadMs }));
         } else if (msg.type === 'snapshot') {
           const entry = this.pending.get(msg.id);
           this.pending.delete(msg.id);
@@ -42,12 +61,15 @@ export class WikiClient {
             this.pending.delete(msg.id);
             entry?.reject(new Error(msg.message));
           } else {
-            reject(new Error(msg.message));
+            finish(() => reject(new Error(msg.message)));
           }
         }
       };
       worker.onerror = (event: ErrorEvent) => {
-        reject(new Error(event.message || '百科渲染线程启动失败'));
+        const error = new Error(event.message || '百科渲染线程崩溃');
+        finish(() => reject(error));
+        // 已就绪之后 Worker 崩溃：终止在途渲染，避免页面白等 30 秒
+        this.failWorker(error);
       };
       worker.postMessage({ type: 'init', baseUrl } satisfies WikiWorkerRequest);
     });
@@ -69,14 +91,13 @@ export class WikiClient {
     const promise = new Promise<{ snapshot: WowSnapshot; renderMs: number }>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       worker.postMessage({ type: 'render', id, character, slash } satisfies WikiWorkerRequest);
-      // 兜底：Worker 异常退出时避免页面永远停在“渲染中”
       window.setTimeout(() => {
         const entry = this.pending.get(id);
         if (entry) {
           this.pending.delete(id);
           entry.reject(new Error('百科渲染超时，请刷新重试'));
         }
-      }, 30_000);
+      }, RENDER_TIMEOUT_MS);
     });
     const { snapshot, renderMs } = await promise;
     return { snapshot, renderMs, requestId: id };
@@ -84,6 +105,17 @@ export class WikiClient {
 
   isLatest(requestId: number): boolean {
     return requestId === this.latestRequestId;
+  }
+
+  /** Worker 已不可用：终止它并拒绝所有在途渲染 */
+  private failWorker(reason?: Error): void {
+    this.worker?.terminate();
+    this.worker = null;
+    this.ready = null;
+    for (const entry of this.pending.values()) {
+      entry.reject(reason ?? new Error('百科渲染线程已崩溃'));
+    }
+    this.pending.clear();
   }
 
   dispose(): void {
