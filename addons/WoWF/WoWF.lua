@@ -4679,9 +4679,9 @@ local function RenderCentaurFactionCard(list, level, targetDef)
     ["锻造"] = "Blacksmithing",
   }
 
-  -- 渲染一个阶段的任务；返回 已显示/已完成/未达门槛/专业不符 四项计数
+  -- 渲染一个阶段的任务；返回 已显示/已完成/未达门槛/专业不符/等级不足 五项计数
   local function RenderCentaurQuestStage(lines, quests, opts)
-    local shown, completed, locked, professionHidden = 0, 0, 0, 0
+    local shown, completed, locked, professionHidden, levelLocked = 0, 0, 0, 0, 0
     for _, q in ipairs(quests or {}) do
       local factionOk = (not q.faction) or (q.faction == "both") or (q.faction == opts.faction)
       if factionOk then
@@ -4693,12 +4693,15 @@ local function RenderCentaurFactionCard(list, level, targetDef)
           professionHidden = professionHidden + 1
         else
           local isDone = IsQuestCompletedById(q.id)
+          local reqMinLevel = tonumber(q.minLevel) or tonumber(opts.minLevel) or 1
           local gateOk = true
           if opts.minRep and opts.standing < opts.minRep then gateOk = false end
           if q.minRep and opts.standing < q.minRep then gateOk = false end
           if q.neutralOnly and opts.standing < 0 then gateOk = false end
           if isDone and not q.repeatable then
             completed = completed + 1
+          elseif opts.level and opts.level < reqMinLevel then
+            levelLocked = levelLocked + 1
           elseif not gateOk and not q.showWhenLocked then
             locked = locked + 1
           else
@@ -4751,7 +4754,7 @@ local function RenderCentaurFactionCard(list, level, targetDef)
         end
       end
     end
-    return shown, completed, locked, professionHidden
+    return shown, completed, locked, professionHidden, levelLocked
   end
 
   local lvl = tonumber(level) or state.level or 1
@@ -4828,20 +4831,25 @@ local function RenderCentaurFactionCard(list, level, targetDef)
     return (factionId == CENTAUR_FACTION_GELKIS) and gelkis or magram
   end
 
+  local defMinLevel = tonumber(def.minLevel) or 1
   local sharedLines = {}
-  local sharedShown, sharedDone, sharedLocked, sharedProf = RenderCentaurQuestStage(sharedLines, def.shared, {
+  local sharedShown, sharedDone, sharedLocked, sharedProf, sharedLevelLocked = RenderCentaurQuestStage(sharedLines, def.shared, {
     standing = gelkis,
     faction = state.faction,
     profs = profs,
     level = lvl,
+    minLevel = defMinLevel,
   })
-  if sharedShown > 0 or sharedDone > 0 then
+  if sharedShown > 0 or sharedDone > 0 or sharedLevelLocked > 0 then
     table.insert(lines, "")
     table.insert(lines, "|cff00ffcc[公共任务]|r |cff8899aa两族通用，先做雕刻图腾解锁「收买友谊」|r")
     if sharedDone > 0 then
       table.insert(lines, string.format("  |cff888888✓ 已完成 %d 步|r", sharedDone))
     end
     for _, line in ipairs(sharedLines) do table.insert(lines, line) end
+    if sharedLevelLocked > 0 then
+      table.insert(lines, string.format("  |cff8899aa另有 %d 条任务需更高等级（Lv.%d+）|r", sharedLevelLocked, tonumber(def.minLevel) or (lvl + 1)))
+    end
     if sharedLocked > 0 then
       table.insert(lines, "  |cff8899aa部分任务需先把对应部族声望恢复到中立|r")
     end
@@ -4894,16 +4902,20 @@ local function RenderCentaurFactionCard(list, level, targetDef)
           ))
         else
           local stageLines = {}
-          local shown, _, locked, professionHidden = RenderCentaurQuestStage(stageLines, quests, {
+          local shown, _, locked, professionHidden, stageLevelLocked = RenderCentaurQuestStage(stageLines, quests, {
             standing = standing,
             faction = state.faction,
             profs = profs,
             level = lvl,
             minRep = stage.minRep,
+            minLevel = defMinLevel,
           })
-          if shown > 0 or professionHidden > 0 then
+          if shown > 0 or professionHidden > 0 or stageLevelLocked > 0 then
             table.insert(lines, string.format("  |cff00ffcc[%s]|r", stage.label))
             for _, line in ipairs(stageLines) do table.insert(lines, line) end
+            if stageLevelLocked > 0 then
+              table.insert(lines, string.format("  |cff8899aa另有 %d 条任务需更高等级（Lv.%d+）|r", stageLevelLocked, tonumber(def.minLevel) or (lvl + 1)))
+            end
             if professionHidden > 0 then
               table.insert(lines, string.format("  |cff8899aa另有 %d 个专业配方任务需对应专业|r", professionHidden))
             end
@@ -4921,31 +4933,37 @@ local function RenderCentaurFactionCard(list, level, targetDef)
         table.insert(lines, "  |cffff8800[可重复]|r |cff888888已崇拜，无需再交图腾|r")
       else
         local repLines = {}
-        local shown = RenderCentaurQuestStage(repLines, repQuests, {
+        local shown, _, _, _, repLevelLocked = RenderCentaurQuestStage(repLines, repQuests, {
           standing = standing,
           faction = state.faction,
           profs = profs,
           level = lvl,
           minRep = nil,
+          minLevel = defMinLevel,
         })
-        if shown > 0 then
+        if shown > 0 or repLevelLocked > 0 then
           table.insert(lines, "  |cffff8800[可重复]|r")
           for _, line in ipairs(repLines) do table.insert(lines, line) end
-          local requires = repQuests[1].requires or {}
-          if #requires > 0 then
-            local unlocked = false
-            for _, reqId in ipairs(requires) do
-              if IsQuestCompletedById(reqId) then
-                unlocked = true
-                break
+          if shown > 0 then
+            local requires = repQuests[1].requires or {}
+            if #requires > 0 then
+              local unlocked = false
+              for _, reqId in ipairs(requires) do
+                if IsQuestCompletedById(reqId) then
+                  unlocked = true
+                  break
+                end
+              end
+              if not unlocked then
+                table.insert(lines, string.format(
+                  "  |cffff8800↳ 需先完成「收买友谊：%s」|r",
+                  group.name or ""
+                ))
               end
             end
-            if not unlocked then
-              table.insert(lines, string.format(
-                "  |cffff8800↳ 需先完成「收买友谊：%s」|r",
-                group.name or ""
-              ))
-            end
+          end
+          if repLevelLocked > 0 then
+            table.insert(lines, string.format("  |cff8899aa另有 %d 条任务需更高等级（Lv.%d+）|r", repLevelLocked, tonumber(def.minLevel) or (lvl + 1)))
           end
         end
       end

@@ -1172,6 +1172,17 @@ async function main() {
         present: ['当前倾向', '吉尔吉斯 友善 (3,250)', '经济战', '尊敬阶段', '还差 5,750'],
         absent: ['偷取物资', '破碎之泪'],
       },
+      {
+        label: '低等级 Lv.20：保留半人马阵营卡片但按 minLevel 过滤未解锁任务并提示等级需求',
+        level: 20,
+        raceKey: '人类',
+        faction: 'Alliance',
+        rep92: 3250,
+        rep93: -12500,
+        completedQuests: [],
+        present: ['当前倾向', '吉尔吉斯 友善 (3,250)', '需更高等级（Lv.30+）'],
+        absent: ['收买友谊：吉尔吉斯', '经济战', '偷取物资', '雕刻半人马图腾', '赫鲁萨可汗'],
+      },
     ];
 
     let centaurFailed = false;
@@ -1328,11 +1339,12 @@ async function main() {
     const repCards = summarizeCards(repSnap);
     const repAll = repCards.map((c) => `${c.title}\n${c.body}`).join('\n');
     const repTitles = repCards.map((c) => c.title);
+    const overviewCard = repCards.find((c) => c.title.includes('新增第三方声望'));
     const sharedCount = (repAll.match(/共同任务/g) || []).length;
     const repChecks = [
-      ['声望总览卡', repTitles.some((t) => t.includes('新增第三方声望'))],
+      ['声望总览卡', Boolean(overviewCard)],
       ['包含半人马详情卡', repTitles.some((t) => t.includes('凄凉之地 · 半人马阵营'))],
-      ['总览含半人马声望', repAll.includes('吉尔吉斯 友善 (3,250)')],
+      ['总览含半人马声望', Boolean(overviewCard && overviewCard.body.includes('吉尔吉斯 友善 (3,250)'))],
       ['贸易局声望', repAll.includes('友善 (3,250)')],
       ['工匠文书分组', repTitles.some((t) => t.includes('工匠文书 +75'))],
       ['可重复文书未被完成过滤', repAll.includes('工匠文书：测试药水')],
