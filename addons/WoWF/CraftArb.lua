@@ -590,27 +590,27 @@ function Arb.ListedSupply(itemID)
         if qty and qty >= 0 then return qty, "depth" end
       end
     end
-  else
-    local prices = blackthornesPriceTable()
-    local record = prices and prices[id]
-    -- 黑石没有 EasyAuction 那种「完整快照」标记：record.quantity 是它最近一次扫描
-    -- 该物品时数到的挂单总件数（record.seen 是那次扫描时间），物品提示的「现在在售」
-    -- 就是它。旧版/别名存档里可能写成 bookQuantity，一并兼容。
-    if type(record) == "table" and type(record.seen) == "number" then
-      local qty = tonumber(record.quantity)
-      if qty and qty >= 0 then return qty, "quantity" end
-    end
-    if type(record) == "table" and record.bookComplete == true then
-      local qty = tonumber(record.bookQuantity)
-      if qty and qty >= 0 then return qty, "record" end
-    end
-    local btApi = blackthornesApi()
-    if btApi and type(btApi.GetDepth) == "function" then
-      local ok, depth = pcall(btApi.GetDepth, id)
-      if ok and type(depth) == "table" and depth.complete == true then
-        local qty = tonumber(depth.totalQuantity)
-        if qty and qty >= 0 then return qty, "depth" end
-      end
+  end
+  -- 两个插件可能同时装：EasyAuction 没有该物品的完整数量时，继续读黑石存档
+  local prices = blackthornesPriceTable()
+  local record = prices and prices[id]
+  -- 黑石没有 EasyAuction 那种「完整快照」标记：record.quantity 是它最近一次扫描
+  -- 该物品时数到的挂单总件数（record.seen 是那次扫描时间），物品提示的「现在在售」
+  -- 就是它。旧版/别名存档里可能写成 bookQuantity，一并兼容。
+  if type(record) == "table" and type(record.seen) == "number" then
+    local qty = tonumber(record.quantity)
+    if qty and qty >= 0 then return qty, "quantity" end
+  end
+  if type(record) == "table" and record.bookComplete == true then
+    local qty = tonumber(record.bookQuantity)
+    if qty and qty >= 0 then return qty, "record" end
+  end
+  local btApi = blackthornesApi()
+  if btApi and type(btApi.GetDepth) == "function" then
+    local ok, depth = pcall(btApi.GetDepth, id)
+    if ok and type(depth) == "table" and depth.complete == true then
+      local qty = tonumber(depth.totalQuantity)
+      if qty and qty >= 0 then return qty, "depth" end
     end
   end
   return nil
