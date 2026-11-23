@@ -4387,11 +4387,10 @@ local function BuildBandLines(band, opts)
   if matchedQuests and #matchedQuests > 0 then
     local qLines = opts.groupBandQuests and {} or lines
     for _, q in ipairs(matchedQuests) do
-      if not (opts.skipCompletedQuests and IsQuestCompleted(q)) then
+      -- 职业专属任务统一由「职业与天赋」页展示，路线页阶段卡只保留区域关键任务
+      if q.kind ~= "class" and not (opts.skipCompletedQuests and IsQuestCompleted(q)) then
         local qZone = PickZone(q, q.place, band.zone)
-        local qTag = (q.kind == "class")
-          and (opts.groupBandQuests and "|cff00ffcc[★职业专属]|r " or string.format("|cff00ffcc[★%s职业任务]|r ", cls and cls.name or ""))
-          or (opts.groupBandQuests and "|cffffd100[关键任务]|r " or "|cffffd100[区域关键任务]|r ")
+        local qTag = opts.groupBandQuests and "|cffffd100[关键任务]|r " or "|cffffd100[区域关键任务]|r "
         local qLink, qTree = FormatQuestWithSteps(q, q.level or band.from, qZone, opts.questIndent or "    ", opts.foldQuestSteps)
         qZone = PickZone(q, q.place, band.zone)
         local npcInfo = FormatStepNpcInfo(q, qZone)
@@ -4401,7 +4400,7 @@ local function BuildBandLines(band, opts)
       end
     end
     if opts.groupBandQuests and #qLines > 0 then
-      table.insert(lines, "|cff00ffcc本阶段关键/职业任务:|r\n" .. table.concat(qLines, "\n"))
+      table.insert(lines, "|cff00ffcc本阶段关键任务:|r\n" .. table.concat(qLines, "\n"))
     end
   end
 
@@ -4488,8 +4487,12 @@ local function RenderTabSmartMatch()
       table.insert(bandLines, string.format("|cff71d5ff%s训练师:|r %s", cls and cls.name or "职业", tLink))
     end
     local bandQuests = GetBandQuests(band, state.classKey)
-    if bandQuests and #bandQuests > 0 then
-      table.insert(bandLines, string.format("|cff00ffcc本阶段关键/职业任务:|r 共 %d 条（完整任务链与区域指引请点击右上角查看详情）", #bandQuests))
+    local keyQuestCount = 0
+    for _, q in ipairs(bandQuests or {}) do
+      if q.kind ~= "class" then keyQuestCount = keyQuestCount + 1 end
+    end
+    if keyQuestCount > 0 then
+      table.insert(bandLines, string.format("|cff00ffcc本阶段关键任务:|r 共 %d 条（完整任务链与区域指引请点击右上角查看详情）", keyQuestCount))
     end
 
     list:Add({
@@ -4584,7 +4587,17 @@ local function RenderTabSmartMatch()
       end
     end
   end
-  if #matchedClassRuns > 0 then
+  -- 入口只在「职业与天赋」页当前过滤模式下确实能显示任务链时出现，避免点过去看到空列表
+  local classPageMatch = (state.talentFilter == "MATCH")
+  local hasVisibleClassRun = false
+  for _, cr in ipairs(matchedClassRuns) do
+    local crTo = cr.to or cr.level or 60
+    if (not classPageMatch or crTo >= lvl - 2) and not ShouldSkipClassRun(cr, milestoneFilter) then
+      hasVisibleClassRun = true
+      break
+    end
+  end
+  if hasVisibleClassRun then
     table.insert(milestoneLines, "|cff00ffcc[职业任务]|r 本职业专属任务链与坐标见 |cff00ffcc|Hwowftab:3:「职业与天赋」页|h[「职业与天赋」页]|h|r，点击可直接跳转。")
   end
   if #milestoneLines > 0 then
