@@ -69,6 +69,14 @@ export class WikiClient {
     const promise = new Promise<{ snapshot: WowSnapshot; renderMs: number }>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       worker.postMessage({ type: 'render', id, character, slash } satisfies WikiWorkerRequest);
+      // 兜底：Worker 异常退出时避免页面永远停在“渲染中”
+      window.setTimeout(() => {
+        const entry = this.pending.get(id);
+        if (entry) {
+          this.pending.delete(id);
+          entry.reject(new Error('百科渲染超时，请刷新重试'));
+        }
+      }, 30_000);
     });
     const { snapshot, renderMs } = await promise;
     return { snapshot, renderMs, requestId: id };
