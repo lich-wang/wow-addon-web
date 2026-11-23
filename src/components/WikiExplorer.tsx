@@ -292,6 +292,7 @@ export function WikiExplorer() {
       {/* 渲染区 */}
       <div
         {...tabPanelA11yProps(tabId)}
+        tabIndex={0}
         className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 p-2 sm:p-4"
       >
         {loading ? (

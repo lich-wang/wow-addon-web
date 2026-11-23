@@ -2963,10 +2963,12 @@ function validateWowfSnapshot(snapshot) {
     }
     const covered = new Set();
     for (const band of bands) {
-      const from = Number(band?.from);
-      const to = Number(band?.to);
-      if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
-        return `路线 ${route.id} 存在非法的阶段区间：${JSON.stringify({ from: band?.from, to: band?.to })}`;
+      const from = band?.from;
+      const to = band?.to;
+      // 必须是 1-60 的整数：接受字符串/浮点会让 Lua 侧的数字比较出错，
+      // 过大的端点（如 1e20）还会让下面的逐级枚举变成死循环。
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > 60 || from > to) {
+        return `路线 ${route.id} 存在非法的阶段区间：${JSON.stringify({ from, to })}（要求 1-60 整数且 from<=to）`;
       }
       for (let level = from; level <= to; level++) covered.add(level);
     }
@@ -3017,10 +3019,17 @@ function validateWowfSnapshot(snapshot) {
       return `副本「${name}」的 id 不是非空字符串：${JSON.stringify(dungeon?.id)}`;
     }
     if (!dungeon.name) return `副本 ${dungeon.id} 缺少 name`;
-    const minLevel = Number(dungeon?.minLevel);
-    const maxLevel = Number(dungeon?.maxLevel);
-    if (!Number.isFinite(minLevel) || !Number.isFinite(maxLevel) || minLevel > maxLevel) {
-      return `副本 ${dungeon.id} 的等级区间非法：${JSON.stringify({ minLevel: dungeon?.minLevel, maxLevel: dungeon?.maxLevel })}`;
+    const minLevel = dungeon?.minLevel;
+    const maxLevel = dungeon?.maxLevel;
+    // 不接受 null/字符串：toLuaValue 会丢掉 null 字段，插件随后对 nil 做算术会直接报错
+    if (
+      !Number.isInteger(minLevel) ||
+      !Number.isInteger(maxLevel) ||
+      minLevel < 1 ||
+      maxLevel > 60 ||
+      minLevel > maxLevel
+    ) {
+      return `副本 ${dungeon.id} 的等级区间非法：${JSON.stringify({ minLevel, maxLevel })}（要求 1-60 整数且 minLevel<=maxLevel）`;
     }
   }
 
