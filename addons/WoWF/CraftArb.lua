@@ -334,19 +334,27 @@ function Arb.Market()
   return api
 end
 
-local function blackthornesPriceTable()
-  local db = _G.BlackthornesTSDB
-  if type(db) ~= "table" or type(db.prices) ~= "table" then return nil end
+---黑石交易技能当前角色的存档键（realm-faction，与它自己的价格表同键）
+---@return string|nil
+local function blackthornesScopeKey()
   local realm = realmName()
+  if realm == "" then return nil end
   local faction
   if type(UnitFactionGroup) == "function" then
     local ok, value = pcall(UnitFactionGroup, "player")
     if ok and type(value) == "string" and value ~= "" then faction = value end
   end
-  if realm ~= "" and faction then
-    local t = db.prices[realm .. "-" .. faction]
-    if type(t) == "table" and next(t) ~= nil then return t end
-  end
+  if not faction then return nil end
+  return realm .. "-" .. faction
+end
+
+local function blackthornesPriceTable()
+  local db = _G.BlackthornesTSDB
+  if type(db) ~= "table" or type(db.prices) ~= "table" then return nil end
+  local key = blackthornesScopeKey()
+  if not key then return nil end
+  local t = db.prices[key]
+  if type(t) == "table" and next(t) ~= nil then return t end
   return nil
 end
 
@@ -354,6 +362,30 @@ local function blackthornesApi()
   local api = _G.BlackthornesTS_API
   if type(api) == "table" and type(api.GetPrice) == "function" then return api end
   return nil
+end
+
+---黑石行情的修订键：优先用它的会话内变更计数 Prices.changes（扫描、单物品浏览、购买都会 +1，O(1)）；
+---取不到时退回扫描时间戳（按 realm-faction 的全量/截断快照，兼容账号级旧字段）+ 物品条目数。
+---@return string|nil
+local function blackthornesRevisionKey()
+  local db = _G.BlackthornesTSDB
+  if type(db) ~= "table" then return nil end
+  local ns = _G.BlackthornesTS
+  local prices = type(ns) == "table" and ns.Prices
+  local changes = type(prices) == "table" and tonumber(prices.changes)
+  if changes then return "c" .. floor(changes) end
+  local tbl = blackthornesPriceTable()
+  local count = 0
+  if tbl then for _ in pairs(tbl) do count = count + 1 end end
+  local stamp = floor(tonumber(db.lastFullScan) or 0)
+  local key = blackthornesScopeKey()
+  if key then
+    local full, capped = db.lastFullScanByRealm, db.lastCappedScanByRealm
+    if type(full) == "table" then stamp = max(stamp, floor(tonumber(full[key]) or 0)) end
+    if type(capped) == "table" then stamp = max(stamp, floor(tonumber(capped[key]) or 0)) end
+  end
+  if stamp == 0 and count == 0 and not blackthornesApi() then return nil end
+  return tconcat({ "bt", stamp, count }, ":")
 end
 
 ---当前实际生效的行情数据源："easyauction" | "blackthornes" | nil
@@ -389,20 +421,23 @@ function Arb.Reset()
 end
 Arb.Reset()
 
+---行情修订号：两个行情插件的版本拼在一起，任一边更新都让行缓存失效（两者可能同时装）
+---@return string|nil
 local function revision()
+  local parts = {}
   local api = Arb.Market()
   if api and type(api.GetRevision) == "function" then
     local ok, value = pcall(api.GetRevision)
-    if ok then return tonumber(value) end
+    if ok then
+      local rev = tonumber(value)
+      if rev then parts[#parts + 1] = "ea:" .. floor(rev) end
+    end
   end
-  local db = _G.BlackthornesTSDB
-  if type(db) == "table" and (blackthornesPriceTable() or blackthornesApi()) then
-    local tbl = blackthornesPriceTable()
-    local count = 0
-    if tbl then for _ in pairs(tbl) do count = count + 1 end end
-    return tconcat({ "bt", floor(tonumber(db.lastScan) or tonumber(db.lastFullScan) or 0), count }, ":")
-  end
-  return nil
+  -- 黑石没有修订号 API：用会话内变更计数（或扫描时间戳 + 条目数）代替
+  local btKey = blackthornesRevisionKey()
+  if btKey then parts[#parts + 1] = btKey end
+  if #parts == 0 then return nil end
+  return tconcat(parts, "|")
 end
 
 ---按需要购买的数量取单价：优先用 EasyAuction 的可购深度，其次兼容黑石交易技能价格阶梯与存档，
