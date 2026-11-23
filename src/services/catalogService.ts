@@ -1,6 +1,5 @@
 import type { AddonInfo, CuratedAddon, InstallProgress } from '../types/addon';
 import { installAddonFromZip } from './fsService';
-import { syncWoWFZipWithLiveWebsite } from './wowfSyncService';
 import bundledAddonVersions from '../generated/addon-versions.json';
 
 type BundledVersionManifest = Record<string, { version?: string; source?: string } | undefined>;
@@ -178,14 +177,14 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
   {
     id: 'wowf',
     name: '巫妖王的无限百科',
-    description: '《魔兽世界：无限服》专属游戏内动态百科！实时同步 wowf.io 网站最新数据，根据当前角色的等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键生成职业宏、35大副本（含9大无限服新本）必接任务与掉落、露营睡袋/传承天赋/物资箱全攻略与最新热修公告。新增「制造套利」页：读取 EasyAuction 行情与角色专业等级，递归折算中间产物（布→布卷→装备）后筛选当前可制作且能盈利的配方，附魔角色还可比价装备分解收益。新增「NPC 商人购入 → 拍卖行出售」筛选通道：打开商人窗口自动采集买入价与库存，对比拍卖行最低售价（扣手续费）筛出可直接倒买倒卖的商品，制作成本也可优先采用已采集的商人材料价。支持「在售 ≥100」过滤，剔除挂单稀少的异常价格物品，利润统一按观测到的最低售价计算。',
-    author: 'lich.tech & wowf.io',
+    description: '《魔兽世界：无限服》专属离线百科！内置完整数据快照，根据当前角色的等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键生成职业宏、37大副本（含11个无限服新本）必接任务与掉落、露营睡袋/传承天赋/物资箱全攻略与最新热修公告。新增「制造套利」页：读取 EasyAuction 行情与角色专业等级，递归折算中间产物（布→布卷→装备）后筛选当前可制作且能盈利的配方，附魔角色还可比价装备分解收益。新增「NPC 商人购入 → 拍卖行出售」筛选通道：打开商人窗口自动采集买入价与库存，对比拍卖行最低售价（扣手续费）筛出可直接倒买倒卖的商品，制作成本也可优先采用已采集的商人材料价。支持「在售 ≥100」过滤，剔除挂单稀少的异常价格物品，利润统一按观测到的最低售价计算。',
+    author: 'lich.tech',
     category: 'QoL',
     icon: 'Compass',
     defaultFolderName: 'WoWF',
-    latestVersion: bundledVersion('wowf', 'Forever 动态百科'),
+    latestVersion: bundledVersion('wowf', 'Forever 离线百科'),
     downloadUrl: '/addons/wowf.zip',
-    homeUrl: 'https://wowf.io/zh',
+    homeUrl: '/?tab=wiki',
     gameFlavors: ['forever'],
     isForeverRecommended: true,
   },
@@ -201,12 +200,21 @@ export function withVersionQuery(url: string, version: string): string {
 }
 
 /**
- * 下载精选插件压缩包并在安装前执行必要的动态同步（如 巫妖王的无限百科 实时同步 wowf.io 数据）
+ * 下载精选插件压缩包。
+ * 说明：巫妖王的无限百科 的百科数据已在构建期烘焙进 wowf.zip，
+ * 下载后无需再做任何联网同步。
  */
 export async function fetchCuratedAddonZip(
   addon: CuratedAddon,
   onProgress?: (p: InstallProgress) => void
 ): Promise<ArrayBuffer> {
+  onProgress?.({
+    status: 'downloading',
+    addonName: addon.name,
+    percent: 20,
+    message: `正在下载 ${addon.name}...`,
+  });
+
   const candidates: string[] = [];
   if (addon.downloadUrl.startsWith('http')) {
     candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
@@ -243,10 +251,6 @@ export async function fetchCuratedAddonZip(
 
   if (!arrayBuffer) {
     throw new Error(`下载失败 (HTTP ${lastStatus || 'Network Error'})`);
-  }
-
-  if (addon.id === 'wowf') {
-    arrayBuffer = await syncWoWFZipWithLiveWebsite(arrayBuffer, onProgress);
   }
 
   return arrayBuffer;

@@ -26,8 +26,6 @@ export async function onRequestGet(context: { request: Request }): Promise<Respo
       'wago.io',
       'addons.wago.io',
       'api.curseforge.com',
-      'wowf.io',
-      'assets.wowf.io',
     ];
 
     const isAllowed = allowedHosts.some((h) => parsedTarget.hostname.endsWith(h));

@@ -8,15 +8,20 @@ import {
   CheckCircle2,
   Download,
   Headphones,
+  BookOpen,
 } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 import type { DirectoryState } from '../types/addon';
 import type { AgentStatus } from '../services/agentService';
+import { handleTabListKeyDown, tabA11yProps } from '../utils/tabs';
+
+/** 主导航标签页顺序（用于方向键切换） */
+const NAV_TAB_IDS = ['market', 'installed', 'wiki', 'voice'] as const;
 
 interface NavbarProps {
   directoryState: DirectoryState;
-  activeTab: 'installed' | 'market' | 'voice';
-  setActiveTab: (tab: 'installed' | 'market' | 'voice') => void;
+  activeTab: 'installed' | 'market' | 'voice' | 'wiki';
+  setActiveTab: (tab: 'installed' | 'market' | 'voice' | 'wiki') => void;
   onPickDirectory: () => void;
   onRefreshDirectory: () => void;
   onOpenZipModal: () => void;
@@ -69,8 +74,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* Nav Tabs */}
-            <nav className="flex space-x-1">
+            <nav
+              role="tablist"
+              aria-label="主导航"
+              className="flex space-x-1"
+              onKeyDown={(event) =>
+                handleTabListKeyDown(event, [...NAV_TAB_IDS], activeTab, (id) =>
+                  setActiveTab(id as (typeof NAV_TAB_IDS)[number])
+                )
+              }
+            >
               <button
+                {...tabA11yProps('market', activeTab === 'market')}
                 onClick={() => setActiveTab('market')}
                 className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
                   activeTab === 'market'
@@ -81,6 +96,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 精选插件市场
               </button>
               <button
+                {...tabA11yProps('installed', activeTab === 'installed')}
                 onClick={() => setActiveTab('installed')}
                 className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer flex items-center space-x-1.5 ${
                   activeTab === 'installed'
@@ -96,6 +112,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                 )}
               </button>
               <button
+                {...tabA11yProps('wiki', activeTab === 'wiki')}
+                onClick={() => setActiveTab('wiki')}
+                className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer flex items-center space-x-1.5 ${
+                  activeTab === 'wiki'
+                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>无限百科</span>
+              </button>
+              <button
+                {...tabA11yProps('voice', activeTab === 'voice')}
                 onClick={() => setActiveTab('voice')}
                 className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer flex items-center space-x-1.5 ${
                   activeTab === 'voice'

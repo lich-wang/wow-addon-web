@@ -32,3 +32,6 @@ agent/target/
 
 # Raw upstream addon cache used by scripts/fetch-addons.js
 .cache/
+
+# 网页「无限百科」页面使用的 Lua 资源（由 scripts/fetch-addons.js 生成）
+public/wiki/

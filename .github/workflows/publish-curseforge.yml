@@ -50,7 +50,8 @@ jobs:
             PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
           fi
           if [ -n "$PREV_TAG" ]; then RANGE="${PREV_TAG}..HEAD"; else RANGE="HEAD"; fi
-          CHANGED=$(git log --oneline "$RANGE" -- addons/WoWF scripts/locales/wowf.js | wc -l | tr -d ' ')
+          WOWF_PATHS="addons/WoWF scripts/locales/wowf.js scripts/locales/wowf-dataset.json"
+          CHANGED=$(git log --oneline "$RANGE" -- $WOWF_PATHS | wc -l | tr -d ' ')
           echo "自 ${PREV_TAG:-仓库起点} 以来 WoWF 相关提交数：${CHANGED}"
 
           if [ "$CHANGED" = "0" ] && [ "${FORCE}" != "true" ]; then
@@ -73,14 +74,14 @@ jobs:
           echo "tag=${CURRENT_TAG:-manual}" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-          WOWF_LOG=$(git log -n 50 --pretty=format:'- %s (%h)' --no-merges "$RANGE" -- addons/WoWF scripts/locales/wowf.js)
+          WOWF_LOG=$(git log -n 50 --pretty=format:'- %s (%h)' --no-merges "$RANGE" -- $WOWF_PATHS)
           {
             echo "### ${CURRENT_TAG:-手动发布 WoWF}"
             echo
             if [ -n "$WOWF_LOG" ]; then echo "$WOWF_LOG"; else echo "- WoWF 数据同步与细节修复"; fi
             echo
             echo
-            echo "数据同步自 https://wowf.io/zh 。"
+            echo "百科数据来自随仓库提交的离线快照（scripts/locales/wowf-dataset.json）。"
           } > changelog.md
           cat changelog.md
 
