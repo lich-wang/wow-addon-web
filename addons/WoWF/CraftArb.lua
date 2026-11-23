@@ -334,19 +334,27 @@ function Arb.Market()
   return api
 end
 
-local function blackthornesPriceTable()
-  local db = _G.BlackthornesTSDB
-  if type(db) ~= "table" or type(db.prices) ~= "table" then return nil end
+---黑石交易技能当前角色的存档键（realm-faction，与它自己的价格表同键）
+---@return string|nil
+local function blackthornesScopeKey()
   local realm = realmName()
+  if realm == "" then return nil end
   local faction
   if type(UnitFactionGroup) == "function" then
     local ok, value = pcall(UnitFactionGroup, "player")
     if ok and type(value) == "string" and value ~= "" then faction = value end
   end
-  if realm ~= "" and faction then
-    local t = db.prices[realm .. "-" .. faction]
-    if type(t) == "table" and next(t) ~= nil then return t end
-  end
+  if not faction then return nil end
+  return realm .. "-" .. faction
+end
+
+local function blackthornesPriceTable()
+  local db = _G.BlackthornesTSDB
+  if type(db) ~= "table" or type(db.prices) ~= "table" then return nil end
+  local key = blackthornesScopeKey()
+  if not key then return nil end
+  local t = db.prices[key]
+  if type(t) == "table" and next(t) ~= nil then return t end
   return nil
 end
 
@@ -354,6 +362,30 @@ local function blackthornesApi()
   local api = _G.BlackthornesTS_API
   if type(api) == "table" and type(api.GetPrice) == "function" then return api end
   return nil
+end
+
+---黑石行情的修订键：优先用它的会话内变更计数 Prices.changes（扫描、单物品浏览、购买都会 +1，O(1)）；
+---取不到时退回扫描时间戳（按 realm-faction 的全量/截断快照，兼容账号级旧字段）+ 物品条目数。
+---@return string|nil
+local function blackthornesRevisionKey()
+  local db = _G.BlackthornesTSDB
+  if type(db) ~= "table" then return nil end
+  local ns = _G.BlackthornesTS
+  local prices = type(ns) == "table" and ns.Prices
+  local changes = type(prices) == "table" and tonumber(prices.changes)
+  if changes then return "c" .. floor(changes) end
+  local tbl = blackthornesPriceTable()
+  local count = 0
+  if tbl then for _ in pairs(tbl) do count = count + 1 end end
+  local stamp = floor(tonumber(db.lastFullScan) or 0)
+  local key = blackthornesScopeKey()
+  if key then
+    local full, capped = db.lastFullScanByRealm, db.lastCappedScanByRealm
+    if type(full) == "table" then stamp = max(stamp, floor(tonumber(full[key]) or 0)) end
+    if type(capped) == "table" then stamp = max(stamp, floor(tonumber(capped[key]) or 0)) end
+  end
+  if stamp == 0 and count == 0 and not blackthornesApi() then return nil end
+  return tconcat({ "bt", stamp, count }, ":")
 end
 
 ---当前实际生效的行情数据源："easyauction" | "blackthornes" | nil
@@ -389,20 +421,23 @@ function Arb.Reset()
 end
 Arb.Reset()
 
+---行情修订号：两个行情插件的版本拼在一起，任一边更新都让行缓存失效（两者可能同时装）
+---@return string|nil
 local function revision()
+  local parts = {}
   local api = Arb.Market()
   if api and type(api.GetRevision) == "function" then
     local ok, value = pcall(api.GetRevision)
-    if ok then return tonumber(value) end
+    if ok then
+      local rev = tonumber(value)
+      if rev then parts[#parts + 1] = "ea:" .. floor(rev) end
+    end
   end
-  local db = _G.BlackthornesTSDB
-  if type(db) == "table" and (blackthornesPriceTable() or blackthornesApi()) then
-    local tbl = blackthornesPriceTable()
-    local count = 0
-    if tbl then for _ in pairs(tbl) do count = count + 1 end end
-    return tconcat({ "bt", floor(tonumber(db.lastScan) or tonumber(db.lastFullScan) or 0), count }, ":")
-  end
-  return nil
+  -- 黑石没有修订号 API：用会话内变更计数（或扫描时间戳 + 条目数）代替
+  local btKey = blackthornesRevisionKey()
+  if btKey then parts[#parts + 1] = btKey end
+  if #parts == 0 then return nil end
+  return tconcat(parts, "|")
 end
 
 ---按需要购买的数量取单价：优先用 EasyAuction 的可购深度，其次兼容黑石交易技能价格阶梯与存档，
@@ -565,47 +600,66 @@ function Arb.SellQuote(itemID)
   return nil
 end
 
----读取拍卖行当前在售件数（只认全量扫描的完整快照；没有完整快照返回 nil 表示「未知」）
----数据源：EasyAuction GetRecord().bookQuantity（bookComplete）/ GetDepth().totalQuantity（complete），
----并兼容黑石交易技能价格表里同名字段。
+---读取拍卖行当前在售件数（最近一次扫描数到的总挂单件数；没有扫描记录返回 nil 表示「未知」）
+---数据源：EasyAuction GetRecord().bookQuantity（bookComplete）/ GetDepth().totalQuantity（complete）；
+---黑石交易技能价格表 record.quantity（必须带 record.seen，与它物品提示里的「现在在售」同源）。
 ---@param itemID number
 ---@return number|nil quantity 在售件数，nil 表示未知
----@return string|nil source 快照来源 "record" | "depth" | nil
+---@return string|nil source 数据来源 "record" | "depth" | "quantity" | "partial" | nil
+---   "partial" 表示行情插件有该物品的记录但快照不完整（EasyAuction bookComplete=false / depth 不完整），
+---   数量不可信所以仍返回 nil，调用方可以据此区分「从没扫描过」和「扫描不完整」。
 function Arb.ListedSupply(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
   local api = Arb.Market()
+  local partial = false
   if api then
     if type(api.GetRecord) == "function" then
       local ok, record = pcall(api.GetRecord, id)
-      if ok and type(record) == "table" and record.bookComplete == true then
-        local qty = tonumber(record.bookQuantity)
-        if qty and qty >= 0 then return qty, "record" end
+      if ok and type(record) == "table" then
+        if record.bookComplete == true then
+          local qty = tonumber(record.bookQuantity)
+          if qty and qty >= 0 then return qty, "record" end
+        elseif tonumber(record.bookQuantity) then
+          partial = true -- 有挂单汇总，但不是无跳过项的全量扫描
+        end
       end
     end
     if type(api.GetDepth) == "function" then
       local ok, depth = pcall(api.GetDepth, id, 200)
-      if ok and type(depth) == "table" and depth.complete == true then
-        local qty = tonumber(depth.totalQuantity)
-        if qty and qty >= 0 then return qty, "depth" end
-      end
-    end
-  else
-    local prices = blackthornesPriceTable()
-    local record = prices and prices[id]
-    if type(record) == "table" and record.bookComplete == true then
-      local qty = tonumber(record.bookQuantity)
-      if qty and qty >= 0 then return qty, "record" end
-    end
-    local btApi = blackthornesApi()
-    if btApi and type(btApi.GetDepth) == "function" then
-      local ok, depth = pcall(btApi.GetDepth, id)
-      if ok and type(depth) == "table" and depth.complete == true then
-        local qty = tonumber(depth.totalQuantity)
-        if qty and qty >= 0 then return qty, "depth" end
+      if ok and type(depth) == "table" then
+        if depth.complete == true then
+          local qty = tonumber(depth.totalQuantity)
+          if qty and qty >= 0 then return qty, "depth" end
+        elseif tonumber(depth.totalQuantity) then
+          partial = true
+        end
       end
     end
   end
+  -- 两个插件可能同时装：EasyAuction 没有该物品的完整数量时，继续读黑石存档
+  local prices = blackthornesPriceTable()
+  local record = prices and prices[id]
+  -- 黑石没有 EasyAuction 那种「完整快照」标记：record.quantity 是它最近一次扫描
+  -- 该物品时数到的挂单总件数（record.seen 是那次扫描时间），物品提示的「现在在售」
+  -- 就是它。旧版/别名存档里可能写成 bookQuantity，一并兼容。
+  if type(record) == "table" and type(record.seen) == "number" then
+    local qty = tonumber(record.quantity)
+    if qty and qty >= 0 then return qty, "quantity" end
+  end
+  if type(record) == "table" and record.bookComplete == true then
+    local qty = tonumber(record.bookQuantity)
+    if qty and qty >= 0 then return qty, "record" end
+  end
+  local btApi = blackthornesApi()
+  if btApi and type(btApi.GetDepth) == "function" then
+    local ok, depth = pcall(btApi.GetDepth, id)
+    if ok and type(depth) == "table" and depth.complete == true then
+      local qty = tonumber(depth.totalQuantity)
+      if qty and qty >= 0 then return qty, "depth" end
+    end
+  end
+  if partial then return nil, "partial" end
   return nil
 end
 
@@ -1175,8 +1229,9 @@ function Arb.VendorArbitrage(options)
       -- 单件买入价即最低档价（批量时按档位逐段计价，见 VendorBuyFor）
       local buyForOne = Arb.VendorBuyFor(offer.itemID, 1)
       local buyPrice = (buyForOne and buyForOne.unit) or offer.price
+      local supply, supplySource = Arb.ListedSupply(offer.itemID)
       local row = {
-        listedSupply = Arb.ListedSupply(offer.itemID),
+        listedSupply = supply, listedSupplySource = supplySource,
         outputID = offer.itemID, name = Arb.ItemName(offer.itemID), kind = "vendor",
         vendorPrice = buyPrice, listPrice = offer.price, vendorNPC = offer.npc, vendorZone = offer.zone,
         vendorStock = offer.stock, vendorStack = offer.stack, vendorInfinite = offer.infinite == true,
@@ -1713,7 +1768,7 @@ local function buildRows(mode, crossOwner)
     end
     row.leaves, row.craftLines = leaves, crafts
 
-    row.listedSupply = Arb.ListedSupply(recipe.output)
+    row.listedSupply, row.listedSupplySource = Arb.ListedSupply(recipe.output)
     if row.craftable then
       priced = priced + 1
       local price, record, priceSource = Arb.SellQuote(recipe.output)

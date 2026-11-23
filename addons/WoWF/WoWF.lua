@@ -5861,9 +5861,12 @@ local function CraftSignColor(value)
   return (tonumber(value) or 0) >= 0 and "|cff44ff88" or "|cffff5555"
 end
 
----在售数量展示：少于 100 件标红提示异常价格风险；nil 表示没有完整扫描快照
-local function SupplyText(supply)
-  if supply == nil then return "|cffffd100未知(无完整快照)|r" end
+---在售数量展示：少于 100 件标红提示异常价格风险；nil 时区分「从没扫描过」和「扫描快照不完整」
+local function SupplyText(supply, source)
+  if supply == nil then
+    if source == "partial" then return "|cffffb030未知(快照不完整)|r" end
+    return "|cffffd100未知(行情未扫描)|r"
+  end
   if supply < 100 then return string.format("|cffff5555%d 件(偏少)|r", supply) end
   return string.format("|cff44ff88%d 件|r", supply)
 end
@@ -7007,7 +7010,8 @@ local function RenderTabCraftArb()
         end,
         tipTitle = "拍卖行在售数量过滤（异常价格防护）",
         tipBody = "开启后过滤掉拍卖行在售数量少于 100 件的物品——挂单过少通常意味着个别人乱挂的异常价格。"
-          .. "数量来自 EasyAuction 全量扫描（bookQuantity / GetDepth 总量）；没有完整快照时在售数量记为「未知」，不参与过滤。",
+          .. "EasyAuction 取全量扫描的 bookQuantity / GetDepth 总量；黑石交易技能取它最近一次扫描数到的挂单总件数"
+          .. "（与其物品提示的「现在在售」一致）。两边都还没扫描过该物品时记为「未知」，不参与过滤。",
       },
     },
   })
@@ -7021,7 +7025,8 @@ local function RenderTabCraftArb()
       local vendorLines = {}
       table.insert(vendorLines, string.format(
         "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（%s）  ·  |cff99e6ff在售:|r %s",
-        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0), PriceSourceText(row.priceSource), SupplyText(row.listedSupply)))
+        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0), PriceSourceText(row.priceSource),
+        SupplyText(row.listedSupply, row.listedSupplySource)))
       local availableStock, hasAnyInfinite, hasAnyStock = nil, false, false
       for _, source in ipairs(row.vendorSources or {}) do
         local s = tonumber(source.stock) or -1
@@ -7157,7 +7162,7 @@ local function RenderTabCraftArb()
         row.disenchant.incomplete and " |cffff8800部分材料无报价，期望值仅为下界|r" or ""
       ))
     end
-    table.insert(bodyLines, string.format("|cff99e6ff在售:|r %s", SupplyText(row.listedSupply)))
+    table.insert(bodyLines, string.format("|cff99e6ff在售:|r %s", SupplyText(row.listedSupply, row.listedSupplySource)))
     if row.price then
       table.insert(bodyLines, string.format("|cff99e6ff拍卖行售价:|r %s|r / 件（%s）",
         FormatMoney(row.price), PriceSourceText(row.priceSource)))
