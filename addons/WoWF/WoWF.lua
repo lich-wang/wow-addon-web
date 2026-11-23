@@ -95,7 +95,7 @@ local COMMON_COMMANDS = {
     category = "本百科 / 快捷入口",
     code = "/wowf rep",
     desc = "直达声望页：魔兽无限新增的 16 个第三方声望与凄凉之地半人马声望（吉尔吉斯 / 玛格拉姆）的任务与上交清单，按当前声望过滤。",
-    note = "等同点击顶部「声望」页签；支持单选/多选筛选声望，任务按角色等级与完成状态过滤，工匠文书按声望档位分组。",
+    note = "等同点击顶部「声望」页签；支持通过顶部声望下拉框单选/多选筛选声望，任务按角色等级与完成状态过滤，工匠文书按声望档位分组。",
   },
   {
     title = "制造套利",
@@ -272,7 +272,7 @@ local function SavePersistedState()
   end
   for _, key in ipairs(PERSISTED_STATE_KEYS) do
     local val = state[key]
-    if val == nil or (key == "craftProfession" and type(val) == "table" and next(val) == nil) then
+    if val == nil or ((key == "craftProfession" or key == "repFilter") and type(val) == "table" and next(val) == nil) then
       WoWFDB.uiState[key] = false
     else
       WoWFDB.uiState[key] = val
@@ -1722,7 +1722,7 @@ local function GetQuestieQuestInfo(qid, fallbackObj)
 end
 
 local function ResolveQuestChainFromQuestieDB(q)
-  if type(q) ~= "table" or q._qdbResolved then return q end
+  if type(q) ~= "table" or q._qdbResolved or q._preserveCuratedChain then return q end
   q._qdbResolved = true
   local mainId = tonumber(q.id or q.questId)
   if not mainId or mainId <= 0 or not _G.QuestDB then return q end
@@ -3027,6 +3027,48 @@ local function GetBandQuests(band, classKey)
   return band.quests or {}
 end
 
+local function MarkCuratedClassRuns(runs)
+  if type(runs) ~= "table" then return {} end
+  local out = {}
+  local seenKey = {}
+  local seenLastStep = {}
+  for _, cr in ipairs(runs) do
+    if type(cr) == "table" then
+      local stepIds = {}
+      local seenStep = {}
+      local lastStepId = nil
+      if type(cr.steps) == "table" and #cr.steps > 0 then
+        -- 保留内置手工整理的完整多步职业任务链，避免被 QuestieDB 截断或覆盖标题/NPC
+        cr._preserveCuratedChain = true
+        for _, st in ipairs(cr.steps) do
+          local sid = tonumber(st and st.id)
+          if sid and sid > 0 and not seenStep[sid] then
+            seenStep[sid] = true
+            table.insert(stepIds, tostring(sid))
+            lastStepId = sid
+          end
+        end
+      end
+      local runId = tonumber(cr.id or cr.questId)
+      local dedupKey
+      if #stepIds > 0 then
+        dedupKey = tostring(cr.faction or "") .. ":steps:" .. table.concat(stepIds, ",")
+      elseif runId and runId > 0 then
+        dedupKey = tostring(cr.faction or "") .. ":id:" .. tostring(runId)
+      else
+        dedupKey = tostring(cr.faction or "") .. ":name:" .. tostring(cr.name or "") .. ":" .. tostring(cr.level or "")
+      end
+      local lastKey = lastStepId and (tostring(cr.faction or "") .. ":last:" .. tostring(lastStepId)) or nil
+      if not seenKey[dedupKey] and (not lastKey or not seenLastStep[lastKey]) then
+        seenKey[dedupKey] = true
+        if lastKey then seenLastStep[lastKey] = true end
+        table.insert(out, cr)
+      end
+    end
+  end
+  return out
+end
+
 local function GetCurrentClassRuns(route, cls, faction)
   local r = route or GetCurrentRoute()
   local c = cls or GetCurrentClassData()
@@ -3034,7 +3076,7 @@ local function GetCurrentClassRuns(route, cls, faction)
   local f = faction or state.faction or "alliance"
 
   if r and r.classRunsByClass and r.classRunsByClass[ck] and #r.classRunsByClass[ck] > 0 then
-    return r.classRunsByClass[ck]
+    return MarkCuratedClassRuns(r.classRunsByClass[ck])
   end
   local fallback = {}
   local anyFactionFallback = {}
@@ -3049,9 +3091,9 @@ local function GetCurrentClassRuns(route, cls, faction)
     end
   end
   if #fallback > 0 then
-    return fallback
+    return MarkCuratedClassRuns(fallback)
   end
-  return anyFactionFallback
+  return MarkCuratedClassRuns(anyFactionFallback)
 end
 
 local function GetBandTimelineSteps(route, fromLvl, toLvl)
@@ -3743,6 +3785,10 @@ end
 -- 4. 主窗口与交互卡片 UI 系统
 -- ============================================================================
 
+local MAIN_FRAME_WIDTH = 940
+local MAIN_FRAME_HEIGHT = 560
+local CONTENT_CHILD_WIDTH = 880
+
 local mainFrame
 local contentChild
 local scrollFrame
@@ -4022,13 +4068,16 @@ local function HideUnusedCards(fromIndex)
     arbToolbar:Hide()
   end
   if repFilterBar and state.activeTab ~= 9 then
-    repFilterBar:Hide()
+    if repFilterBar:IsShown() then
+      repFilterBar:Hide()
+      if CloseDropDownMenus then CloseDropDownMenus() end
+    end
   end
 end
 
 local function LayoutCard(card, yOffset, titleText, bodyText, borderColor, bgColor, badgeText, actionLabel, actionCallback)
-  local width = (contentChild:GetWidth() or 720) - 16
-  if width < 500 then width = 710 end
+  local width = (contentChild:GetWidth() or CONTENT_CHILD_WIDTH) - 16
+  if width < 500 then width = CONTENT_CHILD_WIDTH - 16 end
   card:SetWidth(width)
   card:ClearAllPoints()
   card:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
@@ -5079,6 +5128,7 @@ local function RenderTabRoutes()
           tag = string.format("|cff00ffcc[Lv.%d %s·%s职业任务]|r", cr.level, route.name, cls and cls.name or ""),
           npcPrefix = "起始: ",
           indent = "      ",
+          foldCompleted = true,
         })
         table.insert(charGuideLines, crLine)
         if crTree then table.insert(charGuideLines, crTree) end
@@ -5478,29 +5528,64 @@ local function RenderTabClassAndTalents()
   end
 
   -- 3. 职业专属任务链（优先展示当前种族专属职业任务链）
+  local hasRouteRuns = (route and route.classRunsByClass and route.classRunsByClass[state.classKey] and #route.classRunsByClass[state.classKey] > 0) and true or false
   local matchedRuns = GetCurrentClassRuns(route, cls, state.faction)
-  local runsToRender = (#matchedRuns > 0) and matchedRuns or (cls.classRuns or {})
+  local runsToRender = (#matchedRuns > 0) and matchedRuns or MarkCuratedClassRuns(cls.classRuns or {})
   if #runsToRender > 0 then
     local crLines = {}
+    local milestoneFilter = BuildMilestoneFilter()
     for _, cr in ipairs(runsToRender) do
       local crTo = cr.to or cr.level or 60
-      if not isMatchMode or crTo >= lvl - 2 then
+      if not (isMatchMode and ShouldSkipClassRun(cr, milestoneFilter)) and (not isMatchMode or crTo >= lvl - 2) then
         local fTag = FactionTag(cr.faction, true)
-        local rTag = (cr.raceName and cr.raceName ~= "") and ("|cff99e6ff[" .. cr.raceName .. "]|r ") or ""
+        local raceLabel = hasRouteRuns and (route and route.name) or cr.raceName
+        local rTag = (raceLabel and raceLabel ~= "") and ("|cff99e6ff[" .. raceLabel .. "]|r ") or ""
         local teachTag = (cr.teaches and cr.teaches ~= "") and (" -> 学会 |cff71d5ff[" .. cr.teaches .. "]|r") or ""
-        local stepCount = (type(cr.steps) == "table") and #cr.steps or 0
-        -- 标题写成「任务链 N 步」而不是再放一个与末步同名的任务链接，避免同一任务在卡内出现两次
-        local chainName = (cr.name and cr.name ~= "") and tostring(cr.name) or "职业任务链"
-        local chainLabel = stepCount > 1
-          and string.format("|cffffd100%s|r |cff8899aa任务链 %d 步|r", chainName, stepCount)
-          or FormatQuestLink(cr, cr.level, (cr.steps and cr.steps[1] and cr.steps[1].zone) or "", nil, IsQuestCompleted(cr))
-        table.insert(crLines, string.format("%s %sLv.%d %s%s", fTag, rTag, cr.level, chainLabel, teachTag))
-        for idx, st in ipairs(cr.steps or {}) do
+        local lvRange = (crTo and crTo > (cr.level or 1))
+          and string.format("Lv.%d–%d", cr.level or 1, crTo)
+          or string.format("Lv.%d", cr.level or 1)
+
+        -- 步骤按 ID 去重；单步任务合并成一行，多步任务若链名已与某步骤同名则标题不再复读任务名
+        local uniqueSteps = {}
+        local seenStepId = {}
+        for _, st in ipairs(cr.steps or {}) do
+          local sid = tonumber(st and st.id)
+          if not sid or sid <= 0 or not seenStepId[sid] then
+            if sid and sid > 0 then seenStepId[sid] = true end
+            table.insert(uniqueSteps, st)
+          end
+        end
+
+        if #uniqueSteps == 1 then
+          local st = uniqueSteps[1]
           local stZone = PickZone(st, st.place)
           local stLink = FormatQuestLink(st, cr.level, stZone)
           local npcInfo = FormatStepNpcInfo(st, stZone)
           local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
-          table.insert(crLines, string.format("    %d. %s%s", idx, stLink, npcSuffix))
+          table.insert(crLines, string.format("%s %s%s %s%s%s", fTag, rTag, lvRange, stLink, teachTag, npcSuffix))
+        elseif #uniqueSteps > 1 then
+          local chainName = (cr.name and cr.name ~= "") and tostring(cr.name) or "职业任务链"
+          local nameMatchesStep = false
+          for _, st in ipairs(uniqueSteps) do
+            if st and st.name == chainName then
+              nameMatchesStep = true
+              break
+            end
+          end
+          local headerLabel = nameMatchesStep
+            and string.format("|cffffd100职业任务链|r |cff8899aa(%d 步)|r", #uniqueSteps)
+            or string.format("|cffffd100%s|r |cff8899aa任务链 %d 步|r", chainName, #uniqueSteps)
+          table.insert(crLines, string.format("%s %s%s %s%s", fTag, rTag, lvRange, headerLabel, teachTag))
+          for idx, st in ipairs(uniqueSteps) do
+            local stZone = PickZone(st, st.place)
+            local stLink = FormatQuestLink(st, cr.level, stZone)
+            local npcInfo = FormatStepNpcInfo(st, stZone)
+            local npcSuffix = (npcInfo ~= "") and (" — " .. npcInfo) or ""
+            table.insert(crLines, string.format("    %d. %s%s", idx, stLink, npcSuffix))
+          end
+        else
+          local crLink = FormatQuestLink(cr, cr.level, "", nil, IsQuestCompleted(cr))
+          table.insert(crLines, string.format("%s %s%s %s%s", fTag, rTag, lvRange, crLink, teachTag))
         end
       end
     end
@@ -5677,20 +5762,25 @@ local function RenderTabDungeons()
       if d.quests and #d.quests > 0 then
         local filteredQuests = {}
         local sharedQuests = {}
+        local seenInThisDungeon = {}
         local otherFactionOrClassCount = 0
         for _, q in ipairs(DedupeQuestieQuests(d.quests)) do
           if not IsQuestCompleted(q) then
             local qFactionOk = (not q.faction or q.faction == "" or q.faction == "both" or q.faction == state.faction)
             if state.dungeonFilter ~= "MATCH" or (qFactionOk and MatchesQuestClass(q)) then
               -- 同一任务常同时挂在多个副本分区（如血色军械库/大教堂共享任务），
-              -- 后续分区只做引用提示，不再整条重复展开
+              -- 后续分区只做引用提示，不再整条重复展开；同副本同阵营相同任务 ID 只保留一条
               local qKey = tostring(q.id or q.name)
-              local firstDungeon = shownQuestDungeon[qKey]
-              if firstDungeon and firstDungeon ~= d.name then
-                table.insert(sharedQuests, string.format("%s（见 %s）", FormatQuestLink(q, d.minLevel, d.entranceZone or d.zone or ""), firstDungeon))
-              else
-                shownQuestDungeon[qKey] = d.name
-                table.insert(filteredQuests, q)
+              local localKey = qKey .. ":" .. tostring(q.faction or "both")
+              if not seenInThisDungeon[localKey] then
+                seenInThisDungeon[localKey] = true
+                local firstDungeon = shownQuestDungeon[qKey]
+                if firstDungeon and firstDungeon ~= d.name then
+                  table.insert(sharedQuests, string.format("%s（见 %s）", FormatQuestLink(q, d.minLevel, d.entranceZone or d.zone or ""), firstDungeon))
+                else
+                  shownQuestDungeon[qKey] = d.name
+                  table.insert(filteredQuests, q)
+                end
               end
             else
               otherFactionOrClassCount = otherFactionOrClassCount + 1
@@ -5813,8 +5903,8 @@ local dropdownMenu
 local OpenControlDropdown
 
 local function LayoutArbToolbar(yOffset, opts)
-  local width = (contentChild:GetWidth() or 720) - 16
-  if width < 500 then width = 710 end
+  local width = (contentChild:GetWidth() or CONTENT_CHILD_WIDTH) - 16
+  if width < 500 then width = CONTENT_CHILD_WIDTH - 16 end
   if not arbToolbar then
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
     arbToolbar = CreateFrame("Frame", nil, contentChild, template)
@@ -5928,8 +6018,19 @@ end
 -- ============================================================================
 -- 声望页：魔兽无限新增的 16 个第三方声望与凄凉之地半人马阵营
 -- 数据来自 Data.reputationGuides 与 Data.factionQuests。
--- 支持「全部 / 单选 / 多选」过滤，按角色阵营/等级/声望/完成状态过滤，跨阵营按任务 ID 去重。
+-- 支持下拉框单选/多选过滤，按角色阵营/等级/声望/完成状态过滤，跨阵营按任务 ID 去重。
 -- ============================================================================
+local function FormatRepFilterButtonLabel(items, selectedCount, selectedNames)
+  local total = #(items or {})
+  if not selectedCount or selectedCount <= 0 then
+    return string.format("声望筛选: 全部 (%d)", total)
+  end
+  if selectedCount == 1 and selectedNames and selectedNames[1] then
+    return "声望筛选: " .. selectedNames[1]
+  end
+  return string.format("声望筛选: 已选 %d 项", selectedCount)
+end
+
 local function LayoutRepFilterBar(yOffset, opts)
   local items = opts and opts.items or {}
   local count = #items
@@ -5938,11 +6039,12 @@ local function LayoutRepFilterBar(yOffset, opts)
     return yOffset
   end
 
-  local width = (contentChild:GetWidth() or 720) - 16
-  if width < 500 then width = 710 end
+  local width = (contentChild:GetWidth() or CONTENT_CHILD_WIDTH) - 16
+  if width < 500 then width = CONTENT_CHILD_WIDTH - 16 end
   if not repFilterBar then
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
     repFilterBar = CreateFrame("Frame", nil, contentChild, template)
+    repFilterBar:SetHeight(34)
     if repFilterBar.SetBackdrop then
       repFilterBar:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -5953,46 +6055,163 @@ local function LayoutRepFilterBar(yOffset, opts)
       repFilterBar:SetBackdropColor(0.06, 0.09, 0.14, 0.94)
       repFilterBar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
     end
-    repFilterBar.allBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
-    repFilterBar.allBtn:SetHeight(22)
+    repFilterBar.dropdownBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
+    repFilterBar.dropdownBtn:SetHeight(22)
     repFilterBar.modeBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
     repFilterBar.modeBtn:SetHeight(22)
-    repFilterBar.btns = {}
+    repFilterBar.clearBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
+    repFilterBar.clearBtn:SetHeight(22)
   end
 
   local hasFilter = opts and opts.hasFilter == true
   local isSingle = opts and opts.mode == "single"
   local selected = (opts and opts.selected) or {}
-  local gapX, gapY = 6, 4
-  local btnH = 22
-  local ctrlW = math.floor((width - 16 - gapX) / 2)
+  local selectedCount = tonumber(opts and opts.selectedCount) or 0
+  local selectedNames = (opts and opts.selectedNames) or {}
 
-  repFilterBar.allBtn:SetWidth(ctrlW)
-  repFilterBar.allBtn:ClearAllPoints()
-  repFilterBar.allBtn:SetPoint("TOPLEFT", repFilterBar, "TOPLEFT", 8, -6)
-  if not hasFilter then
-    repFilterBar.allBtn:SetText("|cff00ffcc✓ 全部声望|r")
-    repFilterBar.allBtn:LockHighlight()
-  else
-    repFilterBar.allBtn:SetText("全部声望（清空筛选）")
-    repFilterBar.allBtn:UnlockHighlight()
+  local validKeys = {}
+  for _, item in ipairs(items) do
+    validKeys[item.key] = true
   end
-  repFilterBar.allBtn:SetScript("OnClick", function()
-    state.repFilter = nil
-    RefreshUI()
+
+  local gap = 6
+  local innerW = width - 16
+  local modeW = 128
+  local clearW = 142
+  local dropW = math.max(180, innerW - modeW - clearW - gap * 2)
+
+  repFilterBar.dropdownBtn:SetWidth(dropW)
+  repFilterBar.dropdownBtn:ClearAllPoints()
+  repFilterBar.dropdownBtn:SetPoint("LEFT", repFilterBar, "LEFT", 8, 0)
+  repFilterBar.dropdownBtn:SetText(FormatRepFilterButtonLabel(items, selectedCount, selectedNames))
+  repFilterBar.dropdownBtn:SetScript("OnClick", function(self)
+    OpenControlDropdown(self, function()
+      local singleMode = (state.repFilterMode == "single")
+      local hasAnySelected = function()
+        if type(state.repFilter) ~= "table" then return false end
+        for k, enabled in pairs(state.repFilter) do
+          if enabled and validKeys[k] then return true end
+        end
+        return false
+      end
+      local menuItems = {
+        {
+          text = "全部声望（清空筛选）",
+          isNotRadio = not singleMode,
+          checked = function()
+            return not hasAnySelected()
+          end,
+          func = function()
+            state.repFilter = nil
+            RefreshUI()
+          end,
+        },
+      }
+      for _, item in ipairs(items) do
+        local itemKey = item.key
+        local itemLabel = item.menuText or item.label
+        if singleMode then
+          table.insert(menuItems, {
+            text = itemLabel,
+            isNotRadio = false,
+            checked = function()
+              return type(state.repFilter) == "table" and state.repFilter[itemKey] == true
+            end,
+            func = function()
+              local onlyThis = (type(state.repFilter) == "table" and state.repFilter[itemKey] == true)
+              if onlyThis then
+                for k, enabled in pairs(state.repFilter) do
+                  if enabled and validKeys[k] and k ~= itemKey then
+                    onlyThis = false
+                    break
+                  end
+                end
+              end
+              if onlyThis then
+                state.repFilter = nil
+              else
+                state.repFilter = { [itemKey] = true }
+              end
+              RefreshUI()
+            end,
+          })
+        else
+          table.insert(menuItems, {
+            text = itemLabel,
+            isNotRadio = true,
+            keepShownOnClick = true,
+            checked = function()
+              return type(state.repFilter) == "table" and state.repFilter[itemKey] == true
+            end,
+            func = function()
+              local nextSet = {}
+              if type(state.repFilter) == "table" then
+                for k, enabled in pairs(state.repFilter) do
+                  if enabled and validKeys[k] then
+                    nextSet[k] = true
+                  end
+                end
+              end
+              if nextSet[itemKey] then
+                nextSet[itemKey] = nil
+              else
+                nextSet[itemKey] = true
+              end
+              state.repFilter = (next(nextSet) ~= nil) and nextSet or nil
+              RefreshUI()
+              if UIDropDownMenu_Refresh and dropdownMenu then
+                UIDropDownMenu_Refresh(dropdownMenu, nil, 1)
+              end
+            end,
+          })
+        end
+      end
+      return menuItems
+    end, function()
+      local curKey = nil
+      if type(state.repFilter) == "table" then
+        for _, item in ipairs(items) do
+          if state.repFilter[item.key] then
+            curKey = item.key
+            break
+          end
+        end
+      end
+      local nextIdx = 1
+      if curKey then
+        for i, item in ipairs(items) do
+          if item.key == curKey then
+            nextIdx = i + 1
+            break
+          end
+        end
+      end
+      if nextIdx > #items then
+        state.repFilter = nil
+      else
+        state.repFilter = { [items[nextIdx].key] = true }
+      end
+      RefreshUI()
+    end)
   end)
+  local selectedSummary = hasFilter and table.concat(selectedNames, "、") or "全部可用声望"
   AttachTooltip(
-    repFilterBar.allBtn,
-    "显示全部声望",
-    "清除已选筛选条件，展示当前阵营可用的全部声望总览与任务详情。"
+    repFilterBar.dropdownBtn,
+    "筛选声望（下拉选择）",
+    string.format(
+      "当前已选：%s\n当前模式：%s。点击打开声望下拉列表，可按单个或多个声望筛选任务详情。",
+      selectedSummary,
+      isSingle and "单选（点选即切换）" or "多选（可连续勾选多项）"
+    )
   )
 
-  repFilterBar.modeBtn:SetWidth(ctrlW)
+  repFilterBar.modeBtn:SetWidth(modeW)
   repFilterBar.modeBtn:ClearAllPoints()
-  repFilterBar.modeBtn:SetPoint("TOPLEFT", repFilterBar, "TOPLEFT", 8 + ctrlW + gapX, -6)
+  repFilterBar.modeBtn:SetPoint("LEFT", repFilterBar.dropdownBtn, "RIGHT", gap, 0)
   repFilterBar.modeBtn:SetText(isSingle and "筛选模式: 单选" or "筛选模式: 多选")
   repFilterBar.modeBtn:UnlockHighlight()
   repFilterBar.modeBtn:SetScript("OnClick", function()
+    if CloseDropDownMenus then CloseDropDownMenus() end
     if state.repFilterMode == "single" then
       state.repFilterMode = "multi"
     else
@@ -6012,83 +6231,36 @@ local function LayoutRepFilterBar(yOffset, opts)
     repFilterBar.modeBtn,
     "切换单选 / 多选",
     isSingle
-      and "当前为单选模式：点击下方声望只看该声望，再次点击已选项可恢复全部。点击此按钮切换为多选模式。"
-      or "当前为多选模式：可勾选多个声望同时查看。点击此按钮切换为单选模式。"
+      and "当前为单选模式：在下拉框中点击声望即切换为该声望，再次点击已选项可恢复全部。点击此按钮切换为多选模式。"
+      or "当前为多选模式：可在下拉框中勾选多个声望同时查看。点击此按钮切换为单选模式。"
   )
 
-  local cols = 4
-  local btnW = math.floor((width - 16 - gapX * (cols - 1)) / cols)
-  for i, item in ipairs(items) do
-    local btn = repFilterBar.btns[i]
-    if not btn then
-      btn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
-      repFilterBar.btns[i] = btn
-    end
-    local col = (i - 1) % cols
-    local row = math.floor((i - 1) / cols)
-    local x = 8 + col * (btnW + gapX)
-    local y = -34 - row * (btnH + gapY)
-    btn:SetSize(btnW, btnH)
-    btn:ClearAllPoints()
-    btn:SetPoint("TOPLEFT", repFilterBar, "TOPLEFT", x, y)
-
-    local isSelected = selected[item.key] == true
-    if isSelected then
-      btn:SetText("|cff00ffcc✓ " .. item.label .. "|r")
-      btn:LockHighlight()
-    elseif hasFilter then
-      btn:SetText("|cffaaaaaa" .. item.label .. "|r")
-      btn:UnlockHighlight()
-    else
-      btn:SetText(item.label)
-      btn:UnlockHighlight()
-    end
-
-    local itemKey = item.key
-    btn:SetScript("OnClick", function()
-      if state.repFilterMode == "single" then
-        local onlyThis = isSelected
-        if onlyThis then
-          for k, enabled in pairs(selected) do
-            if enabled and k ~= itemKey then
-              onlyThis = false
-              break
-            end
-          end
-        end
-        if onlyThis then
-          state.repFilter = nil
-        else
-          state.repFilter = { [itemKey] = true }
-        end
-      else
-        local nextSet = {}
-        for k, enabled in pairs(selected) do
-          if enabled then nextSet[k] = true end
-        end
-        if nextSet[itemKey] then
-          nextSet[itemKey] = nil
-        else
-          nextSet[itemKey] = true
-        end
-        state.repFilter = (next(nextSet) ~= nil) and nextSet or nil
-      end
-      RefreshUI()
-    end)
-    AttachTooltip(btn, item.fullName or item.label, item.tipBody)
-    btn:Show()
+  repFilterBar.clearBtn:SetWidth(clearW)
+  repFilterBar.clearBtn:ClearAllPoints()
+  repFilterBar.clearBtn:SetPoint("LEFT", repFilterBar.modeBtn, "RIGHT", gap, 0)
+  if not hasFilter then
+    repFilterBar.clearBtn:SetText("|cff00ffcc✓ 全部声望|r")
+    repFilterBar.clearBtn:LockHighlight()
+  else
+    repFilterBar.clearBtn:SetText("清空筛选 (显示全部)")
+    repFilterBar.clearBtn:UnlockHighlight()
   end
-  for i = count + 1, #repFilterBar.btns do
-    repFilterBar.btns[i]:Hide()
-  end
+  repFilterBar.clearBtn:SetScript("OnClick", function()
+    if CloseDropDownMenus then CloseDropDownMenus() end
+    state.repFilter = nil
+    RefreshUI()
+  end)
+  AttachTooltip(
+    repFilterBar.clearBtn,
+    "显示全部声望",
+    "清除已选筛选条件，展示当前阵营可用的全部声望总览与任务详情。"
+  )
 
-  local rows = math.ceil(count / cols)
-  local totalH = 34 + rows * btnH + math.max(0, rows - 1) * gapY + 8
-  repFilterBar:SetSize(width, totalH)
+  repFilterBar:SetSize(width, 34)
   repFilterBar:ClearAllPoints()
   repFilterBar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
   repFilterBar:Show()
-  return yOffset + totalH + 8
+  return yOffset + 34 + 8
 end
 
 local function RenderTabReputations()
@@ -6164,8 +6336,9 @@ local function RenderTabReputations()
         key = key,
         label = f.name or key,
         fullName = f.name or key,
+        menuText = string.format("%s (%s)", f.name or key, standingPlain),
         summaryLine = string.format("%s%s %s", SIDE_TAG[side] or "", f.name or "", standingText),
-        tipBody = string.format("当前声望：%s\n点击筛选/取消该声望。", standingPlain),
+        tipBody = string.format("当前声望：%s\n在下拉菜单中点击可筛选/取消该声望。", standingPlain),
       }
       table.insert(filterItems, item)
       itemByKey[key] = item
@@ -6178,13 +6351,14 @@ local function RenderTabReputations()
       local shortLabel = (key == "desolace-centaur" or string.find(fullTitle, "半人马", 1, true))
         and "凄凉之地·半人马"
         or fullTitle
-      local groupParts, plainParts = {}, {}
+      local groupParts, plainParts, shortPlainParts = {}, {}, {}
       for _, grp in ipairs(def.groups or {}) do
         local gVal = RepUI.GetStanding(grp.factionId)
         local gName = grp.name or tostring(grp.factionId or "")
         if type(gVal) == "number" then
           table.insert(groupParts, string.format("%s %s%s (%s)|r", gName, RepUI.Color(gVal), RepUI.Label(gVal), RepUI.FormatNumber(gVal)))
           table.insert(plainParts, string.format("%s %s (%s)", gName, RepUI.Label(gVal), RepUI.FormatNumber(gVal)))
+          table.insert(shortPlainParts, string.format("%s %s", gName, RepUI.Label(gVal)))
         else
           table.insert(groupParts, string.format("%s |cff888888未追踪|r", gName))
           table.insert(plainParts, string.format("%s 未追踪", gName))
@@ -6192,12 +6366,14 @@ local function RenderTabReputations()
       end
       local standingText = (#groupParts > 0) and table.concat(groupParts, " / ") or "|cff888888未追踪|r"
       local standingPlain = (#plainParts > 0) and table.concat(plainParts, " / ") or "未追踪"
+      local menuStanding = (#shortPlainParts > 0) and table.concat(shortPlainParts, " / ") or "未追踪"
       local item = {
         key = key,
         label = shortLabel,
         fullName = fullTitle,
+        menuText = string.format("%s (%s)", shortLabel, menuStanding),
         summaryLine = string.format("%s%s %s", SIDE_TAG[def.side or "both"] or "", fullTitle, standingText),
-        tipBody = string.format("当前声望：%s\n点击筛选/取消该声望。", standingPlain),
+        tipBody = string.format("当前声望：%s\n在下拉菜单中点击可筛选/取消该声望。", standingPlain),
       }
       table.insert(filterItems, item)
       itemByKey[key] = item
@@ -6429,6 +6605,8 @@ local function RenderTabReputations()
   list.y = LayoutRepFilterBar(list.y, {
     items = filterItems,
     selected = effectiveSelected,
+    selectedCount = selectedCount,
+    selectedNames = selectedNames,
     hasFilter = hasActiveFilter,
     mode = filterMode,
   })
@@ -6568,7 +6746,7 @@ local function RenderTabReputations()
   if detailCount == 0 then
     list:Add({
       title = "|cffffd100[声望] 当前筛选/搜索无匹配结果|r",
-      body = "请点击上方「全部声望（清空筛选）」或清空顶部搜索框后重试。",
+      body = "请点击上方「清空筛选 (显示全部)」按钮（或在声望下拉框中选择「全部声望」）并清空顶部搜索框后重试。",
       theme = "info",
     })
   end
@@ -7457,7 +7635,7 @@ local function CreateMainWindow()
 
   local template = BackdropTemplateMixin and "BackdropTemplate" or nil
   mainFrame = CreateFrame("Frame", "WoWFMainFrame", UIParent, template)
-  mainFrame:SetSize(800, 560)
+  mainFrame:SetSize(MAIN_FRAME_WIDTH, MAIN_FRAME_HEIGHT)
   mainFrame:SetPoint("CENTER")
   mainFrame:SetFrameStrata("MEDIUM")
   if mainFrame.SetToplevel then
@@ -7634,7 +7812,7 @@ local function CreateMainWindow()
 
   -- 种族路线下拉选择按钮
   local routeBtn = CreateFrame("Button", nil, ctrlBar, "UIPanelButtonTemplate")
-  routeBtn:SetSize(124, 22)
+  routeBtn:SetSize(136, 22)
   routeBtn:SetPoint("LEFT", specBtn, "RIGHT", 6, 0)
   routeBtn:SetScript("OnClick", function(self)
     OpenControlDropdown(self, function()
@@ -7673,7 +7851,7 @@ local function CreateMainWindow()
 
   -- 搜索输入框（含占位提示，仅在支持搜索的标签页启用）
   local searchBox = CreateFrame("EditBox", nil, ctrlBar, "InputBoxTemplate")
-  searchBox:SetSize(128, 20)
+  searchBox:SetSize(180, 20)
   searchBox:SetPoint("RIGHT", ctrlBar, "RIGHT", -10, 0)
   searchBox:SetAutoFocus(false)
   searchBox:SetTextInsets(6, 6, 0, 0)
@@ -7694,33 +7872,52 @@ local function CreateMainWindow()
   end)
   AttachTooltip(searchBox, "关键词搜索", "对当前标签页内容进行关键词过滤（按 Esc 清空；「智能匹配」总览页不支持搜索）。")
 
-  -- 功能标签栏（由 TAB_DEFS 统一驱动）
-  local tabX = 12
-  for i, def in ipairs(TAB_DEFS) do
+  -- 功能标签栏（由 TAB_DEFS 统一驱动：宽窗紧凑单行排布，超出宽度自动换行并下移滚动区）
+  local tabStartX = 12
+  local tabTopY = -82
+  local tabH = 24
+  local gapX = 4
+  local rowGapY = 4
+  local padX = 14
+  local minTabW = 54
+  local maxRight = MAIN_FRAME_WIDTH - 12
+  local maxBtnW = MAIN_FRAME_WIDTH - 24
+  local tabX = tabStartX
+  local row = 0
+  for _, def in ipairs(TAB_DEFS) do
     local btn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
     btn:SetText(def.label)
     local textWidth = btn:GetTextWidth()
     if not textWidth or textWidth <= 0 then
-      textWidth = #def.label * 14
+      local _, charCount = string.gsub(def.label, "[^\128-\191]", "")
+      textWidth = math.max(1, charCount) * 14
     end
-    local width = math.max(74, math.ceil(textWidth + 20))
-    btn:SetSize(width, 26)
-    btn:SetPoint("TOPLEFT", tabX, -82)
+    local width = math.min(maxBtnW, math.max(minTabW, math.ceil(textWidth + padX)))
+    if tabX > tabStartX and (tabX + width) > maxRight then
+      row = row + 1
+      tabX = tabStartX
+    end
+    btn:SetSize(width, tabH)
+    btn:SetPoint("TOPLEFT", tabX, tabTopY - row * (tabH + rowGapY))
     btn:SetScript("OnClick", function()
+      if CloseDropDownMenus then CloseDropDownMenus() end
       state.activeTab = def.id
       RefreshUI()
     end)
     tabButtons[def.id] = btn
-    tabX = tabX + width + 4
+    tabX = tabX + width + gapX
   end
+
+  local tabRows = row + 1
+  local scrollTopY = tabTopY - tabRows * tabH - math.max(0, tabRows - 1) * rowGapY - 6
 
   -- 滚动内容区域
   scrollFrame = CreateFrame("ScrollFrame", "WoWFMainScrollFrame", mainFrame, "UIPanelScrollFrameTemplate")
-  scrollFrame:SetPoint("TOPLEFT", 12, -114)
+  scrollFrame:SetPoint("TOPLEFT", 12, scrollTopY)
   scrollFrame:SetPoint("BOTTOMRIGHT", -32, 12)
 
   contentChild = CreateFrame("Frame", nil, scrollFrame)
-  contentChild:SetSize(740, 500)
+  contentChild:SetSize(CONTENT_CHILD_WIDTH, 500)
   if contentChild.SetHyperlinksEnabled then
     pcall(contentChild.SetHyperlinksEnabled, contentChild, true)
   end
