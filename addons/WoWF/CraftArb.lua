@@ -605,24 +605,35 @@ end
 ---黑石交易技能价格表 record.quantity（必须带 record.seen，与它物品提示里的「现在在售」同源）。
 ---@param itemID number
 ---@return number|nil quantity 在售件数，nil 表示未知
----@return string|nil source 数据来源 "record" | "depth" | "quantity" | nil
+---@return string|nil source 数据来源 "record" | "depth" | "quantity" | "partial" | nil
+---   "partial" 表示行情插件有该物品的记录但快照不完整（EasyAuction bookComplete=false / depth 不完整），
+---   数量不可信所以仍返回 nil，调用方可以据此区分「从没扫描过」和「扫描不完整」。
 function Arb.ListedSupply(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
   local api = Arb.Market()
+  local partial = false
   if api then
     if type(api.GetRecord) == "function" then
       local ok, record = pcall(api.GetRecord, id)
-      if ok and type(record) == "table" and record.bookComplete == true then
-        local qty = tonumber(record.bookQuantity)
-        if qty and qty >= 0 then return qty, "record" end
+      if ok and type(record) == "table" then
+        if record.bookComplete == true then
+          local qty = tonumber(record.bookQuantity)
+          if qty and qty >= 0 then return qty, "record" end
+        elseif tonumber(record.bookQuantity) then
+          partial = true -- 有挂单汇总，但不是无跳过项的全量扫描
+        end
       end
     end
     if type(api.GetDepth) == "function" then
       local ok, depth = pcall(api.GetDepth, id, 200)
-      if ok and type(depth) == "table" and depth.complete == true then
-        local qty = tonumber(depth.totalQuantity)
-        if qty and qty >= 0 then return qty, "depth" end
+      if ok and type(depth) == "table" then
+        if depth.complete == true then
+          local qty = tonumber(depth.totalQuantity)
+          if qty and qty >= 0 then return qty, "depth" end
+        elseif tonumber(depth.totalQuantity) then
+          partial = true
+        end
       end
     end
   end
@@ -648,6 +659,7 @@ function Arb.ListedSupply(itemID)
       if qty and qty >= 0 then return qty, "depth" end
     end
   end
+  if partial then return nil, "partial" end
   return nil
 end
 
@@ -1217,8 +1229,9 @@ function Arb.VendorArbitrage(options)
       -- 单件买入价即最低档价（批量时按档位逐段计价，见 VendorBuyFor）
       local buyForOne = Arb.VendorBuyFor(offer.itemID, 1)
       local buyPrice = (buyForOne and buyForOne.unit) or offer.price
+      local supply, supplySource = Arb.ListedSupply(offer.itemID)
       local row = {
-        listedSupply = Arb.ListedSupply(offer.itemID),
+        listedSupply = supply, listedSupplySource = supplySource,
         outputID = offer.itemID, name = Arb.ItemName(offer.itemID), kind = "vendor",
         vendorPrice = buyPrice, listPrice = offer.price, vendorNPC = offer.npc, vendorZone = offer.zone,
         vendorStock = offer.stock, vendorStack = offer.stack, vendorInfinite = offer.infinite == true,
@@ -1755,7 +1768,7 @@ local function buildRows(mode, crossOwner)
     end
     row.leaves, row.craftLines = leaves, crafts
 
-    row.listedSupply = Arb.ListedSupply(recipe.output)
+    row.listedSupply, row.listedSupplySource = Arb.ListedSupply(recipe.output)
     if row.craftable then
       priced = priced + 1
       local price, record, priceSource = Arb.SellQuote(recipe.output)

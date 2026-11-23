@@ -5862,9 +5862,12 @@ local function CraftSignColor(value)
   return (tonumber(value) or 0) >= 0 and "|cff44ff88" or "|cffff5555"
 end
 
----在售数量展示：少于 100 件标红提示异常价格风险；nil 表示行情插件还没有扫描过该物品
-local function SupplyText(supply)
-  if supply == nil then return "|cffffd100未知(行情未扫描)|r" end
+---在售数量展示：少于 100 件标红提示异常价格风险；nil 时区分「从没扫描过」和「扫描快照不完整」
+local function SupplyText(supply, source)
+  if supply == nil then
+    if source == "partial" then return "|cffffb030未知(快照不完整)|r" end
+    return "|cffffd100未知(行情未扫描)|r"
+  end
   if supply < 100 then return string.format("|cffff5555%d 件(偏少)|r", supply) end
   return string.format("|cff44ff88%d 件|r", supply)
 end
@@ -7023,7 +7026,8 @@ local function RenderTabCraftArb()
       local vendorLines = {}
       table.insert(vendorLines, string.format(
         "|cff99e6ff商人买入:|r %s / 件  ·  |cff99e6ff拍卖行卖出:|r %s / 件（%s）  ·  |cff99e6ff在售:|r %s",
-        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0), PriceSourceText(row.priceSource), SupplyText(row.listedSupply)))
+        FormatMoney(row.vendorPrice), FormatMoney(row.price or 0), PriceSourceText(row.priceSource),
+        SupplyText(row.listedSupply, row.listedSupplySource)))
       local availableStock, hasAnyInfinite, hasAnyStock = nil, false, false
       for _, source in ipairs(row.vendorSources or {}) do
         local s = tonumber(source.stock) or -1
@@ -7159,7 +7163,7 @@ local function RenderTabCraftArb()
         row.disenchant.incomplete and " |cffff8800部分材料无报价，期望值仅为下界|r" or ""
       ))
     end
-    table.insert(bodyLines, string.format("|cff99e6ff在售:|r %s", SupplyText(row.listedSupply)))
+    table.insert(bodyLines, string.format("|cff99e6ff在售:|r %s", SupplyText(row.listedSupply, row.listedSupplySource)))
     if row.price then
       table.insert(bodyLines, string.format("|cff99e6ff拍卖行售价:|r %s|r / 件（%s）",
         FormatMoney(row.price), PriceSourceText(row.priceSource)))
