@@ -4587,12 +4587,14 @@ local function RenderTabSmartMatch()
       end
     end
   end
-  -- 入口只在「职业与天赋」页当前过滤模式下确实能显示任务链时出现，避免点过去看到空列表
+  -- 入口只在「职业与天赋」页当前过滤模式下确实能显示任务链时出现，避免点过去看到空列表。
+  -- 与职业页保持一致：只有 MATCH 模式才按等级与坐骑完成状态过滤，ALL 模式展示全部链。
   local classPageMatch = (state.talentFilter == "MATCH")
+    and (not state.searchQuery or state.searchQuery == "")
   local hasVisibleClassRun = false
   for _, cr in ipairs(matchedClassRuns) do
     local crTo = cr.to or cr.level or 60
-    if (not classPageMatch or crTo >= lvl - 2) and not ShouldSkipClassRun(cr, milestoneFilter) then
+    if not classPageMatch or (crTo >= lvl - 2 and not ShouldSkipClassRun(cr, milestoneFilter)) then
       hasVisibleClassRun = true
       break
     end

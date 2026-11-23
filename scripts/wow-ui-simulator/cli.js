@@ -1006,7 +1006,64 @@ async function main() {
       rt.destroy();
     }
 
-    // 自动刷新回归：窗口已打开时学会骑术，事件驱动重绘后提醒应消失
+    // 智能匹配页职业任务入口必须与「职业与天赋」页当前筛选下的实际可见链一致：
+    // MATCH 模式按等级/坐骑完成状态过滤，ALL 模式展示全部链；入口不得指向空列表。
+    const hasClassEntry = (snap) =>
+      Object.values(snap.fontStrings).some((fs) => String(fs.text || '').includes('|Hwowftab:3'));
+    const classShowsChainCard = (snap) =>
+      summarizeCards(snap).some((c) => c.title.includes('职业任务链与坐标指引'));
+    const findVisibleButton = (snap, predicate) => {
+      for (const f of Object.values(snap.frames)) {
+        if (f.frameType !== 'Button' || !isFrameTreeShown(f, snap.frames)) continue;
+        if (predicate(stripWoWFormatting(f.text).trim())) return f;
+      }
+      return null;
+    };
+    const entryCases = [
+      { label: '未学战马', options: { knownSpells: [33388] }, match: true, all: true },
+      { label: '已学战马', options: { knownSpells: [33388, 23214] }, match: false, all: true },
+      { label: '仅完成战马任务', options: { knownSpells: [33388], completedQuests: [7647] }, match: false, all: true },
+    ];
+    for (const c of entryCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: 60,
+        classKey: 'PALADIN',
+        raceKey: '人类',
+        faction: 'Alliance',
+        ...c.options,
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+        ...ridingCoreFiles,
+      ]);
+      rt.runSlashCommand('/wowf');
+      const smartMatchSnap = rt.getSnapshot();
+      const entryMatch = hasClassEntry(smartMatchSnap);
+      rt.runSlashCommand('/wowf class');
+      const classMatchSnap = rt.getSnapshot();
+      const chainMatch = classShowsChainCard(classMatchSnap);
+      let ok = entryMatch === chainMatch && entryMatch === c.match;
+      const allToggleBtn = findVisibleButton(classMatchSnap, (label) => label.includes('查看 1-60 全程'));
+      if (allToggleBtn) {
+        rt.triggerFrameScript(allToggleBtn.id, 'OnClick', 'LeftButton');
+      }
+      const classAllSnap = rt.getSnapshot();
+      const chainAll = classShowsChainCard(classAllSnap);
+      rt.runSlashCommand('/wowf');
+      const smartAllSnap = rt.getSnapshot();
+      const entryAll = hasClassEntry(smartAllSnap);
+      ok = ok && Boolean(allToggleBtn) && entryAll === chainAll && entryAll === c.all;
+      const errors = smartMatchSnap.luaErrors.length + classMatchSnap.luaErrors.length
+        + classAllSnap.luaErrors.length + smartAllSnap.luaErrors.length;
+      if (!ok || errors > 0) {
+        ridingFail = true;
+        console.error(
+          `[Assert Failed] 职业任务入口可见性回归 (${c.label}) failed (errors=${errors}, entryMatch=${entryMatch}, chainMatch=${chainMatch}, entryAll=${entryAll}, chainAll=${chainAll}, allToggle=${Boolean(allToggleBtn)})`
+        );
+      }
+      rt.destroy();
+    }
+
     const autoRefreshCases = [
       { command: '/wowf', event: 'SPELLS_CHANGED' },
       { command: '/wowf', event: 'LEARNED_SPELL_IN_TAB' },
