@@ -1161,6 +1161,17 @@ async function main() {
         present: ['当前倾向', '白骨之山', '经济战', '吉尔吉斯：仇恨 (-20,000) · 已折叠', '✓ 已完成 2 步'],
         absent: ['肆虐的劫掠者', '偷取物资', '吉尔吉斯部族'],
       },
+      {
+        label: '满级 Lv.60：声望页仍正常展示半人马阵营（不再受 Lv.30-45 限制）',
+        level: 60,
+        raceKey: '人类',
+        faction: 'Alliance',
+        rep92: 3250,
+        rep93: -12500,
+        completedQuests: [1370],
+        present: ['当前倾向', '吉尔吉斯 友善 (3,250)', '经济战', '尊敬阶段', '还差 5,750'],
+        absent: ['偷取物资', '破碎之泪'],
+      },
     ];
 
     let centaurFailed = false;
@@ -1178,6 +1189,16 @@ async function main() {
         ...centaurCoreFiles,
       ]);
       rt.runSlashCommand('/wowf route');
+      const routeSnap = rt.getSnapshot();
+      const routeHasCentaur = summarizeCards(routeSnap).some((c) => c.title.includes('凄凉之地 · 半人马阵营'));
+      if (routeSnap.luaErrors.length > 0 || routeHasCentaur) {
+        centaurFailed = true;
+        console.error(
+          `[Assert Failed] 半人马阵营不应再出现在升级路线页（${tc.label}）errors=${routeSnap.luaErrors.length}, routeHasCentaur=${routeHasCentaur}`
+        );
+      }
+
+      rt.runSlashCommand('/wowf rep');
       const snap = rt.getSnapshot();
       const card = summarizeCards(snap).find((c) => c.title.includes('凄凉之地 · 半人马阵营'));
       const body = card ? `${card.title}\n${card.body}` : '';
@@ -1192,16 +1213,17 @@ async function main() {
       rt.destroy();
     }
     if (centaurFailed) assertionFailed = true;
-    else console.log('[✓] 半人马阵营任务卡回归通过（声望过滤、交物品/可重复、门槛与已完成折叠）。');
+    else console.log('[✓] 半人马阵营任务卡回归通过（已迁入声望页、全等级可见、声望过滤、门槛与已完成折叠）。');
   }
 
-  // 声望页：16 个新增第三方声望的任务卡（声望过滤、已完成折叠、跨阵营去重）
+  // 声望页：16 个新增第三方声望 + 半人马阵营的任务卡（单选/多选筛选、声望过滤、已完成折叠、跨阵营去重）
   if (opts.assert && addonName.toLowerCase() === 'wowf') {
     const repCoreFiles = files.filter((f) => !isDataLuaFile(f));
     const reputationMockLua = `
-      local REP = { [2586] = 3250, [2740] = 9000, [2826] = 0, [2587] = 0 }
+      local REP = { [2586] = 3250, [2740] = 9000, [2826] = 0, [2587] = 0, [92] = 3250, [93] = -12500 }
       function GetFactionInfoByID(id)
-        local value = REP[id] or 0
+        local value = REP[id]
+        if value == nil then return nil end
         return "faction", "", 4, 0, 0, value
       end
       local function q(id, name, lv, minLv, zone, extra)
@@ -1211,9 +1233,30 @@ async function main() {
       end
       WoWF_Data = {
         meta = { version = "reputation-test" },
-        routes = {},
+        routes = {
+          human = { name = "人类", faction = "alliance", bands = { { from = 38, to = 41, zone = "荒芜之地", hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 }, quests = {} } } },
+        },
         classes = { MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精" } } } },
         dungeons = {}, macros = {}, professions = {},
+        factionQuests = {
+          {
+            id = "desolace-centaur", zone = "凄凉之地", title = "凄凉之地 · 半人马阵营",
+            minLevel = 30, maxLevel = 45, summary = "两族二选一。",
+            shared = { q(96222, "赫鲁萨可汗", 42, 30, "凄凉之地") },
+            groups = {
+              {
+                factionId = 92, name = "吉尔吉斯", where = "吉尔吉斯村",
+                entry = { q(93227, "收买友谊：吉尔吉斯", 45, 30, "凄凉之地", { faction = "alliance", neutralOnly = true, rep = 3000 }) },
+                friendly = { q(1370, "偷取物资", 35, 30, "凄凉之地", { rep = 500 }) },
+                honored = {}, repeatable = {},
+              },
+              {
+                factionId = 93, name = "玛格拉姆", where = "玛格拉姆村",
+                entry = {}, friendly = {}, honored = {}, repeatable = {},
+              },
+            },
+          },
+        },
         reputationGuides = {
           factions = {
             {
@@ -1250,6 +1293,25 @@ async function main() {
         },
       }
     `;
+    const findVisibleButton = (snap, predicate) => {
+      for (const f of Object.values(snap.frames)) {
+        if (f.frameType !== 'Button' || !isFrameTreeShown(f, snap.frames)) continue;
+        const label = stripWoWFormatting(f.text).trim();
+        if (predicate(label)) return f;
+      }
+      return null;
+    };
+    const clickRepBtn = (rt, labelMatcher, stepName) => {
+      const snap = rt.getSnapshot();
+      const btn = findVisibleButton(snap, labelMatcher);
+      if (!btn) {
+        throw new Error(`未找到声望页按钮：${stepName}`);
+      }
+      rt.triggerFrameScript(btn.id, 'OnClick', 'LeftButton');
+      return rt.getSnapshot();
+    };
+    const exactRepBtn = (name) => (label) => label.replace(/^✓\s*/, '') === name;
+
     const repRt = new WoWSimulatorRuntime({
       level: 40,
       classKey: 'MAGE',
@@ -1269,6 +1331,8 @@ async function main() {
     const sharedCount = (repAll.match(/共同任务/g) || []).length;
     const repChecks = [
       ['声望总览卡', repTitles.some((t) => t.includes('新增第三方声望'))],
+      ['包含半人马详情卡', repTitles.some((t) => t.includes('凄凉之地 · 半人马阵营'))],
+      ['总览含半人马声望', repAll.includes('吉尔吉斯 友善 (3,250)')],
       ['贸易局声望', repAll.includes('友善 (3,250)')],
       ['工匠文书分组', repTitles.some((t) => t.includes('工匠文书 +75'))],
       ['可重复文书未被完成过滤', repAll.includes('工匠文书：测试药水')],
@@ -1277,15 +1341,88 @@ async function main() {
       ['去重提示', repAll.includes('已列在对应阵营卡')],
       ['高等级任务折叠', !repAll.includes('高等级任务') && repAll.includes('需更高等级')],
       ['对立阵营详情隐藏', !repTitles.some((t) => t.includes('杜隆塔尔补给后勤部'))],
+      ['存在多选模式按钮', Boolean(findVisibleButton(repSnap, (l) => l.includes('筛选模式: 多选')))],
     ];
+
+    // 交互验证：多选模式 -> 全部重置 -> 单选模式 -> 多选切单选自动收束 -> 切页隐藏筛选栏
+    const assertDetailTitles = (snap, expected, forbidden, stepName) => {
+      const detailTitles = summarizeCards(snap).slice(1).map((c) => c.title);
+      const allText = summarizeCards(snap).map((c) => `${c.title}\n${c.body}`).join('\n');
+      for (const name of expected) {
+        if (!detailTitles.some((t) => t.includes(name))) {
+          repChecks.push([`${stepName} 包含 ${name}`, false]);
+        }
+      }
+      for (const name of forbidden) {
+        if (detailTitles.some((t) => t.includes(name))) {
+          repChecks.push([`${stepName} 隐藏 ${name}`, false]);
+        }
+      }
+      return { detailTitles, allText };
+    };
+
+    try {
+      // 1) 多选：先选「肯瑞托」
+      let snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '多选点击肯瑞托');
+      assertDetailTitles(snap, ['肯瑞托'], ['艾泽拉斯贸易局', '铁马兄弟会', '凄凉之地 · 半人马阵营'], '多选-仅肯瑞托');
+
+      // 2) 多选：追加「凄凉之地·半人马」
+      snap = clickRepBtn(repRt, exactRepBtn('凄凉之地·半人马'), '多选点击凄凉之地·半人马');
+      assertDetailTitles(snap, ['肯瑞托', '凄凉之地 · 半人马阵营'], ['艾泽拉斯贸易局', '铁马兄弟会'], '多选-肯瑞托+半人马');
+
+      // 3) 多选：取消「肯瑞托」
+      snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '多选取消肯瑞托');
+      assertDetailTitles(snap, ['凄凉之地 · 半人马阵营'], ['肯瑞托', '艾泽拉斯贸易局', '铁马兄弟会'], '多选-仅剩半人马');
+
+      // 4) 点击「全部声望」恢复全部
+      snap = clickRepBtn(repRt, (l) => l.includes('全部声望'), '点击全部声望');
+      assertDetailTitles(snap, ['艾泽拉斯贸易局', '肯瑞托', '铁马兄弟会', '凄凉之地 · 半人马阵营'], ['杜隆塔尔补给后勤部'], '全部声望恢复');
+
+      // 5) 切换到「单选」模式
+      snap = clickRepBtn(repRt, (l) => l.includes('筛选模式:'), '切到单选模式');
+      repChecks.push(['已切换单选模式按钮', Boolean(findVisibleButton(snap, (l) => l.includes('筛选模式: 单选')))]);
+
+      // 6) 单选：点「肯瑞托」
+      snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '单选点击肯瑞托');
+      assertDetailTitles(snap, ['肯瑞托'], ['艾泽拉斯贸易局', '铁马兄弟会', '凄凉之地 · 半人马阵营'], '单选-肯瑞托');
+
+      // 7) 单选：点「铁马兄弟会」替换选中项，且共同任务在其卡上正常显示
+      snap = clickRepBtn(repRt, exactRepBtn('铁马兄弟会'), '单选点击铁马兄弟会');
+      const ironRes = assertDetailTitles(snap, ['铁马兄弟会'], ['肯瑞托', '艾泽拉斯贸易局', '凄凉之地 · 半人马阵营'], '单选-铁马兄弟会');
+      repChecks.push(['单选铁马显示共同任务', ironRes.allText.includes('共同任务')]);
+
+      // 8) 单选：再次点击已选项「铁马兄弟会」恢复全部
+      snap = clickRepBtn(repRt, exactRepBtn('铁马兄弟会'), '单选取消铁马兄弟会');
+      assertDetailTitles(snap, ['艾泽拉斯贸易局', '肯瑞托', '铁马兄弟会', '凄凉之地 · 半人马阵营'], ['杜隆塔尔补给后勤部'], '单选-再次点击恢复全部');
+
+      // 9) 多选切回单选自动收束为 1 项
+      snap = clickRepBtn(repRt, (l) => l.includes('筛选模式:'), '切回多选模式');
+      snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '多选选肯瑞托');
+      snap = clickRepBtn(repRt, exactRepBtn('铁马兄弟会'), '多选加铁马兄弟会');
+      assertDetailTitles(snap, ['肯瑞托', '铁马兄弟会'], ['艾泽拉斯贸易局', '凄凉之地 · 半人马阵营'], '多选2项');
+      snap = clickRepBtn(repRt, (l) => l.includes('筛选模式:'), '多选2项切单选收束');
+      assertDetailTitles(snap, ['肯瑞托'], ['铁马兄弟会', '艾泽拉斯贸易局', '凄凉之地 · 半人马阵营'], '切单选自动收束');
+
+      // 10) 切出声望页后隐藏筛选栏
+      repRt.runSlashCommand('/wowf route');
+      const routeSnap = repRt.getSnapshot();
+      repChecks.push(['切出声望页隐藏筛选栏', !findVisibleButton(routeSnap, (l) => l.includes('筛选模式:'))]);
+    } catch (err) {
+      repChecks.push([err.message, false]);
+    }
+
     const repFailed = repChecks.filter(([, ok]) => !ok);
-    if (repSnap.luaErrors.length > 0 || repFailed.length > 0) {
+    const repFinalSnap = repRt.getSnapshot();
+    if (repFinalSnap.luaErrors.length > 0 || repFailed.length > 0) {
       assertionFailed = true;
       console.error(
-        `[Assert Failed] 声望页回归 errors=${repSnap.luaErrors.length}, failed=${repFailed.map(([name]) => name).join('|')}`
+        `[Assert Failed] 声望页回归 errors=${repFinalSnap.luaErrors.length}, failed=${repFailed.map(([name]) => name).join('|')}`
       );
+      if (repFinalSnap.luaErrors.length > 0) {
+        console.error(repFinalSnap.luaErrors);
+      }
     } else {
-      console.log('[✓] 声望页回归通过（声望过滤、已完成折叠、工匠文书/可重复、跨阵营去重）。');
+      console.log('[✓] 声望页回归通过（含半人马阵营、单选/多选筛选、声望过滤、已完成折叠、跨阵营去重）。');
     }
     repRt.destroy();
   }

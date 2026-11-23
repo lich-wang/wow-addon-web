@@ -94,8 +94,8 @@ local COMMON_COMMANDS = {
     title = "第三方声望",
     category = "本百科 / 快捷入口",
     code = "/wowf rep",
-    desc = "直达声望页：魔兽无限新增的 16 个第三方声望（贸易局/补给后勤部、爆破引线港、海加尔守护者、树皮地洞、夜爪德鲁伊、肯瑞托等）的任务与上交清单，按当前声望过滤。",
-    note = "等同点击顶部「声望」页签；任务按角色等级与完成状态过滤，工匠文书按声望档位分组。",
+    desc = "直达声望页：魔兽无限新增的 16 个第三方声望与凄凉之地半人马声望（吉尔吉斯 / 玛格拉姆）的任务与上交清单，按当前声望过滤。",
+    note = "等同点击顶部「声望」页签；支持单选/多选筛选声望，任务按角色等级与完成状态过滤，工匠文书按声望档位分组。",
   },
   {
     title = "制造套利",
@@ -165,6 +165,8 @@ local state = {
   craftSource = "craft", -- 套利来源: "craft" 制作套利 | "vendor" 商人购入→拍卖出售 | "both" 全部
   craftPreferVendor = false, -- 制作成本是否优先采用已采集的 NPC 商人价
   craftMinSupply = false, -- 是否过滤掉拍卖行在售少于 100 件的物品（异常价格）
+  repFilter = nil, -- 声望页筛选集合（nil = 全部，table = { [key] = true }）
+  repFilterMode = "multi", -- 声望页筛选模式："multi" 多选 | "single" 单选
 }
 
 local PERSISTED_STATE_KEYS = {
@@ -188,6 +190,8 @@ local PERSISTED_STATE_KEYS = {
   "craftSource",
   "craftPreferVendor",
   "craftMinSupply",
+  "repFilter",
+  "repFilterMode",
 }
 
 local function NormalizeCraftProfession(val)
@@ -226,6 +230,39 @@ local function LoadPersistedState()
     end
   end
   state.craftProfession = NormalizeCraftProfession(state.craftProfession)
+  local function NormalizeRepFilter(val)
+    if type(val) == "string" and val ~= "" then
+      return { [val] = true }
+    elseif type(val) == "number" then
+      return { [tostring(val)] = true }
+    end
+    if type(val) == "table" then
+      local out = {}
+      for _, key in ipairs(val) do
+        if type(key) == "string" and key ~= "" then
+          out[key] = true
+        elseif type(key) == "number" then
+          out[tostring(key)] = true
+        end
+      end
+      for key, enabled in pairs(val) do
+        if type(key) == "string" and key ~= "" and enabled then
+          out[key] = true
+        elseif type(key) == "number" and enabled == true then
+          out[tostring(key)] = true
+        end
+      end
+      if next(out) ~= nil then
+        return out
+      end
+    end
+    return nil
+  end
+  local function NormalizeRepFilterMode(val)
+    return (val == "single") and "single" or "multi"
+  end
+  state.repFilter = NormalizeRepFilter(state.repFilter)
+  state.repFilterMode = NormalizeRepFilterMode(state.repFilterMode)
 end
 
 local function SavePersistedState()
@@ -3975,6 +4012,7 @@ local function AcquireCard(index)
 end
 
 local arbToolbar
+local repFilterBar
 
 local function HideUnusedCards(fromIndex)
   for i = fromIndex, #cardPool do
@@ -3982,6 +4020,9 @@ local function HideUnusedCards(fromIndex)
   end
   if arbToolbar and state.activeTab ~= 8 then
     arbToolbar:Hide()
+  end
+  if repFilterBar and state.activeTab ~= 9 then
+    repFilterBar:Hide()
   end
 end
 
@@ -4548,11 +4589,85 @@ local function RenderTabSmartMatch()
 end
 
 -- ============================================================================
+-- 声望公共格式化与查询工具（供半人马阵营卡与声望页签共用）
+-- ============================================================================
+local RepUI = {
+  TIERS = {
+    { 42000, "崇拜" },
+    { 21000, "崇敬" },
+    { 9000, "尊敬" },
+    { 3000, "友善" },
+    { 0, "中立" },
+    { -3000, "冷淡" },
+    { -6000, "敌对" },
+    { -42000, "仇恨" },
+  },
+  NEXT_TIERS = { 3000, 9000, 21000, 42000 },
+}
+
+function RepUI.Label(value)
+  for _, tier in ipairs(RepUI.TIERS) do
+    if value >= tier[1] then return tier[2] end
+  end
+  return "仇恨"
+end
+
+function RepUI.Color(value)
+  if value >= 9000 then return "|cff00ff00" end
+  if value >= 3000 then return "|cff66ff66" end
+  if value >= 0 then return "|cffffd100" end
+  if value >= -6000 then return "|cffff8800" end
+  return "|cffff5555"
+end
+
+function RepUI.FormatNumber(value)
+  local n = math.floor(tonumber(value) or 0)
+  local sign = (n < 0) and "-" or ""
+  local digits = tostring(math.abs(n))
+  local out = string.reverse(digits)
+  out = string.gsub(out, "(%d%d%d)", "%1,")
+  out = string.reverse(out)
+  out = string.gsub(out, "^,", "")
+  return sign .. out
+end
+
+-- 与既有 IsZoneStepUnlocked 使用同一套取声望方式：GetFactionInfoByID 的第 6 个返回值为当前声望值
+function RepUI.GetStanding(factionId)
+  local fid = tonumber(factionId)
+  if not fid then return nil end
+  if GetFactionInfoByID then
+    local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, fid)
+    if ok and type(barValue) == "number" then return barValue end
+  end
+  if C_Reputation and C_Reputation.GetFactionDataByID then
+    local ok, data = pcall(C_Reputation.GetFactionDataByID, fid)
+    if ok and type(data) == "table" and type(data.currentStanding) == "number" then
+      return data.currentStanding
+    end
+  end
+  return nil
+end
+
+function RepUI.NextTierHint(value)
+  for _, threshold in ipairs(RepUI.NEXT_TIERS) do
+    if value < threshold then
+      return string.format(
+        "%s %s（还差 %s）",
+        RepUI.Label(threshold),
+        RepUI.FormatNumber(threshold),
+        RepUI.FormatNumber(threshold - value)
+      )
+    end
+  end
+  return nil
+end
+
+-- ============================================================================
 -- 凄凉之地 · 半人马阵营任务卡（吉尔吉斯 / 玛格拉姆二选一）
 -- 数据来自 Data.factionQuests；运行时读取 92/93 两族声望，只展开玩家倾向的一方，
 -- 未达门槛的阶段只留一行「还差多少」，已完成步骤折叠成计数。
 -- ============================================================================
-local function RenderCentaurFactionCard(list, level)
+local function RenderCentaurFactionCard(list, level, targetDef)
   local CENTAUR_FACTION_GELKIS = 92
   local CENTAUR_FACTION_MAGRAM = 93
   local CENTAUR_PROFESSION_EN = {
@@ -4563,74 +4678,6 @@ local function RenderCentaurFactionCard(list, level)
     ["工程学"] = "Engineering",
     ["锻造"] = "Blacksmithing",
   }
-  local CENTAUR_REP_TIERS = {
-    { 42000, "崇拜" },
-    { 21000, "崇敬" },
-    { 9000, "尊敬" },
-    { 3000, "友善" },
-    { 0, "中立" },
-    { -3000, "冷淡" },
-    { -6000, "敌对" },
-    { -42000, "仇恨" },
-  }
-  local CENTAUR_NEXT_TIERS = { 3000, 9000, 21000, 42000 }
-
-  local function CentaurRepLabel(value)
-    for _, tier in ipairs(CENTAUR_REP_TIERS) do
-      if value >= tier[1] then return tier[2] end
-    end
-    return "仇恨"
-  end
-
-  local function CentaurRepColor(value)
-    if value >= 9000 then return "|cff00ff00" end
-    if value >= 3000 then return "|cff66ff66" end
-    if value >= 0 then return "|cffffd100" end
-    if value >= -6000 then return "|cffff8800" end
-    return "|cffff5555"
-  end
-
-  local function CentaurFormatNumber(value)
-    local n = math.floor(tonumber(value) or 0)
-    local sign = (n < 0) and "-" or ""
-    local digits = tostring(math.abs(n))
-    local out = string.reverse(digits)
-    out = string.gsub(out, "(%d%d%d)", "%1,")
-    out = string.reverse(out)
-    out = string.gsub(out, "^,", "")
-    return sign .. out
-  end
-
-  -- 与既有 IsZoneStepUnlocked 使用同一套取声望方式：GetFactionInfoByID 的第 6 个返回值为当前声望值
-  local function GetCentaurReputation(factionId)
-    local fid = tonumber(factionId)
-    if not fid then return nil end
-    if GetFactionInfoByID then
-      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, fid)
-      if ok and type(barValue) == "number" then return barValue end
-    end
-    if C_Reputation and C_Reputation.GetFactionDataByID then
-      local ok, data = pcall(C_Reputation.GetFactionDataByID, fid)
-      if ok and type(data) == "table" and type(data.currentStanding) == "number" then
-        return data.currentStanding
-      end
-    end
-    return nil
-  end
-
-  local function CentaurNextTierHint(value)
-    for _, threshold in ipairs(CENTAUR_NEXT_TIERS) do
-      if value < threshold then
-        return string.format(
-          "%s %s（还差 %s）",
-          CentaurRepLabel(threshold),
-          CentaurFormatNumber(threshold),
-          CentaurFormatNumber(threshold - value)
-        )
-      end
-    end
-    return nil
-  end
 
   -- 渲染一个阶段的任务；返回 已显示/已完成/未达门槛/专业不符 四项计数
   local function RenderCentaurQuestStage(lines, quests, opts)
@@ -4677,16 +4724,16 @@ local function RenderCentaurFactionCard(list, level)
             if not gateOk and q.showWhenLocked and q.minRep then
               table.insert(tags, string.format(
                 "|cff8899aa[需%s %s 后交付]|r",
-                CentaurRepLabel(q.minRep),
-                CentaurFormatNumber(q.minRep)
+                RepUI.Label(q.minRep),
+                RepUI.FormatNumber(q.minRep)
               ))
             end
             if #tags > 0 then table.insert(parts, table.concat(tags, "")) end
             if q.rep then
-              table.insert(parts, string.format("|cff00ff00+%s|r", CentaurFormatNumber(q.rep)))
+              table.insert(parts, string.format("|cff00ff00+%s|r", RepUI.FormatNumber(q.rep)))
             end
             if q.otherRep then
-              table.insert(parts, string.format("|cffff5555对方 %s|r", CentaurFormatNumber(q.otherRep)))
+              table.insert(parts, string.format("|cffff5555对方 %s|r", RepUI.FormatNumber(q.otherRep)))
             end
             if q.items and #q.items > 0 then
               local itemTexts = {}
@@ -4707,22 +4754,17 @@ local function RenderCentaurFactionCard(list, level)
     return shown, completed, locked, professionHidden
   end
 
-  local defs = Data and Data.factionQuests
-  if type(defs) ~= "table" or #defs == 0 then return 0 end
   local lvl = tonumber(level) or state.level or 1
-  local def
-  for _, candidate in ipairs(defs) do
-    if type(candidate) == "table"
-      and lvl >= (candidate.minLevel or 1)
-      and lvl <= (candidate.maxLevel or 60) then
-      def = candidate
-      break
-    end
+  local def = targetDef
+  if type(def) ~= "table" then
+    local defs = Data and Data.factionQuests
+    if type(defs) ~= "table" or #defs == 0 then return 0 end
+    def = defs[1]
   end
-  if not def then return 0 end
+  if type(def) ~= "table" then return 0 end
 
-  local gelkis = GetCentaurReputation(CENTAUR_FACTION_GELKIS)
-  local magram = GetCentaurReputation(CENTAUR_FACTION_MAGRAM)
+  local gelkis = RepUI.GetStanding(CENTAUR_FACTION_GELKIS)
+  local magram = RepUI.GetStanding(CENTAUR_FACTION_MAGRAM)
   local hasRep = (type(gelkis) == "number") or (type(magram) == "number")
   gelkis = tonumber(gelkis) or 0
   magram = tonumber(magram) or 0
@@ -4765,10 +4807,10 @@ local function RenderCentaurFactionCard(list, level)
   local function repText(label, value)
     return string.format(
       "%s%s|r %s (%s)",
-      CentaurRepColor(value),
+      RepUI.Color(value),
       label,
-      CentaurRepLabel(value),
-      CentaurFormatNumber(value)
+      RepUI.Label(value),
+      RepUI.FormatNumber(value)
     )
   end
   table.insert(lines, "|cff99e6ff你的声望:|r " .. repText("吉尔吉斯", gelkis) .. "   ·   " .. repText("玛格拉姆", magram))
@@ -4817,7 +4859,7 @@ local function RenderCentaurFactionCard(list, level)
       header = header .. " |cff8899aa" .. group.where .. "|r"
     end
     table.insert(lines, header)
-    local nextHint = CentaurNextTierHint(standing)
+    local nextHint = RepUI.NextTierHint(standing)
     if nextHint then
       table.insert(lines, "  |cff8899aa下一门槛: " .. nextHint .. "|r")
     end
@@ -4845,10 +4887,10 @@ local function RenderCentaurFactionCard(list, level)
           table.insert(lines, string.format(
             "  |cff8899aa[%s] 未解锁：需 %s %s，当前 %s，还差 %s|r",
             stage.label,
-            CentaurRepLabel(stage.minRep),
-            CentaurFormatNumber(stage.minRep),
-            CentaurFormatNumber(standing),
-            CentaurFormatNumber(stage.minRep - standing)
+            RepUI.Label(stage.minRep),
+            RepUI.FormatNumber(stage.minRep),
+            RepUI.FormatNumber(standing),
+            RepUI.FormatNumber(stage.minRep - standing)
           ))
         else
           local stageLines = {}
@@ -4924,8 +4966,8 @@ local function RenderCentaurFactionCard(list, level)
         table.insert(lines, string.format(
           "|cff8899aa%s：%s (%s) · 已折叠（与当前选择冲突，做其任务会清空%s声望）|r",
           otherGroup.name or "",
-          CentaurRepLabel(otherStanding),
-          CentaurFormatNumber(otherStanding),
+          RepUI.Label(otherStanding),
+          RepUI.FormatNumber(otherStanding),
           mainGroup.name or ""
         ))
       end
@@ -4937,7 +4979,8 @@ local function RenderCentaurFactionCard(list, level)
 
   list:Add({
     title = string.format(
-      "|cff00ffcc[凄凉之地 · 半人马阵营]|r |cffffd100(Lv.%d-%d)|r",
+      "|cff00ffcc[声望] %s|r |cffffd100(Lv.%d-%d)|r",
+      (def.title and def.title ~= "") and def.title or "凄凉之地 · 半人马阵营",
       def.minLevel or 30,
       def.maxLevel or 45
     ),
@@ -5042,9 +5085,6 @@ local function RenderTabRoutes()
       badge = "角色专属匹配",
     })
   end
-
-  -- 凄凉之地半人马阵营：独立卡片，不随当前阶段区域消失；Lv.30-45 按当前声望过滤
-  RenderCentaurFactionCard(list, lvl)
 
   -- 整理要渲染的阶段列表：在 MATCH 模式下将当前等级所在阶段置顶，并展示后续衔接阶段（过滤已过时的低级阶段）
   local orderedBands = {}
@@ -5868,16 +5908,179 @@ local function FormatCraftProfessionFilter(arb, professions)
 end
 
 -- ============================================================================
--- 声望页：魔兽无限新增的 16 个第三方声望
--- 数据来自 Data.reputationGuides（scripts/locales/wowf-reputation-data.json）。
--- 按角色阵营/等级/声望/完成状态过滤；任务全量列出，已完成折叠，跨阵营按任务 ID 去重。
+-- 声望页：魔兽无限新增的 16 个第三方声望与凄凉之地半人马阵营
+-- 数据来自 Data.reputationGuides 与 Data.factionQuests。
+-- 支持「全部 / 单选 / 多选」过滤，按角色阵营/等级/声望/完成状态过滤，跨阵营按任务 ID 去重。
 -- ============================================================================
+local function LayoutRepFilterBar(yOffset, opts)
+  local items = opts and opts.items or {}
+  local count = #items
+  if count == 0 then
+    if repFilterBar then repFilterBar:Hide() end
+    return yOffset
+  end
+
+  local width = (contentChild:GetWidth() or 720) - 16
+  if width < 500 then width = 710 end
+  if not repFilterBar then
+    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
+    repFilterBar = CreateFrame("Frame", nil, contentChild, template)
+    if repFilterBar.SetBackdrop then
+      repFilterBar:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 8, edgeSize = 10,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+      })
+      repFilterBar:SetBackdropColor(0.06, 0.09, 0.14, 0.94)
+      repFilterBar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
+    end
+    repFilterBar.allBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
+    repFilterBar.allBtn:SetHeight(22)
+    repFilterBar.modeBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
+    repFilterBar.modeBtn:SetHeight(22)
+    repFilterBar.btns = {}
+  end
+
+  local hasFilter = opts and opts.hasFilter == true
+  local isSingle = opts and opts.mode == "single"
+  local selected = (opts and opts.selected) or {}
+  local gapX, gapY = 6, 4
+  local btnH = 22
+  local ctrlW = math.floor((width - 16 - gapX) / 2)
+
+  repFilterBar.allBtn:SetWidth(ctrlW)
+  repFilterBar.allBtn:ClearAllPoints()
+  repFilterBar.allBtn:SetPoint("TOPLEFT", repFilterBar, "TOPLEFT", 8, -6)
+  if not hasFilter then
+    repFilterBar.allBtn:SetText("|cff00ffcc✓ 全部声望|r")
+    repFilterBar.allBtn:LockHighlight()
+  else
+    repFilterBar.allBtn:SetText("全部声望（清空筛选）")
+    repFilterBar.allBtn:UnlockHighlight()
+  end
+  repFilterBar.allBtn:SetScript("OnClick", function()
+    state.repFilter = nil
+    RefreshUI()
+  end)
+  AttachTooltip(
+    repFilterBar.allBtn,
+    "显示全部声望",
+    "清除已选筛选条件，展示当前阵营可用的全部声望总览与任务详情。"
+  )
+
+  repFilterBar.modeBtn:SetWidth(ctrlW)
+  repFilterBar.modeBtn:ClearAllPoints()
+  repFilterBar.modeBtn:SetPoint("TOPLEFT", repFilterBar, "TOPLEFT", 8 + ctrlW + gapX, -6)
+  repFilterBar.modeBtn:SetText(isSingle and "筛选模式: 单选" or "筛选模式: 多选")
+  repFilterBar.modeBtn:UnlockHighlight()
+  repFilterBar.modeBtn:SetScript("OnClick", function()
+    if state.repFilterMode == "single" then
+      state.repFilterMode = "multi"
+    else
+      state.repFilterMode = "single"
+      local keepKey = nil
+      for _, item in ipairs(items) do
+        if selected[item.key] then
+          keepKey = item.key
+          break
+        end
+      end
+      state.repFilter = keepKey and { [keepKey] = true } or nil
+    end
+    RefreshUI()
+  end)
+  AttachTooltip(
+    repFilterBar.modeBtn,
+    "切换单选 / 多选",
+    isSingle
+      and "当前为单选模式：点击下方声望只看该声望，再次点击已选项可恢复全部。点击此按钮切换为多选模式。"
+      or "当前为多选模式：可勾选多个声望同时查看。点击此按钮切换为单选模式。"
+  )
+
+  local cols = 4
+  local btnW = math.floor((width - 16 - gapX * (cols - 1)) / cols)
+  for i, item in ipairs(items) do
+    local btn = repFilterBar.btns[i]
+    if not btn then
+      btn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
+      repFilterBar.btns[i] = btn
+    end
+    local col = (i - 1) % cols
+    local row = math.floor((i - 1) / cols)
+    local x = 8 + col * (btnW + gapX)
+    local y = -34 - row * (btnH + gapY)
+    btn:SetSize(btnW, btnH)
+    btn:ClearAllPoints()
+    btn:SetPoint("TOPLEFT", repFilterBar, "TOPLEFT", x, y)
+
+    local isSelected = selected[item.key] == true
+    if isSelected then
+      btn:SetText("|cff00ffcc✓ " .. item.label .. "|r")
+      btn:LockHighlight()
+    elseif hasFilter then
+      btn:SetText("|cffaaaaaa" .. item.label .. "|r")
+      btn:UnlockHighlight()
+    else
+      btn:SetText(item.label)
+      btn:UnlockHighlight()
+    end
+
+    local itemKey = item.key
+    btn:SetScript("OnClick", function()
+      if state.repFilterMode == "single" then
+        local onlyThis = isSelected
+        if onlyThis then
+          for k, enabled in pairs(selected) do
+            if enabled and k ~= itemKey then
+              onlyThis = false
+              break
+            end
+          end
+        end
+        if onlyThis then
+          state.repFilter = nil
+        else
+          state.repFilter = { [itemKey] = true }
+        end
+      else
+        local nextSet = {}
+        for k, enabled in pairs(selected) do
+          if enabled then nextSet[k] = true end
+        end
+        if nextSet[itemKey] then
+          nextSet[itemKey] = nil
+        else
+          nextSet[itemKey] = true
+        end
+        state.repFilter = (next(nextSet) ~= nil) and nextSet or nil
+      end
+      RefreshUI()
+    end)
+    AttachTooltip(btn, item.fullName or item.label, item.tipBody)
+    btn:Show()
+  end
+  for i = count + 1, #repFilterBar.btns do
+    repFilterBar.btns[i]:Hide()
+  end
+
+  local rows = math.ceil(count / cols)
+  local totalH = 34 + rows * btnH + math.max(0, rows - 1) * gapY + 8
+  repFilterBar:SetSize(width, totalH)
+  repFilterBar:ClearAllPoints()
+  repFilterBar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
+  repFilterBar:Show()
+  return yOffset + totalH + 8
+end
+
 local function RenderTabReputations()
   local list = CreateCardList(6)
   local lvl = state.level
   local guides = Data and Data.reputationGuides
-  local factions = guides and guides.factions
-  if type(factions) ~= "table" or #factions == 0 then
+  local factions = (guides and type(guides.factions) == "table") and guides.factions or {}
+  local factionQuests = (Data and type(Data.factionQuests) == "table") and Data.factionQuests or {}
+  if #factions == 0 and #factionQuests == 0 then
+    if repFilterBar then repFilterBar:Hide() end
     list:Add({
       title = "|cff00ffcc[声望] 无限服新增第三方声望|r",
       body = "|cffff8800声望数据尚未打包：请更新 WoWF 插件或等待下一次数据同步。|r",
@@ -5892,57 +6095,6 @@ local function RenderTabReputations()
     horde = "|cffff5555[部落]|r ",
     both = "|cffcccccc[中立]|r ",
   }
-  local REP_TIERS = {
-    { 42000, "崇拜" }, { 21000, "崇敬" }, { 9000, "尊敬" }, { 3000, "友善" },
-    { 0, "中立" }, { -3000, "冷淡" }, { -6000, "敌对" }, { -42000, "仇恨" },
-  }
-  local NEXT_TIERS = { 3000, 9000, 21000, 42000 }
-
-  local function RepLabel(value)
-    for _, tier in ipairs(REP_TIERS) do
-      if value >= tier[1] then return tier[2] end
-    end
-    return "仇恨"
-  end
-  local function RepColor(value)
-    if value >= 9000 then return "|cff00ff00" end
-    if value >= 3000 then return "|cff66ff66" end
-    if value >= 0 then return "|cffffd100" end
-    if value >= -6000 then return "|cffff8800" end
-    return "|cffff5555"
-  end
-  local function FormatNum(value)
-    local n = math.floor(tonumber(value) or 0)
-    local sign = (n < 0) and "-" or ""
-    local out = string.reverse(tostring(math.abs(n)))
-    out = string.gsub(out, "(%d%d%d)", "%1,")
-    out = string.reverse(out)
-    out = string.gsub(out, "^,", "")
-    return sign .. out
-  end
-  local function GetRepValue(factionId)
-    local fid = tonumber(factionId)
-    if not fid then return nil end
-    if GetFactionInfoByID then
-      local ok, _, _, _, _, _, barValue = pcall(GetFactionInfoByID, fid)
-      if ok and type(barValue) == "number" then return barValue end
-    end
-    if C_Reputation and C_Reputation.GetFactionDataByID then
-      local ok, data = pcall(C_Reputation.GetFactionDataByID, fid)
-      if ok and type(data) == "table" and type(data.currentStanding) == "number" then
-        return data.currentStanding
-      end
-    end
-    return nil
-  end
-  local function NextTierHint(value)
-    for _, threshold in ipairs(NEXT_TIERS) do
-      if value < threshold then
-        return string.format("%s %s（还差 %s）", RepLabel(threshold), FormatNum(threshold), FormatNum(threshold - value))
-      end
-    end
-    return nil
-  end
   -- 国服 1.60 的新阵营任务在 QuestieDB 中没有 requiredMinRep/MaxRep（已核对 478 条），
   -- 声望门槛主要体现在任务链顺序与当前阵营声望；这里仅对确有门槛字段的任务做兜底过滤。
   local function QuestRepOk(qid)
@@ -5952,7 +6104,7 @@ local function RenderTabReputations()
       if type(req) ~= "table" then return true end
       local fid, need = tonumber(req[1]), tonumber(req[2])
       if not fid or not need then return true end
-      local value = GetRepValue(fid)
+      local value = RepUI.GetStanding(fid)
       if type(value) ~= "number" then return true end
       if isMin then return value >= need end
       return value < need
@@ -5972,26 +6124,127 @@ local function RenderTabReputations()
   local shownQuestFaction = {}
 
   local function FactionAvailable(f)
-    local side = f.side
+    local side = f and f.side
     return (not side) or side == "both" or side == state.faction
   end
 
-  -- 顶部总览：16 个阵营一屏看完当前声望
-  local summaryLines = {
-    "|cff99e6ff《魔兽世界：无限》新增第三方声望总览|r：蓝色为联盟声望、红色为部落声望、灰色为中立；对立阵营的详情卡会自动隐藏。",
-  }
+  -- 构建当前阵营可用的声望筛选项（16 个第三方声望 + 凄凉之地半人马）
+  local filterItems = {}
+  local itemByKey = {}
   for _, f in ipairs(factions) do
-    local side = f.side or "both"
-    local value = GetRepValue(f.id)
-    local standingText
-    if not FactionAvailable(f) then
-      standingText = "|cff888888不可用（对立阵营）|r"
-    elseif type(value) == "number" then
-      standingText = string.format("%s%s (%s)|r", RepColor(value), RepLabel(value), FormatNum(value))
-    else
-      standingText = "|cff888888未追踪|r"
+    if FactionAvailable(f) then
+      local key = tostring(f.id)
+      local side = f.side or "both"
+      local value = RepUI.GetStanding(f.id)
+      local standingText = type(value) == "number"
+        and string.format("%s%s (%s)|r", RepUI.Color(value), RepUI.Label(value), RepUI.FormatNumber(value))
+        or "|cff888888未追踪|r"
+      local standingPlain = type(value) == "number"
+        and string.format("%s (%s)", RepUI.Label(value), RepUI.FormatNumber(value))
+        or "未追踪"
+      local item = {
+        key = key,
+        label = f.name or key,
+        fullName = f.name or key,
+        summaryLine = string.format("%s%s %s", SIDE_TAG[side] or "", f.name or "", standingText),
+        tipBody = string.format("当前声望：%s\n点击筛选/取消该声望。", standingPlain),
+      }
+      table.insert(filterItems, item)
+      itemByKey[key] = item
     end
-    table.insert(summaryLines, string.format("%s%s %s", SIDE_TAG[side] or "", f.name, standingText))
+  end
+  for _, def in ipairs(factionQuests) do
+    if type(def) == "table" and FactionAvailable(def) then
+      local key = tostring((def.id and def.id ~= "") and def.id or "desolace-centaur")
+      local fullTitle = (def.title and def.title ~= "") and def.title or "凄凉之地 · 半人马阵营"
+      local shortLabel = (key == "desolace-centaur" or string.find(fullTitle, "半人马", 1, true))
+        and "凄凉之地·半人马"
+        or fullTitle
+      local groupParts, plainParts = {}, {}
+      for _, grp in ipairs(def.groups or {}) do
+        local gVal = RepUI.GetStanding(grp.factionId)
+        local gName = grp.name or tostring(grp.factionId or "")
+        if type(gVal) == "number" then
+          table.insert(groupParts, string.format("%s %s%s (%s)|r", gName, RepUI.Color(gVal), RepUI.Label(gVal), RepUI.FormatNumber(gVal)))
+          table.insert(plainParts, string.format("%s %s (%s)", gName, RepUI.Label(gVal), RepUI.FormatNumber(gVal)))
+        else
+          table.insert(groupParts, string.format("%s |cff888888未追踪|r", gName))
+          table.insert(plainParts, string.format("%s 未追踪", gName))
+        end
+      end
+      local standingText = (#groupParts > 0) and table.concat(groupParts, " / ") or "|cff888888未追踪|r"
+      local standingPlain = (#plainParts > 0) and table.concat(plainParts, " / ") or "未追踪"
+      local item = {
+        key = key,
+        label = shortLabel,
+        fullName = fullTitle,
+        summaryLine = string.format("%s%s %s", SIDE_TAG[def.side or "both"] or "", fullTitle, standingText),
+        tipBody = string.format("当前声望：%s\n点击筛选/取消该声望。", standingPlain),
+      }
+      table.insert(filterItems, item)
+      itemByKey[key] = item
+    end
+  end
+
+  local filterMode = (state.repFilterMode == "single") and "single" or "multi"
+  local effectiveSelected = {}
+  local selectedNames = {}
+  local selectedCount = 0
+  if type(state.repFilter) == "table" then
+    for _, item in ipairs(filterItems) do
+      if state.repFilter[item.key] then
+        effectiveSelected[item.key] = true
+        table.insert(selectedNames, item.label)
+        selectedCount = selectedCount + 1
+      end
+    end
+  end
+  if filterMode == "single" and selectedCount > 1 then
+    for _, item in ipairs(filterItems) do
+      if effectiveSelected[item.key] then
+        effectiveSelected = { [item.key] = true }
+        selectedNames = { item.label }
+        selectedCount = 1
+        state.repFilter = { [item.key] = true }
+        break
+      end
+    end
+  end
+  local hasActiveFilter = (selectedCount > 0)
+
+  -- 顶部总览：未筛选时展示全部阵营总览，已筛选时紧凑展示已选声望以便详情卡紧贴展示
+  local modeText = (filterMode == "single") and "单选" or "多选"
+  local filterDesc = hasActiveFilter
+    and string.format("已选 %d 项：%s", selectedCount, table.concat(selectedNames, "、"))
+    or string.format("全部（%d 个可用声望）", #filterItems)
+  local summaryLines = {
+    string.format("|cff99e6ff当前筛选:|r %s  ·  |cff99e6ff模式:|r %s", filterDesc, modeText),
+  }
+  if hasActiveFilter then
+    for _, item in ipairs(filterItems) do
+      if effectiveSelected[item.key] then
+        table.insert(summaryLines, item.summaryLine)
+      end
+    end
+  else
+    table.insert(summaryLines, "|cff99e6ff《魔兽世界：无限》第三方与半人马声望总览|r：蓝色为联盟声望、红色为部落声望、灰色为中立；对立阵营详情会自动隐藏。")
+    for _, f in ipairs(factions) do
+      local key = tostring(f.id)
+      if itemByKey[key] then
+        table.insert(summaryLines, itemByKey[key].summaryLine)
+      else
+        local side = f.side or "both"
+        table.insert(summaryLines, string.format("%s%s |cff888888不可用（对立阵营）|r", SIDE_TAG[side] or "", f.name or ""))
+      end
+    end
+    for _, def in ipairs(factionQuests) do
+      if type(def) == "table" then
+        local key = tostring((def.id and def.id ~= "") and def.id or "desolace-centaur")
+        if itemByKey[key] then
+          table.insert(summaryLines, itemByKey[key].summaryLine)
+        end
+      end
+    end
   end
   if not _G.QuestDB then
     table.insert(summaryLines, "|cffff8800QuestieDB 未加载：任务声望门槛无法读取，本页只按阵营声望与等级过滤。|r")
@@ -6018,7 +6271,7 @@ local function RenderTabReputations()
     if q.items and #q.items > 0 then table.insert(tags, "|cff00aaff[交物品]|r") end
     if #tags > 0 then table.insert(parts, table.concat(tags, "")) end
     if q.rep and tonumber(q.rep) ~= 0 then
-      table.insert(parts, string.format("|cff00ff00+%s|r", FormatNum(q.rep)))
+      table.insert(parts, string.format("|cff00ff00+%s|r", RepUI.FormatNumber(q.rep)))
     end
     if type(q.otherRep) == "table" and #q.otherRep > 0 then
       local others = {}
@@ -6027,7 +6280,7 @@ local function RenderTabReputations()
         local otherSide = factionSideById[tonumber(other.id)]
         if otherName and ((not otherSide) or otherSide == "both" or otherSide == state.faction) then
           local n = tonumber(other.n) or 0
-          table.insert(others, string.format("%s%s %s%s|r", n >= 0 and "|cff66ff66" or "|cffff5555", otherName, n >= 0 and "+" or "", FormatNum(n)))
+          table.insert(others, string.format("%s%s %s%s|r", n >= 0 and "|cff66ff66" or "|cffff5555", otherName, n >= 0 and "+" or "", RepUI.FormatNumber(n)))
         end
       end
       if #others > 0 then table.insert(parts, "另 " .. table.concat(others, "、")) end
@@ -6080,7 +6333,7 @@ local function RenderTabReputations()
           table.insert(chunks, repQuests)
         end
         for chunkIdx, chunk in ipairs(chunks) do
-          local suffix = string.format(" · 工匠文书 +%s", FormatNum(rep))
+          local suffix = string.format(" · 工匠文书 +%s", RepUI.FormatNumber(rep))
           if #chunks > 1 then suffix = suffix .. string.format(" (%d/%d)", chunkIdx, #chunks) end
           table.insert(groups, { quests = chunk, titleSuffix = suffix })
         end
@@ -6147,14 +6400,25 @@ local function RenderTabReputations()
   end
 
   list:Add({
-    title = "|cff00ffcc[声望] 魔兽无限 · 新增第三方声望|r",
+    title = "|cff00ffcc[声望] 魔兽无限 · 新增第三方声望与半人马阵营|r",
     body = table.concat(summaryLines, "\n"),
     theme = "header",
-    badge = string.format("%d 个阵营", #factions),
+    badge = hasActiveFilter
+      and string.format("已选 %d/%d", selectedCount, #filterItems)
+      or string.format("%d 个阵营", #factions + #factionQuests),
   })
 
+  list.y = LayoutRepFilterBar(list.y, {
+    items = filterItems,
+    selected = effectiveSelected,
+    hasFilter = hasActiveFilter,
+    mode = filterMode,
+  })
+
+  local detailCount = 0
   for _, faction in ipairs(factions) do
-    if FactionAvailable(faction) then
+    local key = tostring(faction.id)
+    if FactionAvailable(faction) and (not hasActiveFilter or effectiveSelected[key]) then
       local factionBlob = (faction.name or "") .. " " .. (faction.summary or "")
       for _, source in ipairs(faction.sources or {}) do factionBlob = factionBlob .. " " .. source end
       for _, q in ipairs(faction.quests or {}) do
@@ -6183,11 +6447,11 @@ local function RenderTabReputations()
           end
         end
 
-        local value = GetRepValue(faction.id)
+        local value = RepUI.GetStanding(faction.id)
         local standingText = type(value) == "number"
-          and string.format("%s%s (%s)|r", RepColor(value), RepLabel(value), FormatNum(value))
+          and string.format("%s%s (%s)|r", RepUI.Color(value), RepUI.Label(value), RepUI.FormatNumber(value))
           or "|cff888888未追踪|r"
-        local nextHint = type(value) == "number" and NextTierHint(value) or nil
+        local nextHint = type(value) == "number" and RepUI.NextTierHint(value) or nil
         local groups = BuildGroups(eligible)
         local side = faction.side or "both"
         local baseTitle = string.format(
@@ -6260,7 +6524,7 @@ local function RenderTabReputations()
           end
 
           local titleSuffix = group.titleSuffix or ""
-          local badge = type(value) == "number" and RepLabel(value) or "未追踪"
+          local badge = type(value) == "number" and RepUI.Label(value) or "未追踪"
           if group.titleSuffix then badge = badge .. group.titleSuffix end
           list:Add({
             title = baseTitle .. titleSuffix,
@@ -6268,9 +6532,27 @@ local function RenderTabReputations()
             theme = "zone",
             badge = badge,
           })
+          detailCount = detailCount + 1
         end
       end
     end
+  end
+
+  for _, def in ipairs(factionQuests) do
+    if type(def) == "table" and FactionAvailable(def) then
+      local key = tostring((def.id and def.id ~= "") and def.id or "desolace-centaur")
+      if not hasActiveFilter or effectiveSelected[key] then
+        detailCount = detailCount + RenderCentaurFactionCard(list, lvl, def)
+      end
+    end
+  end
+
+  if detailCount == 0 then
+    list:Add({
+      title = "|cffffd100[声望] 当前筛选/搜索无匹配结果|r",
+      body = "请点击上方「全部声望（清空筛选）」或清空顶部搜索框后重试。",
+      theme = "info",
+    })
   end
 
   list:Finish()
