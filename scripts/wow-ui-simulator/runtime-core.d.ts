@@ -102,7 +102,20 @@ export type WowSnapshot = {
   textures: Record<string, WowTextureSnapshot>;
   rootFrameIds: string[];
   tooltip: { shown: boolean; ownerId: string | null; lines: { text: string; r: number; g: number; b: number }[] };
-  dropdown: { open: boolean; anchorId: string | null; items: { index: number; text: string }[] };
+  dropdown: {
+    open: boolean;
+    anchorId: string | null;
+    items: {
+      index: number;
+      text: string;
+      checked: boolean;
+      disabled: boolean;
+      isTitle: boolean;
+      isNotRadio: boolean;
+      notCheckable: boolean;
+      keepShownOnClick: boolean;
+    }[];
+  };
   chatMessages: { id: number; text: string; r: number; g: number; b: number; timestamp: string }[];
   luaErrors: { id: number; message: string; source: string; timestamp: string }[];
   charState: WowCharState;
@@ -122,6 +135,7 @@ export class WoWSimulatorRuntimeCore {
   getLuaErrorCount(): number;
   runSlashCommand(cmdLine: string): void;
   triggerFrameScript(frameId: string, scriptName: string, ...args: unknown[]): void;
+  clickDropdownItem(index: number): void;
   takeEmittedStrings(): string[];
   getSnapshot(): WowSnapshot;
   destroy(): void;

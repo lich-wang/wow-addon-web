@@ -440,6 +440,10 @@ export class WoWSimulatorRuntimeCore {
     this.callLuaGlobal('__WOW_DISPATCH_SCRIPT__', frameId, scriptName, ...args);
   }
 
+  clickDropdownItem(index) {
+    this.callLuaGlobal('__WOW_CLICK_DROPDOWN_ITEM__', index);
+  }
+
   getSnapshot() {
     const frames = {};
     for (const [k, f] of this.frames.entries()) {

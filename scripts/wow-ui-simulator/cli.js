@@ -1321,7 +1321,6 @@ async function main() {
       rt.triggerFrameScript(btn.id, 'OnClick', 'LeftButton');
       return rt.getSnapshot();
     };
-    const exactRepBtn = (name) => (label) => label.replace(/^✓\s*/, '') === name;
 
     const repRt = new WoWSimulatorRuntime({
       level: 40,
@@ -1353,10 +1352,35 @@ async function main() {
       ['去重提示', repAll.includes('已列在对应阵营卡')],
       ['高等级任务折叠', !repAll.includes('高等级任务') && repAll.includes('需更高等级')],
       ['对立阵营详情隐藏', !repTitles.some((t) => t.includes('杜隆塔尔补给后勤部'))],
+      ['存在声望下拉按钮', Boolean(findVisibleButton(repSnap, (l) => l.startsWith('声望筛选: 全部')))],
       ['存在多选模式按钮', Boolean(findVisibleButton(repSnap, (l) => l.includes('筛选模式: 多选')))],
+      ['存在清空筛选按钮', Boolean(findVisibleButton(repSnap, (l) => l.includes('全部声望')))],
+      ['筛选工具栏已收起为单行', (() => {
+        const dropBtn = findVisibleButton(repSnap, (l) => l.startsWith('声望筛选:'));
+        const bar = dropBtn ? repSnap.frames[dropBtn.parentId] : null;
+        return Boolean(bar && bar.height && bar.height <= 40);
+      })()],
+      ['不再平铺单阵营网格按钮', !findVisibleButton(repSnap, (l) => l.replace(/^✓\s*/, '') === '肯瑞托')],
     ];
 
-    // 交互验证：多选模式 -> 全部重置 -> 单选模式 -> 多选切单选自动收束 -> 切页隐藏筛选栏
+    const openRepDropdown = (rt, stepName) => {
+      const snap = clickRepBtn(rt, (l) => l.startsWith('声望筛选:'), stepName);
+      if (!snap.dropdown.open) {
+        throw new Error(`点击声望下拉按钮后菜单未打开：${stepName}`);
+      }
+      return snap;
+    };
+    const clickDropdownByText = (rt, matcher, stepName) => {
+      const snap = rt.getSnapshot();
+      const item = snap.dropdown.items.find((it) => matcher(stripWoWFormatting(it.text).trim()));
+      if (!item) {
+        throw new Error(`声望下拉菜单缺少选项（${stepName}）：${snap.dropdown.items.map((it) => it.text).join(' | ')}`);
+      }
+      rt.clickDropdownItem(item.index);
+      return rt.getSnapshot();
+    };
+
+    // 交互验证：下拉菜单多选 -> 清空恢复 -> 切单选 -> 跨阵营共享任务 -> 多选切单选自动收束 -> 切页关闭下拉与筛选栏
     const assertDetailTitles = (snap, expected, forbidden, stepName) => {
       const detailTitles = summarizeCards(snap).slice(1).map((c) => c.title);
       const allText = summarizeCards(snap).map((c) => `${c.title}\n${c.body}`).join('\n');
@@ -1374,51 +1398,96 @@ async function main() {
     };
 
     try {
-      // 1) 多选：先选「肯瑞托」
-      let snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '多选点击肯瑞托');
+      // 1) 打开下拉框校验列表（含当前阵营、不含对立阵营）
+      let snap = openRepDropdown(repRt, '打开声望下拉');
+      const menuLabels = snap.dropdown.items.map((it) => stripWoWFormatting(it.text).trim());
+      repChecks.push(['下拉含全部声望项', menuLabels.some((t) => t.includes('全部声望（清空筛选）'))]);
+      repChecks.push(['下拉含半人马', menuLabels.some((t) => t.includes('凄凉之地·半人马'))]);
+      repChecks.push(['下拉隐藏对立阵营', !menuLabels.some((t) => t.includes('杜隆塔尔补给后勤部'))]);
+
+      // 2) 多选：先选「肯瑞托」，菜单应保持打开且已勾选
+      snap = clickDropdownByText(repRt, (t) => t.startsWith('肯瑞托'), '多选点击肯瑞托');
+      repChecks.push(['多选后下拉保持打开', snap.dropdown.open === true]);
+      repChecks.push(['多选肯瑞托已勾选', Boolean(snap.dropdown.items.find((it) => it.text.startsWith('肯瑞托'))?.checked)]);
+      repChecks.push(['按钮显示已选肯瑞托', Boolean(findVisibleButton(snap, (l) => l === '声望筛选: 肯瑞托'))]);
       assertDetailTitles(snap, ['肯瑞托'], ['艾泽拉斯贸易局', '铁马兄弟会', '凄凉之地 · 半人马阵营'], '多选-仅肯瑞托');
 
-      // 2) 多选：追加「凄凉之地·半人马」
-      snap = clickRepBtn(repRt, exactRepBtn('凄凉之地·半人马'), '多选点击凄凉之地·半人马');
+      // 3) 多选：继续追加「凄凉之地·半人马」
+      snap = clickDropdownByText(repRt, (t) => t.startsWith('凄凉之地·半人马'), '多选点击凄凉之地·半人马');
+      repChecks.push(['按钮显示已选2项', Boolean(findVisibleButton(snap, (l) => l === '声望筛选: 已选 2 项'))]);
       assertDetailTitles(snap, ['肯瑞托', '凄凉之地 · 半人马阵营'], ['艾泽拉斯贸易局', '铁马兄弟会'], '多选-肯瑞托+半人马');
 
-      // 3) 多选：取消「肯瑞托」
-      snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '多选取消肯瑞托');
+      // 4) 多选：取消「肯瑞托」
+      snap = clickDropdownByText(repRt, (t) => t.startsWith('肯瑞托'), '多选取消肯瑞托');
       assertDetailTitles(snap, ['凄凉之地 · 半人马阵营'], ['肯瑞托', '艾泽拉斯贸易局', '铁马兄弟会'], '多选-仅剩半人马');
 
-      // 4) 点击「全部声望」恢复全部
-      snap = clickRepBtn(repRt, (l) => l.includes('全部声望'), '点击全部声望');
+      // 5) 点击下拉第 1 项「全部声望（清空筛选）」恢复全部并关闭下拉
+      snap = clickDropdownByText(repRt, (t) => t.includes('全部声望（清空筛选）'), '下拉点击全部声望');
+      repChecks.push(['点全部声望关闭下拉', snap.dropdown.open === false]);
       assertDetailTitles(snap, ['艾泽拉斯贸易局', '肯瑞托', '铁马兄弟会', '凄凉之地 · 半人马阵营'], ['杜隆塔尔补给后勤部'], '全部声望恢复');
 
-      // 5) 切换到「单选」模式
+      // 6) 切换到「单选」模式
       snap = clickRepBtn(repRt, (l) => l.includes('筛选模式:'), '切到单选模式');
       repChecks.push(['已切换单选模式按钮', Boolean(findVisibleButton(snap, (l) => l.includes('筛选模式: 单选')))]);
 
-      // 6) 单选：点「肯瑞托」
-      snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '单选点击肯瑞托');
+      // 7) 单选：打开下拉点「肯瑞托」（自动关闭下拉）
+      openRepDropdown(repRt, '单选打开下拉选肯瑞托');
+      snap = clickDropdownByText(repRt, (t) => t.startsWith('肯瑞托'), '单选点击肯瑞托');
+      repChecks.push(['单选点选后自动关闭下拉', snap.dropdown.open === false]);
       assertDetailTitles(snap, ['肯瑞托'], ['艾泽拉斯贸易局', '铁马兄弟会', '凄凉之地 · 半人马阵营'], '单选-肯瑞托');
 
-      // 7) 单选：点「铁马兄弟会」替换选中项，且共同任务在其卡上正常显示
-      snap = clickRepBtn(repRt, exactRepBtn('铁马兄弟会'), '单选点击铁马兄弟会');
+      // 8) 单选：点「铁马兄弟会」替换选中项，且共同任务在其卡上正常显示
+      openRepDropdown(repRt, '单选打开下拉选铁马');
+      snap = clickDropdownByText(repRt, (t) => t.startsWith('铁马兄弟会'), '单选点击铁马兄弟会');
       const ironRes = assertDetailTitles(snap, ['铁马兄弟会'], ['肯瑞托', '艾泽拉斯贸易局', '凄凉之地 · 半人马阵营'], '单选-铁马兄弟会');
       repChecks.push(['单选铁马显示共同任务', ironRes.allText.includes('共同任务')]);
 
-      // 8) 单选：再次点击已选项「铁马兄弟会」恢复全部
-      snap = clickRepBtn(repRt, exactRepBtn('铁马兄弟会'), '单选取消铁马兄弟会');
+      // 9) 单选：再次点击已选项「铁马兄弟会」恢复全部
+      openRepDropdown(repRt, '单选打开下拉取消铁马');
+      snap = clickDropdownByText(repRt, (t) => t.startsWith('铁马兄弟会'), '单选取消铁马兄弟会');
       assertDetailTitles(snap, ['艾泽拉斯贸易局', '肯瑞托', '铁马兄弟会', '凄凉之地 · 半人马阵营'], ['杜隆塔尔补给后勤部'], '单选-再次点击恢复全部');
 
-      // 9) 多选切回单选自动收束为 1 项
+      // 10) 多选切回单选自动收束为 1 项，并通过「清空筛选」恢复全部
       snap = clickRepBtn(repRt, (l) => l.includes('筛选模式:'), '切回多选模式');
-      snap = clickRepBtn(repRt, exactRepBtn('肯瑞托'), '多选选肯瑞托');
-      snap = clickRepBtn(repRt, exactRepBtn('铁马兄弟会'), '多选加铁马兄弟会');
+      openRepDropdown(repRt, '多选打开下拉');
+      clickDropdownByText(repRt, (t) => t.startsWith('肯瑞托'), '多选选肯瑞托');
+      snap = clickDropdownByText(repRt, (t) => t.startsWith('铁马兄弟会'), '多选加铁马兄弟会');
       assertDetailTitles(snap, ['肯瑞托', '铁马兄弟会'], ['艾泽拉斯贸易局', '凄凉之地 · 半人马阵营'], '多选2项');
       snap = clickRepBtn(repRt, (l) => l.includes('筛选模式:'), '多选2项切单选收束');
+      repChecks.push(['切模式关闭下拉', snap.dropdown.open === false]);
       assertDetailTitles(snap, ['肯瑞托'], ['铁马兄弟会', '艾泽拉斯贸易局', '凄凉之地 · 半人马阵营'], '切单选自动收束');
+      snap = clickRepBtn(repRt, (l) => l.includes('清空筛选'), '点击清空筛选按钮');
+      assertDetailTitles(snap, ['艾泽拉斯贸易局', '肯瑞托', '铁马兄弟会', '凄凉之地 · 半人马阵营'], ['杜隆塔尔补给后勤部'], '清空按钮恢复全部');
 
-      // 10) 切出声望页后隐藏筛选栏
+      // 11) 打开下拉状态下切出声望页：隐藏筛选栏并关闭下拉菜单；关闭后陈旧点击不得改写筛选状态
+      openRepDropdown(repRt, '切页前打开下拉');
       repRt.runSlashCommand('/wowf route');
       const routeSnap = repRt.getSnapshot();
       repChecks.push(['切出声望页隐藏筛选栏', !findVisibleButton(routeSnap, (l) => l.includes('筛选模式:'))]);
+      repChecks.push(['切出声望页关闭下拉菜单', routeSnap.dropdown.open === false && routeSnap.dropdown.items.length === 0]);
+
+      repRt.clickDropdownItem(2);
+      repRt.runSlashCommand('/wowf rep');
+      const afterStaleClickSnap = repRt.getSnapshot();
+      repChecks.push(['下拉关闭后陈旧点击无效', Boolean(findVisibleButton(afterStaleClickSnap, (l) => l.startsWith('声望筛选: 全部')))]);
+      repRt.runSlashCommand('/wowf route');
+      const routeSnap2 = repRt.getSnapshot();
+
+      // 验证在其他页签打开职业下拉菜单时，HideUnusedCards 不会误关闭它
+      const classBtn = findVisibleButton(routeSnap2, (l) => l.startsWith('职业:'));
+      if (classBtn) {
+        repRt.triggerFrameScript(classBtn.id, 'OnClick', 'LeftButton');
+        const classOpenSnap = repRt.getSnapshot();
+        const mageItem = classOpenSnap.dropdown.items.find((it) => stripWoWFormatting(it.text).trim() === '法师');
+        repChecks.push(['非声望页打开职业下拉', classOpenSnap.dropdown.open === true && Boolean(mageItem)]);
+        // 再切一次筛选刷新也不会因为 repFilterBar 隐藏而关闭外部下拉（多选或切换前）
+        const toggleModeBtn = findVisibleButton(classOpenSnap, (l) => l.includes('查看 1-60'));
+        if (toggleModeBtn) {
+          repRt.triggerFrameScript(toggleModeBtn.id, 'OnClick', 'LeftButton');
+          const afterRefreshSnap = repRt.getSnapshot();
+          repChecks.push(['非声望页刷新不误关已开下拉', afterRefreshSnap.dropdown.open === true]);
+        }
+      }
     } catch (err) {
       repChecks.push([err.message, false]);
     }
@@ -1434,9 +1503,370 @@ async function main() {
         console.error(repFinalSnap.luaErrors);
       }
     } else {
-      console.log('[✓] 声望页回归通过（含半人马阵营、单选/多选筛选、声望过滤、已完成折叠、跨阵营去重）。');
+      console.log('[✓] 声望页回归通过（单行下拉筛选、单选/多选交互、半人马阵营、声望过滤、已完成折叠、跨阵营去重）。');
     }
     repRt.destroy();
+  }
+
+  // 顶部页签栏几何布局（含宽窗单行与超长标签自动换行兜底）+ 真实数据集与模拟回归
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const layoutAndMageChecks = [];
+    const mainFrame = Object.values(finalSnap.frames).find((f) => f.name === 'WoWFMainFrame');
+    const scroll = Object.values(finalSnap.frames).find((f) => f.name === 'WoWFMainScrollFrame');
+    const mainW = mainFrame?.width || 0;
+    const expectedTabs = ['智能匹配', '升级路线', '职业与天赋', '一键宏库', '地下城百科', '专业&无限特色', '声望', '无限服速查', '制造套利'];
+    const inspectTabGeometry = (snap) => {
+      const mf = Object.values(snap.frames).find((f) => f.name === 'WoWFMainFrame');
+      const sf = Object.values(snap.frames).find((f) => f.name === 'WoWFMainScrollFrame');
+      const mfW = mf?.width || 0;
+      const rects = [];
+      for (const label of expectedTabs) {
+        const btn = Object.values(snap.frames).find(
+          (f) => f.frameType === 'Button' && isFrameTreeShown(f, snap.frames) && stripWoWFormatting(f.text).trim() === label
+        );
+        if (btn && btn.parentId === mf?.id) {
+          const pt = btn.points.find((p) => p.point === 'TOPLEFT') || { x: 0, y: 0 };
+          rects.push({ label, x: pt.x || 0, y: -(pt.y || 0), w: btn.width || 0, h: btn.height || 0 });
+        }
+      }
+      const sfPt = sf?.points.find((p) => p.point === 'TOPLEFT') || { y: -112 };
+      const sfTop = -(sfPt.y || -112);
+      const inBounds = mfW >= 920 && rects.length === expectedTabs.length
+        && rects.every((r) => r.x >= 0 && r.x + r.w <= mfW && r.y + r.h <= sfTop);
+      let overlaps = false;
+      for (let i = 0; i < rects.length; i++) {
+        for (let j = i + 1; j < rects.length; j++) {
+          const a = rects[i], b = rects[j];
+          if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) overlaps = true;
+        }
+      }
+      return { mfW, sfTop, rects, inBounds, overlaps, rows: new Set(rects.map((r) => r.y)).size };
+    };
+
+    const normalGeo = inspectTabGeometry(finalSnap);
+    layoutAndMageChecks.push(['主窗口加宽>=920', mainW >= 920 && Boolean(scroll)]);
+    layoutAndMageChecks.push(['9个页签全部在主窗边界内且不遮挡滚动区', normalGeo.inBounds]);
+    layoutAndMageChecks.push(['9个页签彼此不重叠', !normalGeo.overlaps]);
+    layoutAndMageChecks.push(['常规宽度下9个页签单行显示', normalGeo.rows === 1]);
+
+    // 极端超宽页签字体下验证自动换行与滚动区避让兜底
+    const wrapHookLua = `
+      local origCreateFrame = CreateFrame
+      function CreateFrame(frameType, name, parent, template)
+        local f = origCreateFrame(frameType, name, parent, template)
+        if frameType == "Button" and template == "UIPanelButtonTemplate" and type(parent) == "table" and parent.GetName and parent:GetName() == "WoWFMainFrame" then
+          f.GetTextWidth = function() return 180 end
+        end
+        return f
+      end
+    `;
+    const wrapRt = new WoWSimulatorRuntime({ level: 25, classKey: 'MAGE', faction: 'Alliance' });
+    wrapRt.loadAddon(addonName, [
+      { filename: 'WrapHookMock.lua', content: wrapHookLua },
+      ...files,
+    ]);
+    wrapRt.runSlashCommand('/wowf');
+    const wrapSnap = wrapRt.getSnapshot();
+    const wrapGeo = inspectTabGeometry(wrapSnap);
+    layoutAndMageChecks.push(['超宽页签自动换行(>=2行)', wrapGeo.rows >= 2]);
+    layoutAndMageChecks.push(['超宽换行后全部页签仍在主窗内且不遮挡滚动区', wrapGeo.inBounds]);
+    layoutAndMageChecks.push(['超宽换行后页签互不重叠', !wrapGeo.overlaps]);
+    wrapRt.destroy();
+
+    // 校验真实快照 scripts/locales/wowf-dataset.json 中祖尔法拉克 #2861 已拆分为 alliance/horde
+    const datasetPath = path.resolve('scripts/locales/wowf-dataset.json');
+    if (fs.existsSync(datasetPath)) {
+      const ds = JSON.parse(fs.readFileSync(datasetPath, 'utf8'));
+      const zfDs = (ds.dungeons || []).find((d) => d.id === 'zul-farrak');
+      const q2861List = (zfDs?.quests || []).filter((q) => q.id === 2861);
+      const hasAllianceBink = q2861List.some((q) => q.faction === 'alliance' && q.npc === '彬克');
+      const hasHordeAnastasia = q2861List.some((q) => q.faction === 'horde' && String(q.npc || '').includes('安娜斯塔西娅'));
+      const hasBoth = q2861List.some((q) => q.faction === 'both');
+      layoutAndMageChecks.push(['真实快照祖尔法拉克#2861已按阵营拆分', q2861List.length === 2 && hasAllianceBink && hasHordeAnastasia && !hasBoth]);
+    }
+
+    // 自包含模拟：真实风格 Mage 职业任务链 + 祖尔法拉克 #2861 + _G.QuestDB 覆盖陷阱（不依赖外部 wowf.zip）
+    const mageDataAndQdbMockLua = `
+      local Q = {
+        [1919] = { name = "向詹妮亚报告", minLv = 15, lv = 15, nextQ = 1920 },
+        [1920] = { name = "调查蓝色隐士", minLv = 15, lv = 16, preS = { 1919 } },
+        [1947] = { name = "沼泽之旅", minLv = 30, lv = 38 },
+        [1948] = { name = "能量物品", minLv = 30, lv = 40, preS = { 1947 } },
+        [1949] = { name = "隐藏的秘密", minLv = 30, lv = 38, nextQ = 1950, preS = { 1947 } },
+        [1950] = { name = "解封咒语", minLv = 30, lv = 30, nextQ = 1951, preS = { 1949 } },
+        [1951] = { name = "能量仪祭", minLv = 30, lv = 40, preS = { 1950 } },
+        [1952] = { name = "法师的魔杖", minLv = 30, lv = 40, preG = { 1948, 1951 } },
+        [1953] = { name = "返回沼泽", minLv = 35, lv = 40, nextQ = 1954 },
+        [1954] = { name = "地狱火宝珠", minLv = 35, lv = 40, nextQ = 1955, preS = { 1953 } },
+        [1955] = { name = "驱除魔鬼", minLv = 35, lv = 40, nextQ = 1956, preS = { 1954 } },
+        [1956] = { name = "奥达曼的能量源", minLv = 35, lv = 40, nextQ = 1957, preS = { 1955 } },
+        [1957] = { name = "法力怒灵", minLv = 35, lv = 40, nextQ = 1958, preS = { 1956 } },
+        [1958] = { name = "苍穹之力", minLv = 35, lv = 40, preS = { 1957 } },
+      }
+      _G.QuestDB = {
+        name = function(id) return Q[id] and Q[id].name end,
+        questLevel = function(id) return Q[id] and Q[id].lv end,
+        requiredLevel = function(id) return Q[id] and Q[id].minLv end,
+        nextQuestInChain = function(id) return Q[id] and Q[id].nextQ end,
+        preQuestSingle = function(id) return Q[id] and Q[id].preS end,
+        preQuestGroup = function(id) return Q[id] and Q[id].preG end,
+      }
+      local mageRuns = {
+        {
+          id = 1860, faction = "alliance", raceId = "human", raceName = "人类", level = 10, to = 10, name = "明镜湖",
+          steps = {
+            { id = 1860, name = "和詹妮亚交谈", level = 10, zone = "艾尔文森林", npc = "扎尔迪玛·维夫希尔特", x = 43.2, y = 66.2 },
+            { id = 1861, name = "明镜湖", level = 10, zone = "暴风城", npc = "詹妮亚·坎农", x = 49.6, y = 85.8 },
+          },
+        },
+        {
+          id = 1919, faction = "alliance", raceId = "human", raceName = "人类", level = 15, to = 16, name = "法纹长袍",
+          steps = {
+            { id = 1919, name = "向詹妮亚报告", level = 15, zone = "艾尔文森林", npc = "扎尔迪玛·维夫希尔特", x = 43.2, y = 66.2 },
+            { id = 1920, name = "调查蓝色隐士", level = 16, zone = "暴风城", npc = "詹妮亚·坎农", x = 49.6, y = 85.8 },
+            { id = 1921, name = "收集原料", level = 15, zone = "暴风城", npc = "詹妮亚·坎农", x = 49.6, y = 85.8, preId = 1920 },
+            { id = 1941, name = "法纹长袍", level = 15, zone = "暴风城", npc = "维恩·拉尔森", x = 51.8, y = 83.5, preId = 1921 },
+          },
+        },
+        {
+          id = 1939, faction = "alliance", raceId = "human", raceName = "人类", level = 26, to = 28, name = "星结之衣",
+          steps = {
+            { id = 1939, name = "高阶巫师安多玛斯", level = 26, zone = "暴风城", npc = "詹妮亚·坎农", x = 49.6, y = 85.8 },
+            { id = 1938, name = "乌尔的暗影魔法研究论文", level = 28, zone = "暴风城", npc = "高阶巫师安多玛斯", x = 48.7, y = 87.6 },
+            { id = 1940, name = "新鲜的蜘蛛丝", level = 26, zone = "暴风城", npc = "高阶巫师安多玛斯", x = 48.7, y = 87.6, preId = 1938 },
+            { id = 1942, name = "星结之衣", level = 26, zone = "暴风城", npc = "维恩·拉尔森", x = 51.8, y = 83.5, preId = 1940 },
+          },
+        },
+        {
+          id = 1947, faction = "alliance", raceId = "human", raceName = "人类", level = 30, to = 40, name = "法师的魔杖",
+          steps = {
+            { id = 1947, name = "沼泽之旅", level = 38, zone = "暴风城", npc = "詹妮亚·坎农", x = 49.6, y = 85.8 },
+            { id = 1949, name = "隐藏的秘密", level = 38, zone = "尘泥沼泽", npc = "塔贝萨", x = 46.1, y = 57.1, preId = 1947 },
+            { id = 1950, name = "解封咒语", level = 30, zone = "千针石林", npc = "大法师提尔斯", x = 78.3, y = 75.7, preId = 1949 },
+            { id = 1951, name = "能量仪祭", level = 40, zone = "千针石林", npc = "大法师提尔斯", x = 78.3, y = 75.7, preId = 1950 },
+            { id = 1952, name = "法师的魔杖", level = 40, zone = "尘泥沼泽", npc = "塔贝萨", x = 46.1, y = 57.1, preId = 1951 },
+          },
+        },
+        {
+          id = 1953, faction = "alliance", raceId = "human", raceName = "人类", level = 35, to = 40, name = "苍穹之力",
+          steps = {
+            { id = 1953, name = "返回沼泽", level = 40, zone = "铁炉堡", npc = "彬克", x = 27.2, y = 8.3 },
+            { id = 1954, name = "地狱火宝珠", level = 40, zone = "尘泥沼泽", npc = "塔贝萨", x = 46.1, y = 57.1 },
+            { id = 1955, name = "驱除魔鬼", level = 40, zone = "尘泥沼泽", npc = "塔贝萨", x = 46.1, y = 57.1, preId = 1954 },
+            { id = 1956, name = "奥达曼的能量源", level = 40, zone = "尘泥沼泽", npc = "塔贝萨", x = 46.1, y = 57.1, preId = 1955 },
+            { id = 1957, name = "法力怒灵", level = 40, zone = "尘泥沼泽", npc = "塔贝萨", x = 46.1, y = 57.1, preId = 1956 },
+            { id = 1958, name = "苍穹之力", level = 40, zone = "尘泥沼泽", npc = "塔贝萨", x = 46.1, y = 57.1, preId = 1957 },
+          },
+        },
+      }
+      WoWF_Data = {
+        meta = { version = "mage-qdb-test" },
+        routes = {
+          ["skyborne-alliance"] = {
+            name = "天裔 (联盟)", faction = "alliance",
+            classRunsByClass = { MAGE = mageRuns },
+            bands = { { from = 38, to = 47, zone = "荒芜之地", hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 }, quests = {} } },
+          },
+        },
+        classes = {
+          MAGE = {
+            name = "法师",
+            specs = { { key = "arcane", name = "奥术", recommendedProfs = "", phases = {}, steps = {}, musts = {} } },
+            classRuns = mageRuns,
+            macros = {},
+          },
+        },
+        dungeons = {
+          {
+            id = "zul-farrak", name = "祖尔法拉克", minLevel = 45, maxLevel = 48, visit = 45, zone = "塔纳利斯",
+            entranceZone = "塔纳利斯", entranceX = 39.1, entranceY = 19.9,
+            quests = {
+              { id = 2861, name = "塔贝萨的任务", level = 46, minLevel = 40, faction = "alliance", npc = "彬克", zone = "铁炉堡", x = 27.0, y = 8.2 },
+              { id = 2861, name = "塔贝萨的任务", level = 46, minLevel = 40, faction = "alliance", npc = "彬克", zone = "铁炉堡", x = 27.0, y = 8.2 },
+              { id = 2861, name = "塔贝萨的任务", level = 46, minLevel = 40, faction = "horde", npc = "安娜斯塔西娅·哈特威尔", zone = "幽暗城", x = 85.0, y = 10.2 },
+              { id = 99981, name = "职业区分副本任务", level = 46, minLevel = 40, faction = "alliance", classes = { "MAGE" }, npc = "法系NPC", zone = "塔纳利斯", x = 51.0, y = 28.0 },
+              { id = 99981, name = "职业区分副本任务", level = 46, minLevel = 40, faction = "alliance", classes = { "WARLOCK" }, npc = "术士NPC", zone = "塔纳利斯", x = 52.0, y = 29.0 },
+              { id = 99982, name = "多NPC拾取任务", level = 46, minLevel = 40, faction = "alliance", npc = "拾取NPC甲", zone = "塔纳利斯", x = 53.0, y = 30.0 },
+              { id = 99982, name = "多NPC拾取任务", level = 46, minLevel = 40, faction = "alliance", npc = "拾取NPC乙", zone = "塔纳利斯", x = 54.0, y = 31.0 },
+            },
+          },
+        },
+        macros = {}, professions = {},
+      }
+    `;
+    const coreOnlyFiles = files.filter((f) => !isDataLuaFile(f));
+    const mageRt = new WoWSimulatorRuntime({
+      level: 41,
+      classKey: 'MAGE',
+      raceKey: '天裔 (联盟)',
+      faction: 'Alliance',
+      completedQuests: [1947, 1949],
+    });
+    mageRt.loadAddon(addonName, [
+      { filename: 'MageDataAndQdbMock.lua', content: mageDataAndQdbMockLua },
+      ...coreOnlyFiles,
+    ]);
+
+    // 1) /wowf class（MATCH 与 ALL 模式）
+    mageRt.runSlashCommand('/wowf class');
+    let mageSnap = mageRt.getSnapshot();
+    const getChainCardBody = (snap) => {
+      const card = summarizeCards(snap).find((c) => c.title.includes('职业任务链与坐标指引'));
+      return card ? card.body : '';
+    };
+    const matchChainBody = getChainCardBody(mageSnap);
+    const countOccurrences = (text, needle) => (text.match(new RegExp(needle, 'g')) || []).length;
+
+    const findVisibleBtn = (snap, predicate) => {
+      for (const f of Object.values(snap.frames)) {
+        if (f.frameType !== 'Button' || !isFrameTreeShown(f, snap.frames)) continue;
+        const label = stripWoWFormatting(f.text).trim();
+        if (predicate(label)) return f;
+      }
+      return null;
+    };
+    const allToggleBtn = findVisibleBtn(mageSnap, (l) => l.includes('查看 1-60 全程'));
+    if (allToggleBtn) mageRt.triggerFrameScript(allToggleBtn.id, 'OnClick', 'LeftButton');
+    mageSnap = mageRt.getSnapshot();
+    const allChainBody = getChainCardBody(mageSnap);
+
+    // 验证 QuestieDB 存在时每条法师职业任务名在「职业与天赋」页只出现 1 次、等级/步数未被覆写、天裔标签正确
+    for (const qName of ['明镜湖', '法纹长袍', '星结之衣', '沼泽之旅', '法师的魔杖', '返回沼泽', '苍穹之力']) {
+      layoutAndMageChecks.push([`职业页ALL-${qName}仅1次`, countOccurrences(allChainBody, qName) === 1]);
+    }
+    for (const qName of ['沼泽之旅', '法师的魔杖', '返回沼泽', '苍穹之力']) {
+      layoutAndMageChecks.push([`职业页MATCH-${qName}仅1次`, countOccurrences(matchChainBody, qName) === 1]);
+    }
+    layoutAndMageChecks.push(['职业页Lv.30–40未被QuestieDB覆写为38', allChainBody.includes('Lv.30–40') && !allChainBody.includes('Lv.38')]);
+    layoutAndMageChecks.push(['职业页Lv.35–40未被QuestieDB覆写为40', allChainBody.includes('Lv.35–40')]);
+    layoutAndMageChecks.push(['1919保留4步未被截断', allChainBody.includes('收集原料') && allChainBody.includes('法纹长袍')]);
+    layoutAndMageChecks.push(['天裔路线不误标人类', allChainBody.includes('[天裔 (联盟)]') && !allChainBody.includes('[人类]')]);
+
+    // 2) /wowf route 已完成前置折叠且未被 QuestieDB 破坏
+    mageRt.runSlashCommand('/wowf route');
+    const mageRouteSnap = mageRt.getSnapshot();
+    const mageRouteCards = summarizeCards(mageRouteSnap);
+    const milestoneCard = mageRouteCards.find((c) => c.title.includes('核心职业任务'));
+    const milestoneBody = milestoneCard ? milestoneCard.body : '';
+    layoutAndMageChecks.push(['路线页折叠已完成前置', milestoneBody.includes('已完成前 2 步')]);
+    layoutAndMageChecks.push(['路线页保留Lv.30/Lv.35标识', milestoneBody.includes('Lv.30') && milestoneBody.includes('Lv.35')]);
+
+    // 3) 祖尔法拉克 #2861 联盟视角仅 1 条且为铁炉堡彬克；不同拾取 NPC 与「显示全部副本」不同职业同 ID 任务不被误删
+    mageRt.charState.level = 46;
+    mageRt.runSlashCommand('/wowf dungeon');
+    const zfSnap = mageRt.getSnapshot();
+    const zfCard = summarizeCards(zfSnap).find((c) => c.title.includes('祖尔法拉克'));
+    const zfBody = zfCard ? zfCard.body : '';
+    layoutAndMageChecks.push(['祖尔法拉克卡片存在', Boolean(zfCard)]);
+    layoutAndMageChecks.push(['祖尔法拉克#2861仅出现1次', countOccurrences(zfBody, '塔贝萨的任务') === 1]);
+    layoutAndMageChecks.push(['祖尔法拉克#2861联盟显示彬克', zfBody.includes('彬克') && !zfBody.includes('安娜斯塔西娅')]);
+    layoutAndMageChecks.push(['MATCH模式保留不同拾取NPC同ID任务', zfBody.includes('拾取NPC甲') && zfBody.includes('拾取NPC乙')]);
+    layoutAndMageChecks.push(['MATCH模式仅保留法师职业任务', zfBody.includes('法系NPC') && !zfBody.includes('术士NPC')]);
+    const showAllDungeonBtn = findVisibleBtn(zfSnap, (l) => l.includes('看无限服新本'));
+    layoutAndMageChecks.push(['副本筛选按钮-看无限服新本存在', Boolean(showAllDungeonBtn)]);
+    if (showAllDungeonBtn) mageRt.triggerFrameScript(showAllDungeonBtn.id, 'OnClick', 'LeftButton');
+    const zfNewSnap = mageRt.getSnapshot();
+    const showAllDungeonBtn2 = findVisibleBtn(zfNewSnap, (l) => l.includes('显示全部副本'));
+    layoutAndMageChecks.push(['副本筛选按钮-显示全部副本存在', Boolean(showAllDungeonBtn2)]);
+    if (showAllDungeonBtn2) mageRt.triggerFrameScript(showAllDungeonBtn2.id, 'OnClick', 'LeftButton');
+    const zfAllSnap = mageRt.getSnapshot();
+    const zfAllCards = summarizeCards(zfAllSnap);
+    layoutAndMageChecks.push(['已切换到全部副本模式', zfAllCards.some((c) => c.title.includes('当前筛选: 全部'))]);
+    const zfAllCard = zfAllCards.find((c) => c.title.includes('祖尔法拉克'));
+    const zfAllBody = zfAllCard ? zfAllCard.body : '';
+    layoutAndMageChecks.push(['全部副本模式保留同ID不同职业记录', zfAllBody.includes('法系NPC') && zfAllBody.includes('术士NPC')]);
+    layoutAndMageChecks.push(['全部副本模式#2861保留双阵营但不重复同阵营', countOccurrences(zfAllBody, '塔贝萨的任务') === 2]);
+
+    // 4) 单步职业任务与回退重复 classRuns 不重复渲染，同时保留末步相同但起始步骤不同的种族链
+    const dupFallbackMockLua = `
+      WoWF_Data = {
+        meta = { version = "dup-test" },
+        routes = {
+          dwarf = { name = "矮人", faction = "alliance", bands = { { from = 1, to = 60, zone = "丹莫罗", hub = { name = "卡拉诺斯", x = 47.0, y = 52.0 }, quests = {} } } },
+          troll = { name = "巨魔", faction = "horde", bands = { { from = 1, to = 60, zone = "杜隆塔尔", hub = { name = "森金村", x = 55.0, y = 74.0 }, quests = {} } } },
+        },
+        classes = {
+          MAGE = {
+            name = "法师",
+            specs = { { key = "arcane", name = "奥术", recommendedProfs = "", phases = {}, steps = {}, musts = {} } },
+            classRuns = {
+              { id = 99910, faction = "alliance", raceId = "human", raceName = "人类", level = 40, to = 40, name = "单步职业任务", steps = { { id = 99910, name = "单步职业任务", level = 40, zone = "暴风城", npc = "詹妮亚", x = 49.6, y = 85.8 } } },
+              { id = 99910, faction = "alliance", raceId = "gnome", raceName = "侏儒", level = 40, to = 40, name = "单步职业任务", steps = { { id = 99910, name = "单步职业任务", level = 40, zone = "暴风城", npc = "詹妮亚", x = 49.6, y = 85.8 } } },
+            },
+            macros = {},
+          },
+          SHAMAN = {
+            name = "萨满祭司",
+            specs = { { key = "ele", name = "元素", recommendedProfs = "", phases = {}, steps = {}, musts = {} } },
+            classRuns = {
+              {
+                id = 2983, faction = "horde", raceId = "orc", raceName = "兽人", level = 10, to = 13, name = "火焰的召唤",
+                steps = {
+                  { id = 2983, name = "火焰的召唤(兽人)", level = 10, zone = "杜隆塔尔", npc = "斯瓦特", x = 54.4, y = 42.6 },
+                  { id = 1527, name = "火焰的召唤(终步)", level = 13, zone = "杜隆塔尔", npc = "塔尔努", x = 38.5, y = 58.9 },
+                },
+              },
+              {
+                id = 2984, faction = "horde", raceId = "tauren", raceName = "牛头人", level = 10, to = 13, name = "火焰的召唤",
+                steps = {
+                  { id = 2984, name = "火焰的召唤(牛头人)", level = 10, zone = "莫高雷", npc = "纳姆·逐星", x = 48.3, y = 59.1 },
+                  { id = 1527, name = "火焰的召唤(终步)", level = 13, zone = "杜隆塔尔", npc = "塔尔努", x = 38.5, y = 58.9 },
+                },
+              },
+            },
+            macros = {},
+          },
+        },
+        dungeons = {}, macros = {}, professions = {},
+      }
+    `;
+    const dupFallbackRt = new WoWSimulatorRuntime({
+      level: 40,
+      classKey: 'MAGE',
+      raceKey: '矮人',
+      faction: 'Alliance',
+    });
+    dupFallbackRt.loadAddon(addonName, [
+      { filename: 'DupFallbackMock.lua', content: dupFallbackMockLua },
+      ...coreOnlyFiles,
+    ]);
+    dupFallbackRt.runSlashCommand('/wowf class');
+    const dupFallbackBody = getChainCardBody(dupFallbackRt.getSnapshot());
+    layoutAndMageChecks.push(['单步及重复回退任务链仅显示1次', countOccurrences(dupFallbackBody, '单步职业任务') === 1]);
+
+    const shamanFallbackRt = new WoWSimulatorRuntime({
+      level: 10,
+      classKey: 'SHAMAN',
+      raceKey: '巨魔',
+      faction: 'Horde',
+    });
+    shamanFallbackRt.loadAddon(addonName, [
+      { filename: 'ShamanFallbackMock.lua', content: dupFallbackMockLua },
+      ...coreOnlyFiles,
+    ]);
+    shamanFallbackRt.runSlashCommand('/wowf class');
+    const shamanFallbackBody = getChainCardBody(shamanFallbackRt.getSnapshot());
+    layoutAndMageChecks.push(['回退保留末步相同但起始不同的种族链', shamanFallbackBody.includes('火焰的召唤(兽人)') && shamanFallbackBody.includes('火焰的召唤(牛头人)')]);
+
+    const layoutMageFailed = layoutAndMageChecks.filter(([, ok]) => !ok);
+    const mageFinalSnap = mageRt.getSnapshot();
+    const dupFbSnap = dupFallbackRt.getSnapshot();
+    const shamanFbSnap = shamanFallbackRt.getSnapshot();
+    if (wrapSnap.luaErrors.length > 0 || mageFinalSnap.luaErrors.length > 0 || dupFbSnap.luaErrors.length > 0 || shamanFbSnap.luaErrors.length > 0 || layoutMageFailed.length > 0) {
+      assertionFailed = true;
+      console.error(
+        `[Assert Failed] 布局/法师职业任务回归 errors=${wrapSnap.luaErrors.length + mageFinalSnap.luaErrors.length + dupFbSnap.luaErrors.length + shamanFbSnap.luaErrors.length}, failed=${layoutMageFailed.map(([n]) => n).join('|')}`
+      );
+      if (wrapSnap.luaErrors.length > 0) console.error(wrapSnap.luaErrors);
+      if (mageFinalSnap.luaErrors.length > 0) console.error(mageFinalSnap.luaErrors);
+      if (dupFbSnap.luaErrors.length > 0) console.error(dupFbSnap.luaErrors);
+      if (shamanFbSnap.luaErrors.length > 0) console.error(shamanFbSnap.luaErrors);
+    } else {
+      console.log('[✓] 宽窗页签布局（含自动换行兜底）与法师职业任务去重回归通过。');
+    }
+    mageRt.destroy();
+    dupFallbackRt.destroy();
+    shamanFallbackRt.destroy();
   }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {

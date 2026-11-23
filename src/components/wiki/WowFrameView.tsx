@@ -395,12 +395,12 @@ function FrameView({
 }
 
 /** WoW 主窗口在插件里的固定尺寸 */
-export const WOW_MAIN_FRAME_WIDTH = 800;
+export const WOW_MAIN_FRAME_WIDTH = 940;
 export const WOW_MAIN_FRAME_HEIGHT = 560;
 
 /**
  * 把 Lua 渲染出的控件树还原成 DOM。
- * 缩放策略：按容器宽度等比缩放（保持游戏内 800×560 的比例与像素布局）。
+ * 缩放策略：按容器宽度等比缩放（保持游戏内 940×560 的比例与像素布局）。
  */
 export function WowFrameView({ snapshot, rootName = 'WoWFMainFrame' }: { snapshot: WowSnapshot; rootName?: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);

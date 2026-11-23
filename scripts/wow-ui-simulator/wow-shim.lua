@@ -495,6 +495,19 @@ function GameTooltip:Hide() __WOW_BRIDGE__:tooltipShow(false) end
 function GameTooltip:IsShown() return __WOW_BRIDGE__:tooltipIsShown() end
 
 local __DROPDOWN_ITEMS__ = {}
+local __DROPDOWN_FRAME__ = nil
+local __DROPDOWN_LEVEL__ = 1
+local __DROPDOWN_ANCHOR__ = nil
+
+local function __PopulateDropDown__(dropDownFrame, level)
+  __DROPDOWN_ITEMS__ = {}
+  __WOW_BRIDGE__:dropdownClear()
+  if type(dropDownFrame) == "table" and type(dropDownFrame._initFunc) == "function" then
+    local ok, err = pcall(dropDownFrame._initFunc, dropDownFrame, level or 1)
+    if not ok then __WOW_BRIDGE__:reportLuaError(tostring(err), "UIDropDownMenu") end
+  end
+end
+
 function UIDropDownMenu_CreateInfo() return {} end
 function UIDropDownMenu_AddButton(info)
   if type(info) ~= "table" then return end
@@ -510,16 +523,42 @@ function UIDropDownMenu_AddButton(info)
 end
 function UIDropDownMenu_Initialize(frame, initFunc) if type(frame) == "table" then frame._initFunc = initFunc end end
 function ToggleDropDownMenu(level, value, dropDownFrame, anchorName)
-  if __WOW_BRIDGE__:dropdownIsOpen() then CloseDropDownMenus(); return end
-  __DROPDOWN_ITEMS__ = {}
-  __WOW_BRIDGE__:dropdownClear()
-  if type(dropDownFrame) == "table" and type(dropDownFrame._initFunc) == "function" then
-    local ok, err = pcall(dropDownFrame._initFunc, dropDownFrame, level or 1)
-    if not ok then __WOW_BRIDGE__:reportLuaError(tostring(err), "UIDropDownMenu") end
+  local anchorId = type(anchorName) == "table" and anchorName._id or nil
+  if __WOW_BRIDGE__:dropdownIsOpen() and __DROPDOWN_ANCHOR__ == anchorId then
+    CloseDropDownMenus()
+    return
   end
-  __WOW_BRIDGE__:dropdownOpen(type(anchorName) == "table" and anchorName._id or nil)
+  __DROPDOWN_FRAME__ = dropDownFrame
+  __DROPDOWN_LEVEL__ = level or 1
+  __DROPDOWN_ANCHOR__ = anchorId
+  __PopulateDropDown__(dropDownFrame, __DROPDOWN_LEVEL__)
+  __WOW_BRIDGE__:dropdownOpen(anchorId)
 end
-function CloseDropDownMenus() __WOW_BRIDGE__:dropdownClose() end
+function UIDropDownMenu_Refresh(dropDownFrame, useValue, dropdownLevel)
+  if not __WOW_BRIDGE__:dropdownIsOpen() then return end
+  local target = dropDownFrame or __DROPDOWN_FRAME__
+  local lvl = dropdownLevel or __DROPDOWN_LEVEL__ or 1
+  __PopulateDropDown__(target, lvl)
+end
+function __WOW_CLICK_DROPDOWN_ITEM__(index)
+  if not __WOW_BRIDGE__:dropdownIsOpen() then return end
+  local item = __DROPDOWN_ITEMS__[tonumber(index) or 0]
+  if not item or item.disabled or item.isTitle then return end
+  if type(item.func) == "function" then
+    local ok, err = pcall(item.func, item)
+    if not ok then __WOW_BRIDGE__:reportLuaError(tostring(err), "UIDropDownMenuClick") end
+  end
+  if not item.keepShownOnClick then
+    CloseDropDownMenus()
+  end
+end
+function CloseDropDownMenus()
+  __DROPDOWN_ITEMS__ = {}
+  __DROPDOWN_FRAME__ = nil
+  __DROPDOWN_ANCHOR__ = nil
+  __WOW_BRIDGE__:dropdownClear()
+  __WOW_BRIDGE__:dropdownClose()
+end
 
 SlashCmdList = {}
 hash_SlashCmdList = {}
