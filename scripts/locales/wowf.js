@@ -2978,6 +2978,10 @@ function validateWowfSnapshot(snapshot) {
       if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > 60 || from > to) {
         return `路线 ${route.id} 存在非法的阶段区间：${JSON.stringify({ from, to })}（要求 1-60 整数且 from<=to）`;
       }
+      // 阶段必须能显示在路线上：缺 zone 的阶段卡片会显示成空白区域
+      if (typeof band.zone !== 'string' || band.zone.trim() === '') {
+        return `路线 ${route.id} 的 Lv.${from}-${to} 阶段缺少 zone`;
+      }
       for (let level = from; level <= to; level++) covered.add(level);
     }
     const gaps = [];
@@ -3010,6 +3014,22 @@ function validateWowfSnapshot(snapshot) {
           return `${specLabel}存在起点大于终点的阶段：${JSON.stringify({ from, to })}`;
         }
       }
+      // 专精阶段需覆盖其全部等级区间：中间缺口会让该等级段选不到循环（阶段重叠是合法的）
+      const covered = new Set();
+      let lowest = Number.POSITIVE_INFINITY;
+      let highest = Number.NEGATIVE_INFINITY;
+      for (const phase of spec.phases) {
+        lowest = Math.min(lowest, phase.from);
+        highest = Math.max(highest, phase.to);
+        for (let level = phase.from; level <= phase.to; level++) covered.add(level);
+      }
+      const phaseGaps = [];
+      for (let level = lowest; level <= highest; level++) {
+        if (!covered.has(level)) phaseGaps.push(level);
+      }
+      if (phaseGaps.length > 0) {
+        return `${specLabel}的 phase 未覆盖 Lv.${phaseGaps.join(',')}`;
+      }
       // 种族职业任务链才有 steps，专精本身不要求；存在时必须是数组
       if (spec.steps !== undefined && !Array.isArray(spec.steps)) {
         return `${specLabel}的 steps 不是数组`;
@@ -3020,6 +3040,13 @@ function validateWowfSnapshot(snapshot) {
   // 4. 副本元数据必须能渲染出名字与等级区间；id 会被后续合并流程当作键，必须是有效字符串
   if (!Array.isArray(snapshot.dungeons) || snapshot.dungeons.length === 0) {
     return '快照缺少 dungeons（副本元数据）';
+  }
+  // 内置目录里的无限服新本必须都在快照中，否则专属副本会从百科里整块消失
+  const missingBuiltinDungeons = FOREVER_NEW_DUNGEONS_META.map(meta => meta.id).filter(
+    id => !snapshot.dungeons.some(dungeon => dungeon?.id === id)
+  );
+  if (missingBuiltinDungeons.length > 0) {
+    return `快照缺少无限服内置副本：${missingBuiltinDungeons.join(', ')}`;
   }
   for (const dungeon of snapshot.dungeons) {
     const name = dungeon?.name || '(无名称)';
