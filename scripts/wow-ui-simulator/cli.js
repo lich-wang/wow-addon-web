@@ -138,31 +138,51 @@ function summarizeCards(snapshot) {
   return cards;
 }
 
-// 职业任务链标签：里程碑卡「Lv.N …·法师职业任务]」，阶段卡「★Lv.N 法师专属职业任务链]」
-// 以及 FormatClassRunLine 默认「Lv.N …·法师专属任务链]」
+// 职业任务链标签：旧版路线里程碑卡「Lv.N …·法师职业任务]」与阶段卡「★Lv.N 法师专属职业任务链]」。
+// 现在链只在「职业与天赋」页展示，路线页不应再出现；解析器同时识别新版任务链卡片标题与步数格式，
+// 避免只换一种展示格式就绕过回归。
 const CHAIN_TAG_RE = /\[★?Lv\.(\d+) ([^\]\n]*?)(?:专属职业任务链|专属任务链|职业任务)\]/g;
 
-// 同一任务链在里程碑卡与阶段卡里的标签前缀不同（「天裔 (联盟)·法师」vs「法师」），
+// 新版「职业与天赋」页任务链卡片：标题含「职业任务链与坐标指引」，正文为「Lv.30–40 职业任务链 (5 步)」
+const CLASS_CHAIN_CARD_TITLE = '职业任务链与坐标指引';
+const CLASS_CHAIN_RANGE_RE = /Lv\.(\d+)[–-](\d+) 职业任务链 \((\d+) 步\)/g;
+
+// 旧版路线页同一任务链在里程碑卡与阶段卡里的标签前缀不同（「天裔 (联盟)·法师」vs「法师」），
 // 因此链身份用「等级 + 归一化职业名」：取标签最后一个「·」后的部分，忽略种族/路线前缀。
 function normalizeChainOwner(label) {
   const parts = String(label || '').split('·');
   return parts[parts.length - 1].replace(/专属$/, '').trim();
 }
 
-function analyzeRouteDedupe(cards) {
-  // key = `${等级}|${职业}`，value = 出现过的卡片下标集合
+function collectChainKeys(cards) {
+  // key = 链身份，value = 出现过的卡片下标集合
   const chainKeys = new Map();
+  const record = (key, idx) => {
+    if (!chainKeys.has(key)) chainKeys.set(key, new Set());
+    chainKeys.get(key).add(idx);
+  };
   cards.forEach((c, idx) => {
-    for (const m of c.body.matchAll(CHAIN_TAG_RE)) {
-      const key = `${m[1]}|${normalizeChainOwner(m[2])}`;
-      if (!chainKeys.has(key)) chainKeys.set(key, new Set());
-      chainKeys.get(key).add(idx);
+    const title = String(c.title || '');
+    const body = String(c.body || '');
+    for (const m of body.matchAll(CHAIN_TAG_RE)) {
+      record(`${m[1]}|${normalizeChainOwner(m[2])}`, idx);
+    }
+    if (title.includes(CLASS_CHAIN_CARD_TITLE)) {
+      record(`card|${CLASS_CHAIN_CARD_TITLE}`, idx);
+    }
+    for (const m of body.matchAll(CLASS_CHAIN_RANGE_RE)) {
+      record(`range|${m[1]}|${m[2]}`, idx);
     }
   });
+  return chainKeys;
+}
+
+function analyzeRouteDedupe(cards) {
+  const chainKeys = collectChainKeys(cards);
   return {
     chainKeys,
     dupChains: [...chainKeys.entries()].filter(([, set]) => set.size > 1),
-    zoneBlockCards: cards.filter((c) => c.body.includes('本阶段适龄练级区域')),
+    zoneBlockCards: cards.filter((c) => String(c.body || '').includes('本阶段适龄练级区域')),
   };
 }
 
@@ -186,23 +206,46 @@ function selfTestBareCoord() {
   return null;
 }
 
+// 自检：确保「重复链 → 判定重复」「同等级但不同职业 → 不误报」「新版卡片/步数格式 → 能识别」
 function selfTestRouteDedupe() {
   const cases = [
     {
-      name: '同一任务链跨卡重复',
+      name: '旧版同一任务链跨卡重复',
       cards: [{ body: '[Lv.20 人类·法师职业任务]' }, { body: '[★Lv.20 法师专属职业任务链]' }],
+      expectDetected: true,
       expectDup: true,
     },
     {
       name: '同等级但不同职业的两条链',
       cards: [{ body: '[Lv.20 人类·法师职业任务]' }, { body: '[Lv.20 人类·战士职业任务]' }],
+      expectDetected: true,
+      expectDup: false,
+    },
+    {
+      name: '新版职业任务链卡片出现在路线页',
+      cards: [{ title: '[任务链] 法师·奥术 职业任务链与坐标指引', body: 'Lv.30–40 职业任务链 (5 步)' }],
+      expectDetected: true,
+      expectDup: false,
+    },
+    {
+      name: '仅正文步数格式也能识别',
+      cards: [{ title: 'Lv.30–40 升级路线阶段', body: 'Lv.35–40 职业任务链 (6 步)' }],
+      expectDetected: true,
+      expectDup: false,
+    },
+    {
+      name: '普通职业关键任务不误报',
+      cards: [{ title: 'Lv.30 阶段', body: '[★法师职业任务] [奥达曼的能量源]' }],
+      expectDetected: false,
       expectDup: false,
     },
   ];
   for (const c of cases) {
-    const dup = analyzeRouteDedupe(c.cards).dupChains.length > 0;
-    if (dup !== c.expectDup) {
-      return `去重自检失败：${c.name}（期望 ${c.expectDup ? '判定重复' : '不判定重复'}）`;
+    const result = analyzeRouteDedupe(c.cards);
+    const detected = result.chainKeys.size > 0;
+    const dup = result.dupChains.length > 0;
+    if (detected !== c.expectDetected || dup !== c.expectDup) {
+      return `去重自检失败：${c.name}（期望 detected=${c.expectDetected} / dup=${c.expectDup}，实际 detected=${detected} / dup=${dup}）`;
     }
   }
   return null;
@@ -255,15 +298,21 @@ async function main() {
       }
     }
     if (opts.assert && cmd === '/wowf route') {
-      // 职业任务链只允许在顶部「核心职业任务与专精里程碑」卡出现一次。
-      // 按「链身份（等级 + 标签）」统计，而不是按“职业任务”字样计数，
-      // 这样阶段卡里合法的普通职业关键任务不会被误判成重复链。
-      const { dupChains, zoneBlockCards } = analyzeRouteDedupe(cards);
-      if (dupChains.length > 0) {
+      // 职业任务链只在「职业与天赋」页展示：升级路线页不得再渲染同一批链。
+      // 同时识别旧版「Lv.N …职业任务]」标签、新版「职业任务链与坐标指引」卡片标题
+      // 与「Lv.30–40 职业任务链 (5 步)」步数格式，避免换一种展示方式就绕过回归。
+      const { chainKeys, dupChains, zoneBlockCards } = analyzeRouteDedupe(cards);
+      if (chainKeys.size > 0 || dupChains.length > 0) {
         console.error(
-          `[Assert Failed] /wowf route 职业任务链重复渲染：${dupChains
-            .map(([lvl, set]) => `Lv.${lvl} 出现在 ${set.size} 张卡`)
-            .join('、')}`
+          `[Assert Failed] /wowf route 仍渲染职业任务链：${[...chainKeys.keys()].join('、')}（应只在「职业与天赋」页出现）`
+        );
+        assertionFailed = true;
+      }
+      // 阶段卡里也不能再出现「[★法师职业任务]」这类职业专属任务标签
+      const classQuestTagCards = cards.filter((c) => /\[★[^\]]*职业任务\]/.test(c.body));
+      if (classQuestTagCards.length > 0) {
+        console.error(
+          `[Assert Failed] /wowf route 阶段卡仍渲染职业专属任务：${classQuestTagCards.map((c) => c.title).join('、')}`
         );
         assertionFailed = true;
       }
@@ -358,8 +407,8 @@ async function main() {
     hordeRt.destroy();
   }
 
-  // Sample-data dedupe regression: 用固定的样例角色验证「职业任务链只渲染一次」
-  // 与「本阶段适龄练级区域只渲染一次」确实被覆盖（内置演示数据含 classRunsByClass 与 altZones）。
+  // Sample-data dedupe regression: 用固定的样例角色验证「职业任务链只在「职业与天赋」页渲染」
+  // 与「本阶段适龄练级区域只在当前阶段卡渲染一次」（内置演示数据含 classRunsByClass 与 altZones）。
   // 放在独立回归里，避免 --level / --faction 等自定义参数下（样例数据可能没有对应内容）误报。
   if (opts.assert && addonName.toLowerCase() === 'wowf') {
     const selfTestErr = selfTestRouteDedupe();
@@ -393,21 +442,28 @@ async function main() {
       const snap = srt.getSnapshot();
       const cards = summarizeCards(snap);
       const { chainKeys, dupChains, zoneBlockCards } = analyzeRouteDedupe(cards);
+      // 路线页不再渲染职业任务链；链只能在「职业与天赋」页出现
+      srt.runSlashCommand('/wowf class');
+      const classSnap = srt.getSnapshot();
+      const classCards = summarizeCards(classSnap);
+      const classChainCard = classCards.find((card) => card.title.includes('职业任务链与坐标指引'));
       if (
         snap.luaErrors.length > 0 ||
-        chainKeys.size === 0 ||
+        classSnap.luaErrors.length > 0 ||
+        chainKeys.size !== 0 ||
         dupChains.length > 0 ||
-        zoneBlockCards.length !== 1
+        zoneBlockCards.length !== 1 ||
+        !classChainCard
       ) {
         sampleFail = true;
         console.error(
-          `[Assert Failed] 样例去重回归 (${c.label}) failed (errors=${snap.luaErrors.length}, chains=${chainKeys.size}, dup=${dupChains.length}, zoneBlocks=${zoneBlockCards.length})`
+          `[Assert Failed] 样例去重回归 (${c.label}) failed (errors=${snap.luaErrors.length + classSnap.luaErrors.length}, routeChains=${chainKeys.size}, dup=${dupChains.length}, zoneBlocks=${zoneBlockCards.length}, classChainCard=${Boolean(classChainCard)})`
         );
       }
       srt.destroy();
     }
     if (sampleFail) assertionFailed = true;
-    else console.log('[✓] 样例数据去重回归通过（职业任务链/区域块各只出现一次）。');
+    else console.log('[✓] 样例数据去重回归通过（职业任务链只在「职业与天赋」页、区域块只在当前阶段卡）。');
   }
 
   // Strict-data regression check: verify Lv.40 Alliance Mage sees Scarlet Monastery quests in real Data.lua
@@ -884,30 +940,6 @@ async function main() {
         options: { knownSpells: [5784] },
         expectMount: false,
       },
-      {
-        label: '圣骑士未完成战马任务',
-        classKey: 'PALADIN',
-        marker: '审判和救赎',
-        level: 60,
-        options: { knownSpells: [33388] },
-        expectMount: true,
-      },
-      {
-        label: '圣骑士已完成战马任务',
-        classKey: 'PALADIN',
-        marker: '审判和救赎',
-        level: 60,
-        options: { knownSpells: [33388, 23214] },
-        expectMount: false,
-      },
-      {
-        label: '圣骑士仅完成战马任务',
-        classKey: 'PALADIN',
-        marker: '审判和救赎',
-        level: 60,
-        options: { knownSpells: [33388], completedQuests: [7647] },
-        expectMount: false,
-      },
     ];
     for (const c of classMountCases) {
       const rt = new WoWSimulatorRuntime({
@@ -942,7 +974,105 @@ async function main() {
       rt.destroy();
     }
 
-    // 自动刷新回归：窗口已打开时学会骑术，事件驱动重绘后提醒应消失
+    // 职业坐骑任务链只在「职业与天赋」页展示：未完成时保留，学会/完成后隐藏；路线页不再重复
+    const mountChainCases = [
+      { label: '圣骑士未完成战马任务', options: { knownSpells: [33388] }, expectChain: true },
+      { label: '圣骑士已完成战马任务', options: { knownSpells: [33388, 23214] }, expectChain: false },
+      { label: '圣骑士仅完成战马任务', options: { knownSpells: [33388], completedQuests: [7647] }, expectChain: false },
+    ];
+    for (const c of mountChainCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: 60,
+        classKey: 'PALADIN',
+        raceKey: '人类',
+        faction: 'Alliance',
+        ...c.options,
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+        ...ridingCoreFiles,
+      ]);
+      const classPage = readRidingCards(rt, '/wowf class');
+      const route = readRidingCards(rt, '/wowf route');
+      const classHasChain = classPage.text.includes('审判和救赎');
+      const routeHasChain = route.text.includes('审判和救赎');
+      const errors = classPage.snap.luaErrors.length + route.snap.luaErrors.length;
+      if (errors > 0 || classHasChain !== c.expectChain || routeHasChain) {
+        ridingFail = true;
+        console.error(
+          `[Assert Failed] 职业坐骑任务链回归 (${c.label}) failed (errors=${errors}, classChain=${classHasChain}, routeChain=${routeHasChain})`
+        );
+      }
+      rt.destroy();
+    }
+
+    // 智能匹配页职业任务入口必须与「职业与天赋」页当前筛选下的实际可见链一致：
+    // MATCH 模式按等级/坐骑完成状态过滤，ALL 模式展示全部链；入口不得指向空列表。
+    const hasClassEntry = (snap) => {
+      for (const f of Object.values(snap.frames)) {
+        if (!isFrameTreeShown(f, snap.frames) || f.frameType !== 'Frame' || !f.backdrop) continue;
+        if (f.name === 'WoWFMainFrame') continue;
+        for (const id of f.fontStrings) {
+          const fs = snap.fontStrings[id];
+          if (fs && fs.shown && String(fs.text || '').includes('|Hwowftab:3')) return true;
+        }
+      }
+      return false;
+    };
+    const classShowsChainCard = (snap) =>
+      summarizeCards(snap).some((c) => c.title.includes('职业任务链与坐标指引'));
+    const findVisibleButton = (snap, predicate) => {
+      for (const f of Object.values(snap.frames)) {
+        if (f.frameType !== 'Button' || !isFrameTreeShown(f, snap.frames)) continue;
+        if (predicate(stripWoWFormatting(f.text).trim())) return f;
+      }
+      return null;
+    };
+    const entryCases = [
+      { label: '未学战马', options: { knownSpells: [33388] }, match: true, all: true },
+      { label: '已学战马', options: { knownSpells: [33388, 23214] }, match: false, all: true },
+      { label: '仅完成战马任务', options: { knownSpells: [33388], completedQuests: [7647] }, match: false, all: true },
+    ];
+    for (const c of entryCases) {
+      const rt = new WoWSimulatorRuntime({
+        level: 60,
+        classKey: 'PALADIN',
+        raceKey: '人类',
+        faction: 'Alliance',
+        ...c.options,
+      });
+      rt.loadAddon(addonName, [
+        { filename: 'RidingFilterMockData.lua', content: ridingMockLua },
+        ...ridingCoreFiles,
+      ]);
+      rt.runSlashCommand('/wowf');
+      const smartMatchSnap = rt.getSnapshot();
+      const entryMatch = hasClassEntry(smartMatchSnap);
+      rt.runSlashCommand('/wowf class');
+      const classMatchSnap = rt.getSnapshot();
+      const chainMatch = classShowsChainCard(classMatchSnap);
+      let ok = entryMatch === chainMatch && entryMatch === c.match;
+      const allToggleBtn = findVisibleButton(classMatchSnap, (label) => label.includes('查看 1-60 全程'));
+      if (allToggleBtn) {
+        rt.triggerFrameScript(allToggleBtn.id, 'OnClick', 'LeftButton');
+      }
+      const classAllSnap = rt.getSnapshot();
+      const chainAll = classShowsChainCard(classAllSnap);
+      rt.runSlashCommand('/wowf');
+      const smartAllSnap = rt.getSnapshot();
+      const entryAll = hasClassEntry(smartAllSnap);
+      ok = ok && Boolean(allToggleBtn) && entryAll === chainAll && entryAll === c.all;
+      const errors = smartMatchSnap.luaErrors.length + classMatchSnap.luaErrors.length
+        + classAllSnap.luaErrors.length + smartAllSnap.luaErrors.length;
+      if (!ok || errors > 0) {
+        ridingFail = true;
+        console.error(
+          `[Assert Failed] 职业任务入口可见性回归 (${c.label}) failed (errors=${errors}, entryMatch=${entryMatch}, chainMatch=${chainMatch}, entryAll=${entryAll}, chainAll=${chainAll}, allToggle=${Boolean(allToggleBtn)})`
+        );
+      }
+      rt.destroy();
+    }
+
     const autoRefreshCases = [
       { command: '/wowf', event: 'SPELLS_CHANGED' },
       { command: '/wowf', event: 'LEARNED_SPELL_IN_TAB' },
@@ -1665,7 +1795,18 @@ async function main() {
           ["skyborne-alliance"] = {
             name = "天裔 (联盟)", faction = "alliance",
             classRunsByClass = { MAGE = mageRuns },
-            bands = { { from = 38, to = 47, zone = "荒芜之地", hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 }, quests = {} } },
+            bands = {
+              {
+                from = 38, to = 47, zone = "荒芜之地",
+                hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 },
+                questsByClass = {
+                  MAGE = {
+                    { id = 90001, name = "法师专属阶段任务", level = 40, kind = "class", zone = "荒芜之地", npc = "法师训练师", x = 42.0, y = 31.0 },
+                    { id = 90002, name = "荒芜之地关键任务", level = 40, zone = "荒芜之地", npc = "营地NPC", x = 43.0, y = 32.0 },
+                  },
+                },
+              },
+            },
           },
         },
         classes = {
@@ -1742,14 +1883,51 @@ async function main() {
     layoutAndMageChecks.push(['1919保留4步未被截断', allChainBody.includes('收集原料') && allChainBody.includes('法纹长袍')]);
     layoutAndMageChecks.push(['天裔路线不误标人类', allChainBody.includes('[天裔 (联盟)]') && !allChainBody.includes('[人类]')]);
 
-    // 2) /wowf route 已完成前置折叠且未被 QuestieDB 破坏
+    // 2) /wowf route 不再重复职业任务链，只保留练级手法与专精里程碑
     mageRt.runSlashCommand('/wowf route');
     const mageRouteSnap = mageRt.getSnapshot();
     const mageRouteCards = summarizeCards(mageRouteSnap);
-    const milestoneCard = mageRouteCards.find((c) => c.title.includes('核心职业任务'));
-    const milestoneBody = milestoneCard ? milestoneCard.body : '';
-    layoutAndMageChecks.push(['路线页折叠已完成前置', milestoneBody.includes('已完成前 2 步')]);
-    layoutAndMageChecks.push(['路线页保留Lv.30/Lv.35标识', milestoneBody.includes('Lv.30') && milestoneBody.includes('Lv.35')]);
+    const mageRouteText = mageRouteCards.map((c) => c.title + '\n' + c.body).join('\n');
+    const mageQuestNames = ['沼泽之旅', '隐藏的秘密', '解封咒语', '能量仪祭', '法师的魔杖', '返回沼泽', '地狱火宝珠', '驱除魔鬼', '奥达曼的能量源', '法力怒灵', '苍穹之力'];
+    layoutAndMageChecks.push([
+      '路线页不再出现职业任务链',
+      mageQuestNames.every((name) => !mageRouteText.includes(name)),
+    ]);
+    layoutAndMageChecks.push(['路线页仍渲染升级路线主卡', mageRouteCards.some((c) => c.title.includes('专属升级路线'))]);
+    layoutAndMageChecks.push([
+      '路线页阶段卡过滤职业专属任务但保留关键任务',
+      mageRouteText.includes('荒芜之地关键任务') && !mageRouteText.includes('法师专属阶段任务'),
+    ]);
+    layoutAndMageChecks.push(['路线页不出现职业专属任务标签', !/\[★[^\]]*职业任务\]/.test(mageRouteText)]);
+
+    // 2.1) 智能匹配页只保留「职业任务」入口，不再铺开任务链
+    mageRt.runSlashCommand('/wowf');
+    const mageSmartSnap = mageRt.getSnapshot();
+    const mageSmartText = summarizeCards(mageSmartSnap).map((c) => c.title + '\n' + c.body).join('\n');
+    const mageSmartRaw = Object.values(mageSmartSnap.fontStrings).map((fs) => fs.text || '').join('\n');
+    layoutAndMageChecks.push([
+      '智能匹配页不再重复职业任务链',
+      mageQuestNames.every((name) => !mageSmartText.includes(name)) && mageSmartText.includes('职业与天赋'),
+    ]);
+    const entryLinkMatch = mageSmartRaw.match(/\|H(wowftab:[^|]*)\|h/);
+    const entryLink = entryLinkMatch ? entryLinkMatch[1] : '';
+    const entryTab = Number((entryLink.match(/^wowftab:(\d+)/) || [])[1]);
+    layoutAndMageChecks.push(['智能匹配页职业任务入口为可点击链接', Boolean(entryLinkMatch)]);
+    layoutAndMageChecks.push(['智能匹配页职业任务入口指向职业页(3)', entryTab === 3]);
+    const smartEntryCard = Object.values(mageSmartSnap.frames).find((f) => {
+      if (f.frameType !== 'Frame' || !f.backdrop) return false;
+      return f.fontStrings.some((fid) => String(mageSmartSnap.fontStrings[fid]?.text || '').includes('|Hwowftab:'));
+    });
+    layoutAndMageChecks.push(['智能匹配页职业任务入口所在卡片存在', Boolean(smartEntryCard)]);
+    if (smartEntryCard && entryLink !== '') {
+      mageRt.triggerFrameScript(smartEntryCard.id, 'OnHyperlinkClick', entryLink, '「职业与天赋」页', 'LeftButton');
+      const smartAfterClick = mageRt.getSnapshot();
+      const smartAfterText = summarizeCards(smartAfterClick).map((c) => c.title + '\n' + c.body).join('\n');
+      layoutAndMageChecks.push([
+        '点击职业任务入口切换到职业与天赋页',
+        smartAfterClick.luaErrors.length === 0 && smartAfterText.includes('战斗循环、天赋与职业任务'),
+      ]);
+    }
 
     // 3) 祖尔法拉克 #2861 联盟视角仅 1 条且为铁炉堡彬克；不同拾取 NPC 与「显示全部副本」不同职业同 ID 任务不被误删
     mageRt.charState.level = 46;
