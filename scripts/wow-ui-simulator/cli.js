@@ -308,6 +308,14 @@ async function main() {
         );
         assertionFailed = true;
       }
+      // 阶段卡里也不能再出现「[★法师职业任务]」这类职业专属任务标签
+      const classQuestTagCards = cards.filter((c) => /\[★[^\]]*职业任务\]/.test(c.body));
+      if (classQuestTagCards.length > 0) {
+        console.error(
+          `[Assert Failed] /wowf route 阶段卡仍渲染职业专属任务：${classQuestTagCards.map((c) => c.title).join('、')}`
+        );
+        assertionFailed = true;
+      }
       // 本阶段适龄练级区域详细清单只给当前阶段一张卡，避免每张阶段卡重复同一批区域
       if (zoneBlockCards.length > 1) {
         console.error(
@@ -1721,7 +1729,18 @@ async function main() {
           ["skyborne-alliance"] = {
             name = "天裔 (联盟)", faction = "alliance",
             classRunsByClass = { MAGE = mageRuns },
-            bands = { { from = 38, to = 47, zone = "荒芜之地", hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 }, quests = {} } },
+            bands = {
+              {
+                from = 38, to = 47, zone = "荒芜之地",
+                hub = { name = "埃格蒙德的营地", x = 42.0, y = 31.0 },
+                questsByClass = {
+                  MAGE = {
+                    { id = 90001, name = "法师专属阶段任务", level = 40, kind = "class", zone = "荒芜之地", npc = "法师训练师", x = 42.0, y = 31.0 },
+                    { id = 90002, name = "荒芜之地关键任务", level = 40, zone = "荒芜之地", npc = "营地NPC", x = 43.0, y = 32.0 },
+                  },
+                },
+              },
+            },
           },
         },
         classes = {
@@ -1809,6 +1828,11 @@ async function main() {
       mageQuestNames.every((name) => !mageRouteText.includes(name)),
     ]);
     layoutAndMageChecks.push(['路线页仍渲染升级路线主卡', mageRouteCards.some((c) => c.title.includes('专属升级路线'))]);
+    layoutAndMageChecks.push([
+      '路线页阶段卡过滤职业专属任务但保留关键任务',
+      mageRouteText.includes('荒芜之地关键任务') && !mageRouteText.includes('法师专属阶段任务'),
+    ]);
+    layoutAndMageChecks.push(['路线页不出现职业专属任务标签', !/\[★[^\]]*职业任务\]/.test(mageRouteText)]);
 
     // 2.1) 智能匹配页只保留「职业任务」入口，不再铺开任务链
     mageRt.runSlashCommand('/wowf');
@@ -1819,14 +1843,18 @@ async function main() {
       '智能匹配页不再重复职业任务链',
       mageQuestNames.every((name) => !mageSmartText.includes(name)) && mageSmartText.includes('职业与天赋'),
     ]);
-    layoutAndMageChecks.push(['智能匹配页职业任务入口为可点击链接', mageSmartRaw.includes('|Hwowftab:3')]);
+    const entryLinkMatch = mageSmartRaw.match(/\|H(wowftab:[^|]*)\|h/);
+    const entryLink = entryLinkMatch ? entryLinkMatch[1] : '';
+    const entryTab = Number((entryLink.match(/^wowftab:(\d+)/) || [])[1]);
+    layoutAndMageChecks.push(['智能匹配页职业任务入口为可点击链接', Boolean(entryLinkMatch)]);
+    layoutAndMageChecks.push(['智能匹配页职业任务入口指向职业页(3)', entryTab === 3]);
     const smartEntryCard = Object.values(mageSmartSnap.frames).find((f) => {
       if (f.frameType !== 'Frame' || !f.backdrop) return false;
-      return f.fontStrings.some((fid) => String(mageSmartSnap.fontStrings[fid]?.text || '').includes('|Hwowftab:3'));
+      return f.fontStrings.some((fid) => String(mageSmartSnap.fontStrings[fid]?.text || '').includes('|Hwowftab:'));
     });
     layoutAndMageChecks.push(['智能匹配页职业任务入口所在卡片存在', Boolean(smartEntryCard)]);
-    if (smartEntryCard) {
-      mageRt.triggerFrameScript(smartEntryCard.id, 'OnHyperlinkClick', 'wowftab:3:「职业与天赋」页', '「职业与天赋」页', 'LeftButton');
+    if (smartEntryCard && entryLink !== '') {
+      mageRt.triggerFrameScript(smartEntryCard.id, 'OnHyperlinkClick', entryLink, '「职业与天赋」页', 'LeftButton');
       const smartAfterClick = mageRt.getSnapshot();
       const smartAfterText = summarizeCards(smartAfterClick).map((c) => c.title + '\n' + c.body).join('\n');
       layoutAndMageChecks.push([
