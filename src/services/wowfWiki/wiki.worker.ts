@@ -3,9 +3,10 @@
 /**
  * 「无限百科」页面的 Lua 渲染 Worker。
  *
- * 直接加载线上分发的 wowf.zip，在 Worker 内用 fengari 跑真正的插件 Lua
- * （Data.lua + CraftArb.lua + WoWF.lua），把渲染出的控件树回传给主线程。
+ * 读取打包时生成的 /wiki/*.lua（与 wowf.zip 同源），在 Worker 内用 fengari 跑真正的插件 Lua
+ * （data.lua + craftarb.lua + core.lua），把渲染出的控件树回传给主线程。
  * 这样网页与游戏内是同一套数据与同一套渲染逻辑，不存在二次实现导致的偏差。
+ * 注意：不直接抓 wowf.zip —— .zip 链接触发下载器扩展（迅雷等）时会拿到空响应。
  */
 import { WoWSimulatorRuntimeCore } from '../../../scripts/wow-ui-simulator/runtime-core.js';
 import wowShimSource from '../../../scripts/wow-ui-simulator/wow-shim.lua?raw';
@@ -34,7 +35,7 @@ for id, route in pairs(D.routes or {}) do
   if #classKeys == 0 then
     for bandIndex = 1, #(route.bands or {}) do
       for classKey, _ in pairs(route.bands[bandIndex].trainersByClass or {}) do
-        if tostring(classKey) ~= "nil" then classKeys[#classKeys + 1] = tostring(classKey) end
+        classKeys[#classKeys + 1] = tostring(classKey)
       end
       if #classKeys > 0 then break end
     end
@@ -71,6 +72,10 @@ function parseMeta(lines: string[]): WikiMeta {
   };
   classes.sort((a, b) => orderOf(CLASS_ORDER, a.key) - orderOf(CLASS_ORDER, b.key));
   routes.sort((a, b) => orderOf(ROUTE_ORDER, a.id) - orderOf(ROUTE_ORDER, b.id));
+  // Lua 的 pairs 遍历顺序不固定，这里统一按职业顺序排序，保证下拉框与默认值稳定
+  for (const route of routes) {
+    route.classes.sort((a, b) => orderOf(CLASS_ORDER, a) - orderOf(CLASS_ORDER, b));
+  }
   return { version, classes, routes };
 }
 
