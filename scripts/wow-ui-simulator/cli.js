@@ -1008,8 +1008,17 @@ async function main() {
 
     // 智能匹配页职业任务入口必须与「职业与天赋」页当前筛选下的实际可见链一致：
     // MATCH 模式按等级/坐骑完成状态过滤，ALL 模式展示全部链；入口不得指向空列表。
-    const hasClassEntry = (snap) =>
-      Object.values(snap.fontStrings).some((fs) => String(fs.text || '').includes('|Hwowftab:3'));
+    const hasClassEntry = (snap) => {
+      for (const f of Object.values(snap.frames)) {
+        if (!isFrameTreeShown(f, snap.frames) || f.frameType !== 'Frame' || !f.backdrop) continue;
+        if (f.name === 'WoWFMainFrame') continue;
+        for (const id of f.fontStrings) {
+          const fs = snap.fontStrings[id];
+          if (fs && fs.shown && String(fs.text || '').includes('|Hwowftab:3')) return true;
+        }
+      }
+      return false;
+    };
     const classShowsChainCard = (snap) =>
       summarizeCards(snap).some((c) => c.title.includes('职业任务链与坐标指引'));
     const findVisibleButton = (snap, predicate) => {

@@ -4435,7 +4435,11 @@ local function RenderTabSmartMatch()
   local phase = GetMatchedPhase(spec, lvl)
   local talentStep = GetMatchedTalentStep(spec, lvl)
   local matchedDungeons = GetMatchedDungeons(lvl)
-  local matchedClassRuns = GetCurrentClassRuns(route, cls, state.faction)
+  local classRunsForEntry = GetCurrentClassRuns(route, cls, state.faction)
+  if #classRunsForEntry == 0 then
+    -- 与「职业与天赋」页保持一致：路由数据为空时回退到职业自带的 classRuns
+    classRunsForEntry = MarkCuratedClassRuns((cls and cls.classRuns) or {})
+  end
 
   local overviewLines = {}
   local zoneTag = (state.zone and state.zone ~= "") and ("  ·  |cff00ff96当前所在:|r " .. state.zone) or ""
@@ -4592,7 +4596,7 @@ local function RenderTabSmartMatch()
   local classPageMatch = (state.talentFilter == "MATCH")
     and (not state.searchQuery or state.searchQuery == "")
   local hasVisibleClassRun = false
-  for _, cr in ipairs(matchedClassRuns) do
+  for _, cr in ipairs(classRunsForEntry) do
     local crTo = cr.to or cr.level or 60
     if not classPageMatch or (crTo >= lvl - 2 and not ShouldSkipClassRun(cr, milestoneFilter)) then
       hasVisibleClassRun = true
