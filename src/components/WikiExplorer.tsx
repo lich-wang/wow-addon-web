@@ -4,6 +4,9 @@ import { WowFrameView } from './wiki/WowFrameView';
 import { WIKI_TABS } from '../services/wowfWiki/tabs';
 import { WikiClient } from '../services/wowfWiki/wikiClient';
 import type { WikiCharacter, WikiMeta, WowSnapshot } from '../services/wowfWiki/types';
+import { handleTabListKeyDown, tabA11yProps, tabPanelA11yProps } from '../utils/tabs';
+
+const WIKI_TAB_IDS = WIKI_TABS.map((tab) => tab.id);
 
 // 网页百科直接读取打包时生成的 Lua 资源（不经 .zip，避免被迅雷等下载器扩展拦截）
 const WIKI_ASSET_BASE = '/wiki';
@@ -252,11 +255,17 @@ export function WikiExplorer() {
             页签：{activeTab.label}
             <ChevronDown className={`h-3 w-3 transition-transform ${tabsOpen ? 'rotate-180' : ''}`} />
           </button>
-          <div className={`${tabsOpen ? 'flex' : 'hidden'} flex-wrap gap-1.5 sm:flex`}>
+          <div
+            role="tablist"
+            aria-label="百科页签"
+            className={`${tabsOpen ? 'flex' : 'hidden'} flex-wrap gap-1.5 sm:flex`}
+            onKeyDown={(event) => handleTabListKeyDown(event, WIKI_TAB_IDS, tabId, setTabId)}
+          >
             {WIKI_TABS.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
+                {...tabA11yProps(tab.id, tabId === tab.id)}
                 onClick={() => setTabId(tab.id)}
                 className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   tabId === tab.id
@@ -276,7 +285,10 @@ export function WikiExplorer() {
       </div>
 
       {/* 渲染区 */}
-      <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 p-2 sm:p-4">
+      <div
+        {...tabPanelA11yProps(tabId)}
+        className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 p-2 sm:p-4"
+      >
         {loading ? (
           <div className="flex flex-col items-center justify-center gap-3 py-24 text-sm text-slate-400">
             <Loader2 className="h-8 w-8 animate-spin text-amber-500" />

@@ -2943,21 +2943,68 @@ function validateWowfSnapshot(snapshot) {
   if (!classes || typeof classes !== 'object' || Object.keys(classes).length === 0) {
     return '快照缺少 classes（职业与专精）';
   }
-  const missingBands = Object.entries(routes)
-    .filter(([, route]) => !Array.isArray(route?.bands) || route.bands.length === 0)
-    .map(([id]) => id);
-  if (missingBands.length > 0) {
-    return `以下路线缺少 bands：${missingBands.join(', ')}`;
+
+  // 1. 必须覆盖全部受支持种族：缺一条路线时插件会静默回退到人类路线
+  const missingRoutes = RACE_ROUTES.filter(route => !routes[route.id]).map(route => route.id);
+  if (missingRoutes.length > 0) {
+    return `快照缺少路线：${missingRoutes.join(', ')}`;
   }
-  const missingSpecs = CLASS_CONFIGS.filter(
-    cls => !Array.isArray(classes[cls.key]?.specs) || classes[cls.key].specs.length === 0
-  ).map(cls => cls.key);
-  if (missingSpecs.length > 0) {
-    return `以下职业缺少 specs：${missingSpecs.join(', ')}`;
+
+  // 2. 路线必须提供 bands，且 1-60 每个等级都被某个阶段覆盖（阶段之间允许重叠）
+  for (const route of RACE_ROUTES) {
+    const bands = routes[route.id]?.bands;
+    if (!Array.isArray(bands) || bands.length === 0) {
+      return `路线 ${route.id} 缺少 bands`;
+    }
+    const covered = new Set();
+    for (const band of bands) {
+      const from = Number(band?.from);
+      const to = Number(band?.to);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+        return `路线 ${route.id} 存在非法的阶段区间：${JSON.stringify({ from: band?.from, to: band?.to })}`;
+      }
+      for (let level = from; level <= to; level++) covered.add(level);
+    }
+    const gaps = [];
+    for (let level = 1; level <= 60; level++) {
+      if (!covered.has(level)) gaps.push(level);
+    }
+    if (gaps.length > 0) {
+      return `路线 ${route.id} 的等级覆盖不完整，缺少 Lv.${gaps.join(',')}`;
+    }
   }
+
+  // 3. 每个职业都要有专精，且每个专精都带阶段数据（插件按 phases 渲染循环与天赋）
+  for (const cls of CLASS_CONFIGS) {
+    const specs = classes[cls.key]?.specs;
+    if (!Array.isArray(specs) || specs.length === 0) {
+      return `职业 ${cls.key} 缺少 specs`;
+    }
+    for (const spec of specs) {
+      if (!Array.isArray(spec?.phases) || spec.phases.length === 0) {
+        return `职业 ${cls.key} 的专精「${spec?.name || spec?.specKey || '未命名'}」缺少 phases`;
+      }
+      // 种族职业任务链才有 steps，专精本身不要求；存在时必须是数组
+      if (spec.steps !== undefined && !Array.isArray(spec.steps)) {
+        return `职业 ${cls.key} 的专精「${spec?.name || spec?.specKey || '未命名'}」的 steps 不是数组`;
+      }
+    }
+  }
+
+  // 4. 副本元数据必须能渲染出名字与等级区间
   if (!Array.isArray(snapshot.dungeons) || snapshot.dungeons.length === 0) {
     return '快照缺少 dungeons（副本元数据）';
   }
+  for (const dungeon of snapshot.dungeons) {
+    const id = dungeon?.id || '(无 id)';
+    if (!dungeon?.name) return `副本 ${id} 缺少 name`;
+    const minLevel = Number(dungeon?.minLevel);
+    const maxLevel = Number(dungeon?.maxLevel);
+    if (!Number.isFinite(minLevel) || !Number.isFinite(maxLevel) || minLevel > maxLevel) {
+      return `副本 ${id} 的等级区间非法：${JSON.stringify({ minLevel: dungeon?.minLevel, maxLevel: dungeon?.maxLevel })}`;
+    }
+  }
+
   return null;
 }
 
@@ -3301,7 +3348,13 @@ export async function buildWoWFAddon(outputDir, cacheDir, _getHeaders, questieDb
   console.log(`[✓] wowf.zip generated (${(outBuf.length / 1024).toFixed(1)} KB, version: ${fullVersion}, snapshot DB: ${dataset.meta.dbVersion})`);
 
   const wikiDir = path.resolve(outputDir, '..', 'wiki');
-  writeWikiAssets(wikiDir, { dataLua: dataLuaContent, coreLua: coreLuaContent, craftLua: craftLuaContent });
+  // Wiki 资源属于附加产物：写入失败只告警，不能让 zip 收尾、TOC 校验与版本清单写盘被跳过。
+  // npm 的 prebuild 钩子会在构建前端时再生成一次，缺文件也能自愈。
+  try {
+    writeWikiAssets(wikiDir, { dataLua: dataLuaContent, coreLua: coreLuaContent, craftLua: craftLuaContent });
+  } catch (err) {
+    console.warn(`[!] 网页百科资源写入失败（不影响插件包）：${err.message}`);
+  }
 
   return {
     zip,

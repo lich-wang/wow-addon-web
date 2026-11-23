@@ -391,9 +391,14 @@ export class WoWSimulatorRuntimeCore {
     }
   }
 
+  /** Lua 错误条数（只读，避免为了取数量而复制整棵控件树） */
+  getLuaErrorCount() {
+    return this.luaErrors.length;
+  }
+
   /**
    * 按 TOC 顺序加载插件文件并派发登录事件。
-   * @returns {boolean} 所有文件都成功执行时才为 true
+   * @returns {boolean} 文件执行与启动事件都未产生错误时才为 true
    */
   loadAddon(addonName, files) {
     this.loadedFiles = [];
@@ -403,9 +408,12 @@ export class WoWSimulatorRuntimeCore {
       if (!ok) allOk = false;
       this.loadedFiles.push(ok ? file.filename : `${file.filename} (ERR)`);
     }
+    const errorBase = this.luaErrors.length;
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'ADDON_LOADED', addonName);
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'PLAYER_LOGIN');
     this.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'PLAYER_ENTERING_WORLD', true, false);
+    // 初始化阶段（含登录事件）的报错同样意味着插件没起来，不能对外宣称就绪
+    if (this.luaErrors.length !== errorBase) allOk = false;
     return allOk;
   }
 

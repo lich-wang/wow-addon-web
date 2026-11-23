@@ -33,6 +33,7 @@ import {
   installAddonFromZip,
 } from './services/fsService';
 import { groupAddons } from './services/addonGrouper';
+import { tabPanelA11yProps } from './utils/tabs';
 
 import {
   downloadAndInstallAddon,
@@ -123,14 +124,18 @@ export function App() {
   });
 
   // Evaluate browser compatibility when page loads and when agentStatus changes
+  const compatPromptedRef = useRef(false);
   useEffect(() => {
     let active = true;
     const runCheck = async () => {
       const res = await evaluateBrowserCompatibility(agentStatus);
       if (!active) return;
       setCompatibility(res);
-      // Auto-open modal on incompatible environment unless user already dismissed in this session
-      if (!res.isCompatible && !isBrowserCheckDismissed()) {
+      // 兼容性提示只服务于「需要访问本地目录」的流程：
+      // 百科页不碰文件系统，不能因为环境不支持就把用户弹走。
+      const needsDirectoryAccess = activeTab !== 'wiki' && activeTab !== 'voice';
+      if (needsDirectoryAccess && !res.isCompatible && !isBrowserCheckDismissed() && !compatPromptedRef.current) {
+        compatPromptedRef.current = true;
         setIsCompatModalOpen(true);
       }
     };
@@ -138,11 +143,13 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [agentStatus]);
+  }, [agentStatus, activeTab]);
 
   const handleContinueBrowsing = () => {
     dismissBrowserCheck();
     setIsCompatModalOpen(false);
+    // 从百科/语音进入时停留在原页面，只有需要目录的流程才回到市场
+    if (activeTab === 'wiki' || activeTab === 'voice') return;
     handleBrowseMarket();
   };
 
@@ -651,6 +658,7 @@ export function App() {
         )}
 
         {/* Voice Chat tab rendered independently of directory scanning isLoading */}
+        <div {...tabPanelA11yProps(activeTab)}>
         {activeTab === 'wiki' ? (
           <WikiExplorer />
         ) : activeTab === 'voice' ? (
@@ -712,6 +720,7 @@ export function App() {
             onPromptPickDirectory={handlePickDirectory}
           />
         )}
+        </div>
       </main>
 
       {/* Footer */}

@@ -119,6 +119,7 @@ export class WoWSimulatorRuntimeCore {
     addonName: string,
     files: { filename: string; content: string }[]
   ): boolean;
+  getLuaErrorCount(): number;
   runSlashCommand(cmdLine: string): void;
   triggerFrameScript(frameId: string, scriptName: string, ...args: unknown[]): void;
   takeEmittedStrings(): string[];

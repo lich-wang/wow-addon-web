@@ -134,7 +134,7 @@ function render(id: number, character: { level: number; classKey: string; routeI
 
   // 运行时的 luaErrors 是累计的：只把本次渲染新增的错误交给页面，
   // 否则用户改回有效角色后仍会看到上一次的报错。
-  const errorBase = runtime.getSnapshot().luaErrors.length;
+  const errorBase = runtime.getLuaErrorCount();
   runtime.runSlashCommand(slash);
   const snapshot = runtime.getSnapshot();
   snapshot.luaErrors = snapshot.luaErrors.slice(errorBase);
