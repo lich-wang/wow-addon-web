@@ -412,9 +412,8 @@ async function writeCachedChunk(chunkCache: Cache | null, key: string, buffer: A
   }
 }
 
-/** 最近一次成功下载用到的块 sha256 与所属 origin：安装完成后的清理由此知道分寸 */
+/** 最近一次成功下载用到的块 sha256：安装完成后的清理由此知道「哪些块刚刚用过」 */
 let lastDownloadChunkShas: string[] = [];
-let lastDownloadOrigin = '';
 
 /**
  * 取得最近一次下载用到的块 sha256 列表（供安装收尾时保护这些块不被立刻淘汰）
@@ -429,28 +428,49 @@ export function getLastDownloadChunkShas(): string[] {
  *
  * 这里**不再按插件或版本清空缓存**：块按内容寻址，旧版本的块就是新版本的块，
  * 清掉等于把下次升级重新变成全量下载。只按总字节预算淘汰最冷的那批。
+ *
+ * 刻意不只信任索引：下载中途失败、索引写入失败或页面被关掉时，块已经落在
+ * Cache Storage 里但没进索引。若只按索引算预算，实际占用会被严重低估
+ * （150 MiB 残留 + 198 MiB 新包 = 348 MiB，却以为只有 198 MiB），
+ * 所以这里以「实际枚举到的缓存键」为准，把漏记的块补进索引再算预算。
  * @param protectedShas 本次安装刚用到的块；省略时取最近一次下载的块
  */
 export async function releaseDownloadCache(protectedShas?: Iterable<string>): Promise<void> {
   const chunkCache = await openChunkCache();
   if (!chunkCache) return;
   const keepWarm = new Set(protectedShas ?? lastDownloadChunkShas);
-  // 块键里带 origin：优先用本次下载的 origin，没有下载记录时退回当前页面 origin
-  const origin =
-    lastDownloadOrigin || (typeof location !== 'undefined' && location.origin ? location.origin : '');
 
   try {
     const index = await readChunkIndex(chunkCache);
     const requests = await chunkCache.keys();
-    const present = new Set<string>();
+
+    /** sha256 → 实际缓存中的请求 URL（删除时必须用它，而不是用当前 origin 重新拼） */
+    const requestsBySha = new Map<string, string>();
     for (const request of requests) {
       const match = /\/([0-9a-f]{64})$/.exec(new URL(request.url).pathname);
-      if (match) present.add(match[1]);
+      if (match) requestsBySha.set(match[1], request.url);
     }
 
     // 索引里有、磁盘上没有的块（被浏览器回收或上次写失败）先从索引移除
     for (const sha of Object.keys(index)) {
-      if (!present.has(sha)) delete index[sha];
+      if (!requestsBySha.has(sha)) delete index[sha];
+    }
+
+    // 磁盘上有、索引里没有的块：补录大小（lastUsed 记 0，让它们优先被淘汰）。
+    // 用 blob().size 取长度，避免把这些块整体读进 JS 堆。
+    let dirty = false;
+    for (const [sha, url] of requestsBySha) {
+      if (index[sha]) continue;
+      let size = 0;
+      try {
+        const hit = await chunkCache.match(url);
+        size = hit ? (await hit.blob()).size : 0;
+      } catch {
+        size = 0;
+      }
+      if (size <= 0) continue;
+      index[sha] = { lastUsed: 0, size };
+      dirty = true;
     }
 
     let totalBytes = Object.values(index).reduce((sum, entry) => sum + entry.size, 0);
@@ -461,13 +481,15 @@ export async function releaseDownloadCache(protectedShas?: Iterable<string>): Pr
         .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
       for (const [sha, entry] of candidates) {
         if (totalBytes <= CHUNK_CACHE_BUDGET_BYTES) break;
-        await chunkCache.delete(chunkCacheKey(origin, sha));
+        const url = requestsBySha.get(sha);
+        if (url) await chunkCache.delete(url);
         delete index[sha];
         totalBytes -= entry.size;
+        dirty = true;
       }
     }
 
-    await writeChunkIndex(chunkCache, index);
+    if (dirty) await writeChunkIndex(chunkCache, index);
   } catch {
     // 清理失败不影响安装
   }
@@ -707,9 +729,8 @@ async function downloadContentAddressedChunks(
     index[placement.sha256] = { lastUsed: now, size: placement.size };
   }
 
-  // 记下本次用到的块与 origin：安装收尾淘汰缓存时要保护这批（它们可能还要用于重试）
+  // 记下本次用到的块：安装收尾淘汰缓存时要保护这批（它们可能还要用于重试）
   lastDownloadChunkShas = digests;
-  lastDownloadOrigin = origin;
 
   await writeChunkIndex(chunkCache, index);
 }

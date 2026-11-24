@@ -138,9 +138,16 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
       oversized++;
       continue;
     }
-    // 内容寻址块：文件名就是内容 sha256，长度也必须与清单一致
+    // 内容寻址块：文件名就是内容 sha256，长度也必须与清单一致。
+    // format 2 的每条 parts 都必须是这种命名——客户端按 `([0-9a-f]{64})\.bin$`
+    // 从路径反解 sha 再查 chunks 表，路径不合格的清单客户端会直接拒绝，
+    // 所以不能让它在托管校验这里混进旧格式分支而放行。
     const nameDigest = /^([0-9a-f]{64})\.bin$/i.exec(path.basename(file));
-    if (isChunked && nameDigest) {
+    if (isChunked) {
+      if (!nameDigest) {
+        problems.push(`openmap: format 2 的块路径 ${partRel} 不是 <sha256>.bin 命名，客户端会拒绝安装`);
+        return null;
+      }
       const digest = nameDigest[1].toLowerCase();
       const expected = declaredSize.get(digest);
       if (expected === undefined) {
