@@ -435,6 +435,9 @@ export async function downloadParts(
     }
 
     if (offset + buffer.byteLength > out.byteLength) {
+      // 长度已经注定拼不出整包：缓存里这一版分片不可信，清掉再报错，
+      // 否则重试会一直复用坏分片
+      await clearPackageCache(versionPrefix);
       throw new Error('分片总长度超出清单 totalSize');
     }
     out.set(new Uint8Array(buffer), offset);
@@ -442,6 +445,7 @@ export async function downloadParts(
   }
 
   if (offset !== out.byteLength) {
+    await clearPackageCache(versionPrefix);
     throw new Error(`分片总长度 ${offset} 与清单 ${out.byteLength} 不一致`);
   }
 
