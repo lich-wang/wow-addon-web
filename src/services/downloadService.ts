@@ -17,10 +17,14 @@ export interface DownloadOptions {
   /** 每收到一段数据就回调一次（已接收字节数、总字节数；总长度未知时为 0） */
   onChunk?: (loaded: number, total: number) => void;
   /**
-   * fetch 缓存策略。默认 no-store（大包不进浏览器缓存，避免 198 MB 常驻）；
-   * 内容哈希命名、可长期缓存的分片传 'default'，重复安装直接命中缓存。
+   * fetch 缓存策略。默认 no-store（大包不进浏览器 HTTP 缓存，避免和断点缓存重复占盘）；
+   * 分片走自己的 Cache Storage 断点缓存，因此这里不需要 HTTP 缓存。
    */
   cache?: RequestCache;
+  /**
+   * 命中断点缓存时回调（已复用片数、总分片数），用于在界面上提示「从断点继续」
+   */
+  onCacheHit?: (cachedParts: number, totalParts: number) => void;
 }
 
 export function formatBytes(bytes: number): string {
@@ -231,25 +235,148 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string | null> {
 }
 
 /**
+ * 已下载分片的断点缓存。
+ *
+ * 198 MB 的包切成 10 片后，任何一片失败、用户关页面、或者手动重试，都不该让
+ * 已经下完的那几片白费。这里用 Cache Storage（磁盘缓存，浏览器/Tauri 的 WebView 都支持）
+ * 按「内容 sha256 + 分片相对路径」存分片，键里带内容哈希，所以升级版本天然失效。
+ */
+const PART_CACHE_NAME = 'wow-addon-parts-v1';
+const PART_CACHE_PREFIX = '/__addon-parts/';
+
+/**
+ * 打开分片缓存；环境不支持 Cache Storage（http 非 localhost、老 WebView）时返回 null
+ * @returns Cache 实例或 null
+ */
+async function openPartCache(): Promise<Cache | null> {
+  if (typeof caches === 'undefined') return null;
+  try {
+    return await caches.open(PART_CACHE_NAME);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 生成分片缓存的键（绝对 URL，保证不同页面/不同次会话一致）
+ * @param manifestOrigin 站点 origin
+ * @param sha256 整包内容哈希
+ * @param partRel 分片相对路径
+ */
+function partCacheKey(manifestOrigin: string, sha256: string, partRel: string): string {
+  return `${manifestOrigin}${PART_CACHE_PREFIX}${sha256}/${partRel.replace(/^\/+/, '')}`;
+}
+
+/**
+ * 读取已缓存的分片，长度不符的直接丢弃（例如上次写了一半）
+ * @param partCache 分片缓存
+ * @param key 缓存键
+ * @param expectedSize 该分片应有的字节数
+ * @returns 分片内容或 null
+ */
+async function readCachedPart(
+  partCache: Cache | null,
+  key: string,
+  expectedSize: number
+): Promise<ArrayBuffer | null> {
+  if (!partCache) return null;
+  try {
+    const hit = await partCache.match(key);
+    if (!hit) return null;
+    const buffer = await hit.arrayBuffer();
+    if (buffer.byteLength !== expectedSize) {
+      await partCache.delete(key);
+      return null;
+    }
+    return buffer;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 写入分片缓存；写失败（配额不足等）只告警，不影响本次安装
+ * @param partCache 分片缓存
+ * @param key 缓存键
+ * @param buffer 分片内容
+ */
+async function writeCachedPart(partCache: Cache | null, key: string, buffer: ArrayBuffer): Promise<void> {
+  if (!partCache) return;
+  try {
+    await partCache.put(
+      key,
+      new Response(buffer, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+  } catch {
+    // 配额不足 / 隐私模式：放弃断点缓存，安装继续
+  }
+}
+
+/**
+ * 清理不属于当前版本的分片缓存，避免旧版本残留占满配额
+ * @param partCache 分片缓存
+ * @param manifestOrigin 站点 origin
+ * @param keepSha 当前版本的内容哈希
+ */
+async function pruneOtherVersions(
+  partCache: Cache | null,
+  manifestOrigin: string,
+  keepSha: string
+): Promise<void> {
+  if (!partCache) return;
+  try {
+    const keepPrefix = `${manifestOrigin}${PART_CACHE_PREFIX}${keepSha}/`;
+    const keys = await partCache.keys();
+    await Promise.all(
+      keys
+        .map((request) => request.url)
+        .filter((url) => url.startsWith(`${manifestOrigin}${PART_CACHE_PREFIX}`) && !url.startsWith(keepPrefix))
+        .map((url) => partCache.delete(url))
+    );
+  } catch {
+    // 清理失败不影响安装
+  }
+}
+
+/**
+ * 安装成功后清空分片缓存（释放 198 MB 磁盘占用）。
+ * 下载完成但解压失败时不清，这样重试还能复用已下载的分片。
+ */
+export async function releaseDownloadCache(): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  try {
+    await caches.delete(PART_CACHE_NAME);
+  } catch {
+    // 清不掉就算了，下次安装会按 sha 覆盖/裁剪
+  }
+}
+
+/**
  * 按清单下载全部分片并拼接成一个 ArrayBuffer。
  * 进度以「已收到的字节 / totalSize」汇总上报，耗时最长的下载阶段也能显示真实百分比。
+ * 已完成的分片会落到 Cache Storage，中断后重试/刷新页面只补下缺的那几片。
  */
 export async function downloadParts(
   manifestUrl: string,
   manifest: PartsManifest,
   options: DownloadOptions = {}
 ): Promise<ArrayBuffer> {
-  const { onChunk, idleTimeoutMs, maxRetries, cache = 'default' } = options;
+  const { onChunk, idleTimeoutMs, maxRetries, cache = 'no-store', onCacheHit } = options;
   const base = typeof location !== 'undefined' && location.href ? location.href : 'http://localhost/';
   const resolvedManifest = new URL(manifestUrl, base).href;
   const out = new Uint8Array(manifest.totalSize);
   let offset = 0;
   const manifestOrigin = new URL(resolvedManifest).origin;
+  const packageSha = String(manifest.sha256 || '').toLowerCase();
 
   // 构建端一定会写 sha256；没有摘要就无法判断「等长但内容错误」的分片
-  if (!/^[0-9a-f]{64}$/i.test(String(manifest.sha256 || ''))) {
+  if (!/^[0-9a-f]{64}$/.test(packageSha)) {
     throw new Error('分片清单缺少有效的 sha256，拒绝安装');
   }
+
+  const partCache = await openPartCache();
+  await pruneOtherVersions(partCache, manifestOrigin, packageSha);
+  let cachedParts = 0;
 
   for (const [index, part] of manifest.parts.entries()) {
     const partUrl = new URL(part, resolvedManifest);
@@ -257,18 +384,33 @@ export async function downloadParts(
     if (partUrl.origin !== manifestOrigin) {
       throw new Error(`分片 ${index + 1}/${manifest.parts.length} 指向站外地址（${partUrl.origin}），已拒绝下载`);
     }
-    let buffer: ArrayBuffer;
-    try {
-      buffer = await downloadWithProgress(partUrl.href, {
-        idleTimeoutMs,
-        maxRetries,
-        cache,
-        onChunk: onChunk ? (loaded) => onChunk(offset + loaded, manifest.totalSize) : undefined,
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(`分片 ${index + 1}/${manifest.parts.length} 下载失败：${reason}`);
+
+    const expectedSize = Math.min(manifest.totalSize - offset, Number(manifest.partSize) || Number.POSITIVE_INFINITY);
+    const cacheKey = partCacheKey(manifestOrigin, packageSha, part);
+    let buffer = await readCachedPart(partCache, cacheKey, expectedSize);
+
+    if (buffer) {
+      cachedParts++;
+      onCacheHit?.(cachedParts, manifest.parts.length);
+      onChunk?.(offset + buffer.byteLength, manifest.totalSize);
+    } else {
+      try {
+        buffer = await downloadWithProgress(partUrl.href, {
+          idleTimeoutMs,
+          maxRetries,
+          cache,
+          onChunk: onChunk ? (loaded) => onChunk(offset + loaded, manifest.totalSize) : undefined,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`分片 ${index + 1}/${manifest.parts.length} 下载失败：${reason}`);
+      }
+      if (buffer.byteLength !== expectedSize && expectedSize !== Number.POSITIVE_INFINITY) {
+        throw new Error(`分片 ${index + 1}/${manifest.parts.length} 长度不符（${buffer.byteLength} != ${expectedSize}）`);
+      }
+      await writeCachedPart(partCache, cacheKey, buffer);
     }
+
     if (offset + buffer.byteLength > out.byteLength) {
       throw new Error('分片总长度超出清单 totalSize');
     }
@@ -286,6 +428,8 @@ export async function downloadParts(
     throw new Error('当前环境不支持 sha256 校验（需要 HTTPS/localhost），已拒绝安装');
   }
   if (actual !== String(manifest.sha256).toLowerCase()) {
+    // 缓存里的分片已经被证明不可信，清掉让下次安装重新下载
+    await releaseDownloadCache();
     throw new Error('分片拼接结果校验失败（sha256 与清单不一致）');
   }
 
