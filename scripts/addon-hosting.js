@@ -99,7 +99,14 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
   // 分片路径相对于清单所在目录解析（而不是固定 openmap/），保证门禁校验的
   // 正是客户端按清单请求的那批文件
   const partsBaseDir = path.dirname(manifestFile);
-  const isChunked = Number(partsManifest.format) >= 2 && Array.isArray(partsManifest.chunks);
+  const declaredFormat = Number(partsManifest.format) || 0;
+  // 按 format 判断，而不是「format 且 chunks 是数组」：声明了 format 2 却缺块表
+  // 属于清单损坏，必须拒绝，不能悄悄退回固定分片校验（那会让它通过门禁但在客户端装不上）
+  const isChunked = declaredFormat >= 2;
+  if (isChunked && !Array.isArray(partsManifest.chunks)) {
+    problems.push(`openmap: format ${declaredFormat} 的清单缺少 chunks 块表`);
+    return null;
+  }
   const declaredSize = new Map();
   if (isChunked) {
     for (const chunk of partsManifest.chunks) {
@@ -110,6 +117,10 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
         return null;
       }
       declaredSize.set(digest, size);
+    }
+    if (declaredSize.size === 0) {
+      problems.push('openmap: format 2 的 chunks 块表为空');
+      return null;
     }
   }
 

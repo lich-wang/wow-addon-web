@@ -578,7 +578,14 @@ export async function downloadParts(
   }
 
   const out = new Uint8Array(manifest.totalSize);
-  const isChunked = Number(manifest.format) >= 2 && Array.isArray(manifest.chunks);
+  // 按 format 判断，而不是「format 且 chunks 是数组」：清单声明了 format 2 却缺块表
+  // 属于损坏，必须报错——否则会静默退回固定分片路径，把内容寻址块当成等长分片拼，
+  // 最后只报「sha256 不一致」，掩盖真正的原因。
+  const declaredFormat = Number(manifest.format) || 0;
+  const isChunked = declaredFormat >= 2;
+  if (isChunked && !Array.isArray(manifest.chunks)) {
+    throw new Error(`分块清单 format ${declaredFormat} 缺少 chunks 块表，拒绝安装`);
+  }
 
   if (!isChunked) {
     await downloadLegacyParts(resolvedManifest, manifest, out, origin, {
