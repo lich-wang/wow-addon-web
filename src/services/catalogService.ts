@@ -1,5 +1,11 @@
 import type { AddonInfo, CuratedAddon, InstallProgress } from '../types/addon';
 import { installAddonFromZip } from './fsService';
+import {
+  downloadParts,
+  downloadWithProgress,
+  fetchPartsManifest,
+  formatBytes,
+} from './downloadService';
 import bundledAddonVersions from '../generated/addon-versions.json';
 
 type BundledVersionManifest = Record<string, { version?: string; source?: string } | undefined>;
@@ -150,10 +156,8 @@ export const POPULAR_ADDONS: CuratedAddon[] = [
     icon: 'Compass',
     defaultFolderName: 'OpenMap',
     latestVersion: bundledVersion('openmap', 'Forever 中文版'),
-    downloadUrl: bundledSource(
-      'openmap',
-      'https://github.com/openmap-world/openmap/releases/download/v0.8.11/OpenMap-v0.8.11-forever.zip'
-    ),
+    // 分片清单（构建时切分，见 scripts/fetch-addons.js）；即使版本清单缺失也绝不留 GitHub 直链
+    downloadUrl: bundledSource('openmap', '/addons/openmap/parts.json'),
     githubRepo: 'openmap-world/openmap',
     homeUrl: 'https://www.curseforge.com/wow/addons/openmap',
     gameFlavors: ['forever'],
@@ -199,6 +203,57 @@ export function withVersionQuery(url: string, version: string): string {
   return `${url}${separator}v=${encodeURIComponent(version)}`;
 }
 
+/** 下载阶段在总进度条上占用的百分比区间（解压写盘占用剩余部分） */
+const DOWNLOAD_PERCENT_START = 5;
+const DOWNLOAD_PERCENT_END = 60;
+
+/** 进度回调节流间隔：大包会收到上万个 chunk，不节流会拖垮 UI */
+const PROGRESS_THROTTLE_MS = 150;
+
+/** 构建脚本切分 OpenMap 时写入的分片清单（见 scripts/fetch-addons.js 的 processOpenMap） */
+function isPartsManifestUrl(url: string): boolean {
+  return /\.json(\?.*)?$/i.test(url);
+}
+
+/**
+ * 该插件是否走 Pages 分片分发（没有单个 zip 直链，链接应指向清单而不是让用户下载 JSON）
+ */
+export function isChunkedAddon(addon: CuratedAddon): boolean {
+  return isPartsManifestUrl(addon.downloadUrl);
+}
+
+/** 站点自有域名：所有插件都必须从这里分发，不允许直连 GitHub / CurseForge 等外部源 */
+const SITE_HOST = 'wow.lich.tech';
+
+/**
+ * 生成下载候选地址。
+ * 只允许「当前站点」与「wow.lich.tech」两个来源——插件包要么是本目录下的 zip，
+ * 要么是 build 期切好的分片清单，绝不回退到外部域名。
+ * @throws 当下载地址被配置成外部域名时抛错（构建阶段的校验会先拦住这种情况）
+ */
+function buildDownloadCandidates(addon: CuratedAddon): string[] {
+  if (addon.downloadUrl.startsWith('http')) {
+    let host = '';
+    try {
+      host = new URL(addon.downloadUrl).hostname;
+    } catch {
+      host = '';
+    }
+    const allowed = host === SITE_HOST || (typeof location !== 'undefined' && host === location.hostname);
+    if (!allowed) {
+      throw new Error(`插件 ${addon.name} 的下载源不在本站（${host || addon.downloadUrl}），已拒绝外部下载`);
+    }
+    return [withVersionQuery(addon.downloadUrl, addon.latestVersion)];
+  }
+
+  const candidates: string[] = [];
+  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+    candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
+  }
+  candidates.push(withVersionQuery(`https://${SITE_HOST}${addon.downloadUrl}`, addon.latestVersion));
+  return Array.from(new Set(candidates));
+}
+
 /**
  * 下载精选插件压缩包。
  * 说明：巫妖王的无限百科 的百科数据已在构建期烘焙进 wowf.zip，
@@ -211,49 +266,70 @@ export async function fetchCuratedAddonZip(
   onProgress?.({
     status: 'downloading',
     addonName: addon.name,
-    percent: 20,
-    message: `正在下载 ${addon.name}...`,
+    percent: DOWNLOAD_PERCENT_START,
+    message: `正在连接下载源：${addon.name}...`,
   });
 
-  const candidates: string[] = [];
-  if (addon.downloadUrl.startsWith('http')) {
-    candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
-    if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
-      candidates.push(`/api/proxy?url=${encodeURIComponent(addon.downloadUrl)}`);
-    }
-    candidates.push(`https://wow.lich.tech/api/proxy?url=${encodeURIComponent(addon.downloadUrl)}`);
-  } else {
-    if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
-      candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
-    }
-    candidates.push(withVersionQuery(`https://wow.lich.tech${addon.downloadUrl}`, addon.latestVersion));
-  }
+  const candidates = buildDownloadCandidates(addon);
+  const isChunked = isPartsManifestUrl(addon.downloadUrl);
 
-  let arrayBuffer: ArrayBuffer | null = null;
-  let lastStatus = 0;
+  let lastEmit = 0;
+  let lastPercent = -1;
+  const report = (loaded: number, total: number) => {
+    const ratio = total > 0 ? Math.min(1, loaded / total) : 0;
+    const percent = Math.min(
+      DOWNLOAD_PERCENT_END,
+      DOWNLOAD_PERCENT_START + Math.floor(ratio * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START))
+    );
+    const now = Date.now();
+    // 已知总长度时按百分比变化节流；未知时按时间节流（否则百分比永远不变，进度条不会动）
+    if (now - lastEmit < (total > 0 ? PROGRESS_THROTTLE_MS : 500)) return;
+    if (total > 0 && percent === lastPercent) return;
+    lastEmit = now;
+    lastPercent = percent;
+    onProgress?.({
+      status: 'downloading',
+      addonName: addon.name,
+      percent,
+      message:
+        total > 0
+          ? `正在下载 ${addon.name}：${formatBytes(loaded)} / ${formatBytes(total)}（${Math.floor(ratio * 100)}%）`
+          : `正在下载 ${addon.name}：已接收 ${formatBytes(loaded)}`,
+    });
+  };
 
-  for (const url of candidates) {
-    try {
-      const response = await fetch(url);
-      lastStatus = response.status;
-      if (!response.ok) continue;
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('text/html')) continue;
-      const buf = await response.arrayBuffer();
-      if (buf.byteLength > 200) {
-        arrayBuffer = buf;
-        break;
+  let lastError: unknown = null;
+
+  if (isChunked) {
+    // Pages 分片路线：先取清单，再顺序下载各分片并拼接
+    for (const url of candidates) {
+      try {
+        const manifest = await fetchPartsManifest(url);
+        const buffer = await downloadParts(url, manifest, { onChunk: report });
+        if (buffer.byteLength > 200) return buffer;
+        lastError = new Error('分片拼接结果为空');
+      } catch (error) {
+        lastError = error;
       }
-    } catch {
-      // try next candidate
+    }
+    // 注意：这里绝不回退到清单里的 source（GitHub 直链）。本站分片不可用时宁可报错，
+    // 也不要让用户的下载绕到外部源——这正是「所有插件都由本站 Pages 分发」的要求。
+  } else {
+    for (const url of candidates) {
+      try {
+        const arrayBuffer = await downloadWithProgress(url, { onChunk: report });
+        if (arrayBuffer.byteLength > 200) {
+          return arrayBuffer;
+        }
+        lastError = new Error('下载内容过小，可能不是有效的插件压缩包');
+      } catch (error) {
+        lastError = error;
+      }
     }
   }
 
-  if (!arrayBuffer) {
-    throw new Error(`下载失败 (HTTP ${lastStatus || 'Network Error'})`);
-  }
-
-  return arrayBuffer;
+  const reason = lastError instanceof Error ? lastError.message : 'Network Error';
+  throw new Error(`下载失败：${reason}`);
 }
 
 /**
@@ -267,18 +343,23 @@ export async function downloadAndInstallAddon(
   onProgress({
     status: 'downloading',
     addonName: addon.name,
-    percent: 15,
-    message: `正在从 wow.lich.tech 下载 ${addon.name}...`,
+    percent: DOWNLOAD_PERCENT_START,
+    message: `正在下载 ${addon.name}...`,
   });
 
   const arrayBuffer = await fetchCuratedAddonZip(addon, onProgress);
 
-  await installAddonFromZip(targetDirHandle, arrayBuffer, (progress) => {
-    onProgress({
-      ...progress,
-      addonName: addon.name,
-    });
-  });
+  await installAddonFromZip(
+    targetDirHandle,
+    arrayBuffer,
+    (progress) => {
+      onProgress({
+        ...progress,
+        addonName: addon.name,
+      });
+    },
+    { percentRange: [DOWNLOAD_PERCENT_END, 97] }
+  );
 
   return { installedFolders: [addon.defaultFolderName] };
 }

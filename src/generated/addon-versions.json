@@ -25,7 +25,7 @@
   },
   "openmap": {
     "version": "v0.8.13",
-    "source": "https://github.com/openmap-world/openmap/releases/download/v0.8.13/OpenMap-v0.8.13-forever.zip"
+    "source": "/addons/openmap/parts.json"
   },
   "questie-forever": {
     "version": "v12.12.0 + DB v1.1.4",

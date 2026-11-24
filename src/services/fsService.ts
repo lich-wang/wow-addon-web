@@ -414,18 +414,33 @@ async function collectStaleTocFiles(
   }
 }
 
+export interface InstallZipOptions {
+  /** 该步骤在总进度条上占用的百分比区间，默认 [20, 95] */
+  percentRange?: [number, number];
+}
+
+/** 写盘进度节流间隔：小文件极多（如 OpenMap 有 3593 个）时避免每写几个就重渲染整个 App */
+const WRITE_PROGRESS_THROTTLE_MS = 150;
+
+/** 每写这么多个文件让出一次事件循环，保证进度条与界面仍能刷新 */
+const WRITE_YIELD_EVERY = 48;
+
 /**
  * Recursively write files from a JSZip archive into the target directory handle
  */
 export async function installAddonFromZip(
   targetDirHandle: FileSystemDirectoryHandle,
   zipBlob: Blob | ArrayBuffer,
-  onProgress?: (progress: InstallProgress) => void
+  onProgress?: (progress: InstallProgress) => void,
+  options: InstallZipOptions = {}
 ): Promise<{ installedFolders: string[]; removedTocCount: number }> {
+  const [startPercent, endPercent] = options.percentRange ?? [20, 95];
+  const spanPercent = Math.max(1, endPercent - startPercent);
+
   onProgress?.({
     status: 'extracting',
     addonName: '插件压缩包',
-    percent: 10,
+    percent: startPercent,
     message: '正在解压 ZIP 文件包...',
   });
 
@@ -444,40 +459,62 @@ export async function installAddonFromZip(
       topLevelFolders.add(parts[0]);
     }
   }
+  const folderLabel = Array.from(topLevelFolders).join(', ');
 
   let written = 0;
+  let lastEmit = 0;
   onProgress?.({
     status: 'writing',
-    addonName: Array.from(topLevelFolders).join(', '),
-    percent: 20,
+    addonName: folderLabel,
+    percent: startPercent,
     message: `准备写入本地目录 (共 ${totalFiles} 个文件)...`,
   });
+
+  // OpenMap 的路径最深有 6 层（OpenMap/Media/Textures/Forever/MapMiniLand/1415.tga），
+  // 原来每个文件都从头逐层 getDirectoryHandle：3593 个文件 ≈ 1.8 万次目录查找。
+  // 这里按目录路径缓存句柄，同一目录只解析一次。
+  const dirCache = new Map<string, FileSystemDirectoryHandle>([['', targetDirHandle]]);
+  const resolveDir = async (dirPath: string): Promise<FileSystemDirectoryHandle> => {
+    const cached = dirCache.get(dirPath);
+    if (cached) return cached;
+    const slash = dirPath.lastIndexOf('/');
+    const parentPath = slash >= 0 ? dirPath.slice(0, slash) : '';
+    const parent = await resolveDir(parentPath);
+    const handle = await parent.getDirectoryHandle(dirPath.slice(slash + 1), { create: true });
+    dirCache.set(dirPath, handle);
+    return handle;
+  };
 
   for (const filePath of fileEntries) {
     const fileEntry = zip.files[filePath];
     const pathParts = filePath.split('/').filter(Boolean);
     const fileName = pathParts.pop()!;
 
-    let currentDir = targetDirHandle;
-    for (const subDirName of pathParts) {
-      currentDir = await currentDir.getDirectoryHandle(subDirName, { create: true });
-    }
+    const currentDir = await resolveDir(pathParts.join('/'));
 
     const fileData = await fileEntry.async('uint8array');
     const fileHandle = await currentDir.getFileHandle(fileName, { create: true });
     const writableStream = await (fileHandle as any).createWritable();
-    await writableStream.write(new Blob([fileData as any]));
+    // 直接写 BufferSource，省掉每文件一次 Blob 包装（3593 次的内存拷贝与 GC 压力）
+    await writableStream.write(fileData);
     await writableStream.close();
 
     written++;
-    if (written % 5 === 0 || written === totalFiles) {
-      const percent = Math.min(95, Math.floor(20 + (written / totalFiles) * 75));
+    const now = Date.now();
+    if (written === totalFiles || now - lastEmit >= WRITE_PROGRESS_THROTTLE_MS) {
+      lastEmit = now;
+      const ratio = written / totalFiles;
       onProgress?.({
         status: 'writing',
-        addonName: Array.from(topLevelFolders).join(', '),
-        percent,
-        message: `正在写入: ${written}/${totalFiles} (${Math.round((written / totalFiles) * 100)}%)`,
+        addonName: folderLabel,
+        percent: Math.min(endPercent, startPercent + Math.floor(ratio * spanPercent)),
+        message: `正在写入: ${written}/${totalFiles} (${Math.round(ratio * 100)}%)`,
       });
+    }
+
+    // 每 N 个文件等待一个宏任务，让浏览器把进度条画出来（否则全是微任务，界面仍然冻住）
+    if (written % WRITE_YIELD_EVERY === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
 

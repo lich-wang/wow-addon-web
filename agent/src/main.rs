@@ -553,7 +553,9 @@ async fn main() {
         // Add Private Network Access & CORS headers middleware
         .layer(
             tower::ServiceBuilder::new()
-                .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+                // OpenMap 的 Forever 包含整套地图贴图，压缩包已达 198 MB（208,253,793 B）。
+                // 原来的 200 MiB 上限只剩 1.4 MB 余量，上游再涨一点就会 413，因此放宽到 512 MiB。
+                .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
                 .layer(
                     CorsLayer::new()
                         .allow_origin(Any)

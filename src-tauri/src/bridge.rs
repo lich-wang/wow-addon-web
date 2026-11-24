@@ -527,7 +527,9 @@ pub fn start_bridge_server() {
                 )
                 .layer(
                     tower::ServiceBuilder::new()
-                        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+                        // OpenMap Forever 压缩包已 198 MB（208,253,793 B），200 MiB 上限只剩 1.4 MB 余量，
+                        // 上游再增加贴图就会 413，因此放宽到 512 MiB。
+                        .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
                         .layer(
                             CorsLayer::new()
                                 .allow_origin(Any)

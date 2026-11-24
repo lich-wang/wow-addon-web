@@ -48,6 +48,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 硬约束：所有插件（含 OpenMap 分片）必须由本站 Pages 分发，任何外链或缺包都让部署失败
+      - name: Verify All Addons Are Hosted On This Site
+        run: node scripts/addon-hosting.js
+
       - name: Verify WoWF UI Rendering with WoW UI Simulator
         run: npm run sim:wowf -- --no-html --strict-data
 
