@@ -5,6 +5,7 @@ import {
   downloadWithProgress,
   fetchPartsManifest,
   formatBytes,
+  releaseDownloadCache,
 } from './downloadService';
 import bundledAddonVersions from '../generated/addon-versions.json';
 
@@ -313,11 +314,21 @@ export async function fetchCuratedAddonZip(
   let lastError: unknown = null;
 
   if (isChunked) {
-    // Pages 分片路线：先取清单，再顺序下载各分片并拼接
+    // Pages 分片路线：先取清单，再顺序下载各分片并拼接（已完成的分片会命中断点缓存）
     for (const url of candidates) {
       try {
         const manifest = await fetchPartsManifest(url);
-        const buffer = await downloadParts(url, manifest, { onChunk: report });
+        const buffer = await downloadParts(url, manifest, {
+          onChunk: report,
+          onCacheHit: (cached, total) => {
+            onProgress?.({
+              status: 'downloading',
+              addonName: addon.name,
+              percent: DOWNLOAD_PERCENT_START,
+              message: `从断点继续：已有 ${cached}/${total} 个分片在本地缓存，跳过重下`,
+            });
+          },
+        });
         if (buffer.byteLength > 200) return buffer;
         lastError = new Error('分片拼接结果为空');
       } catch (error) {
@@ -372,6 +383,9 @@ export async function downloadAndInstallAddon(
     },
     { percentRange: [DOWNLOAD_PERCENT_END, 97] }
   );
+
+  // 装完才清断点缓存：解压/写盘失败时保留，重试不必重下 198 MB
+  await releaseDownloadCache(addon.id);
 
   return { installedFolders: [addon.defaultFolderName] };
 }

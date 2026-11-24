@@ -41,6 +41,7 @@ import {
   enrichAddonsWithUpdateStatus,
   findMatchingCuratedAddon,
 } from './services/catalogService';
+import { releaseDownloadCache } from './services/downloadService';
 
 import {
   checkAgentStatus,
@@ -443,6 +444,8 @@ export function App() {
         });
 
         await agentInstallZip(directoryState.agentPath, blob);
+        // 装完才清断点缓存：解压失败时保留，重试不必重下 198 MB
+        await releaseDownloadCache(addon.id);
 
         setInstallProgress({
           status: 'completed',
@@ -515,6 +518,7 @@ export function App() {
             message: `[${i + 1}/${outdatedItems.length}] 正在解压写入: ${curated.name}...`,
           });
           await agentInstallZip(directoryState.agentPath, blob);
+          await releaseDownloadCache(curated.id);
         } else if (directoryState.handle) {
           await downloadAndInstallAddon(curated, directoryState.handle, (p) => {
             setInstallProgress({
