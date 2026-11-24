@@ -260,11 +260,18 @@ function buildDownloadCandidates(addon: CuratedAddon): string[] {
   }
 
   const candidates: string[] = [];
+  const seenResolved = new Set<string>();
+  const addCandidate = (candidateUrl: string) => {
+    const resolved = pageOrigin ? new URL(candidateUrl, pageOrigin).href : candidateUrl;
+    if (seenResolved.has(resolved)) return;
+    seenResolved.add(resolved);
+    candidates.push(candidateUrl);
+  };
   if (pageOrigin) {
-    candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
+    addCandidate(withVersionQuery(addon.downloadUrl, addon.latestVersion));
   }
-  candidates.push(withVersionQuery(`https://${SITE_HOST}${addon.downloadUrl}`, addon.latestVersion));
-  return Array.from(new Set(candidates));
+  addCandidate(withVersionQuery(`https://${SITE_HOST}${addon.downloadUrl}`, addon.latestVersion));
+  return candidates;
 }
 
 /**
@@ -316,20 +323,37 @@ export async function fetchCuratedAddonZip(
   if (isChunked) {
     // Pages 分块路线：先取清单，再按内容寻址下载各块并拼接。
     // 块 URL 只由内容决定，所以升级到新版本时只有真正变化的块会重新下载。
+    const partsDownloadOptions = {
+      onChunk: report,
+      onCacheHit: (cached: number, total: number) => {
+        const cachedPercent = Math.min(
+          DOWNLOAD_PERCENT_END,
+          DOWNLOAD_PERCENT_START +
+            Math.floor((cached / Math.max(1, total)) * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START))
+        );
+        onProgress?.({
+          status: 'downloading',
+          addonName: addon.name,
+          percent: cachedPercent,
+          message: `复用本地缓存：已有 ${cached}/${total} 个分块命中，只需下载变化的 ${total - cached} 块`,
+        });
+      },
+    };
+
     for (const url of candidates) {
       try {
         const manifest = await fetchPartsManifest(url);
-        const buffer = await downloadParts(url, manifest, {
-          onChunk: report,
-          onCacheHit: (cached, total) => {
-            onProgress?.({
-              status: 'downloading',
-              addonName: addon.name,
-              percent: DOWNLOAD_PERCENT_START,
-              message: `复用本地缓存：已有 ${cached}/${total} 个分块命中，只需下载变化的 ${total - cached} 块`,
-            });
-          },
-        });
+        let buffer: ArrayBuffer;
+        try {
+          buffer = await downloadParts(url, manifest, partsDownloadOptions);
+        } catch (partsError) {
+          const message = partsError instanceof Error ? partsError.message : String(partsError);
+          if (!/HTTP 404/.test(message)) throw partsError;
+          // CDN 缓存了旧清单时可能指向已替换的分块，绕过缓存重拉一次清单再试
+          const bustUrl = `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+          const freshManifest = await fetchPartsManifest(bustUrl);
+          buffer = await downloadParts(bustUrl, freshManifest, partsDownloadOptions);
+        }
         if (buffer.byteLength > 200) return buffer;
         lastError = new Error('分块拼接结果为空');
       } catch (error) {

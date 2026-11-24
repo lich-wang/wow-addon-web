@@ -12,8 +12,14 @@ export const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 export interface DownloadOptions {
   /** 空闲超时（毫秒），默认 45 秒 */
   idleTimeoutMs?: number;
-  /** 断流后的续传重试次数，默认 1 次 */
+  /** 失败/断流后的重试次数，默认 2 次（共尝试 3 次） */
   maxRetries?: number;
+  /** 指数退避基础间隔（毫秒），默认 600 */
+  retryBaseDelayMs?: number;
+  /** 期望的完整响应字节数；若提供，收到字节数不符时会视为截断并触发重试 */
+  expectedSize?: number;
+  /** 外部取消信号 */
+  signal?: AbortSignal;
   /** 每收到一段数据就回调一次（已接收字节数、总字节数；总长度未知时为 0） */
   onChunk?: (loaded: number, total: number) => void;
   /**
@@ -27,6 +33,59 @@ export interface DownloadOptions {
   onCacheHit?: (cachedParts: number, totalParts: number) => void;
 }
 
+class DownloadError extends Error {
+  readonly retryable: boolean;
+  readonly status?: number;
+  readonly retryAfterMs?: number;
+
+  constructor(
+    message: string,
+    options: { retryable: boolean; status?: number; retryAfterMs?: number }
+  ) {
+    super(message);
+    this.name = 'DownloadError';
+    this.retryable = options.retryable;
+    this.status = options.status;
+    this.retryAfterMs = options.retryAfterMs;
+  }
+}
+
+function isRetryableHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function parseRetryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const trimmed = header.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return undefined;
+  const seconds = Number(trimmed);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.min(15_000, Math.round(seconds * 1000));
+}
+
+function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new DownloadError('下载已取消', { retryable: false }));
+  }
+  if (ms <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DownloadError('下载已取消', { retryable: false }));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function computeRetryDelayMs(attempt: number, baseMs: number, retryAfterMs?: number): number {
+  const backoff = Math.min(5000, baseMs * 2 ** attempt) + Math.floor(Math.random() * 250);
+  return retryAfterMs !== undefined ? Math.max(backoff, retryAfterMs) : backoff;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -36,8 +95,8 @@ export function formatBytes(bytes: number): string {
 /**
  * 流式下载并返回完整内容。
  * - 服务器支持 Range 时，中途断开会带 If-Range 从已下载位置续传；
- * - 服务器忽略 Range / 校验器失效（返回 200）时，自动清空缓冲从头下载；
- * - 超过 idleTimeoutMs 没有任何数据则中断并抛出，由调用方决定换源；
+ * - 首字节前失败、空闲超时、408/429/5xx 或期望长度不符时按指数退避重试；
+ * - 3xx 跳转、HTML 错误页、普通 4xx 等明确错误立即失败，由调用方决定换源；
  * - 不跟随跳转（避免清单/包地址被重定向到站外）。
  */
 export async function downloadWithProgress(
@@ -46,24 +105,38 @@ export async function downloadWithProgress(
 ): Promise<ArrayBuffer> {
   const {
     idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS,
-    maxRetries = 1,
+    maxRetries = 2,
+    retryBaseDelayMs = 600,
+    expectedSize,
+    signal: externalSignal,
     onChunk,
     cache = 'no-store',
   } = options;
+
+  if (externalSignal?.aborted) {
+    throw new DownloadError('下载已取消', { retryable: false });
+  }
 
   let loaded = 0;
   let total = 0;
   let buffer: Uint8Array | null = null;
   let lastError: unknown = null;
-  /** 强校验器（ETag/Last-Modified）：续传时用 If-Range 保证拼的是同一份内容 */
+  /** 强校验器（强 ETag / Last-Modified）：续传时用 If-Range 保证拼的是同一份内容 */
   let validator: string | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
+    let timedOut = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const onExternalAbort = () => controller.abort();
+    externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
     const armIdle = () => {
       if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => controller.abort(), idleTimeoutMs);
+      idleTimer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, idleTimeoutMs);
     };
 
     try {
@@ -82,25 +155,29 @@ export async function downloadWithProgress(
         redirect: 'manual',
       });
       if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
-        throw new Error('下载地址发生跳转，已拒绝跟随');
+        throw new DownloadError('下载地址发生跳转，已拒绝跟随', { retryable: false });
       }
 
       if (!response.ok) {
         controller.abort(); // 放弃这个响应，别把连接挂着
-        throw new Error(`HTTP ${response.status}`);
+        throw new DownloadError(`HTTP ${response.status}`, {
+          retryable: isRetryableHttpStatus(response.status),
+          status: response.status,
+          retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+        });
       }
 
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('text/html')) {
         controller.abort();
-        throw new Error('收到 HTML 页面而不是插件压缩包');
+        throw new DownloadError('收到 HTML 页面而不是插件压缩包', { retryable: false });
       }
 
       if (response.status === 206) {
         const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') || '');
         if (!range) {
           controller.abort();
-          throw new Error('服务器返回 206 但缺少 Content-Range');
+          throw new DownloadError('服务器返回 206 但缺少 Content-Range', { retryable: false });
         }
         total = Number(range[3]);
         if (Number(range[1]) !== resumeFrom) {
@@ -108,19 +185,20 @@ export async function downloadWithProgress(
           controller.abort();
           loaded = 0;
           buffer = null;
-          lastError = new Error('续传起点与本地缓冲不一致，改为重新下载');
-          continue;
+          throw new DownloadError('续传起点与本地缓冲不一致，改为重新下载', { retryable: true });
         }
       } else {
         // 服务器不接受 Range（或 If-Range 校验器失效）：丢弃已收数据，从头开始
         loaded = 0;
         buffer = null;
         total = Number(response.headers.get('content-length') || 0);
-        validator = response.headers.get('etag') || response.headers.get('last-modified') || null;
+        const etag = response.headers.get('etag');
+        validator = (etag && !etag.startsWith('W/') ? etag : null) || response.headers.get('last-modified') || null;
       }
 
       if (!buffer) {
-        buffer = new Uint8Array(total > 0 ? total : 1024 * 1024);
+        const initialSize = total > 0 ? total : expectedSize && expectedSize > 0 ? expectedSize : 1024 * 1024;
+        buffer = new Uint8Array(initialSize);
       }
 
       const ensureCapacity = (extra: number) => {
@@ -136,7 +214,7 @@ export async function downloadWithProgress(
       if (!reader) {
         const whole = new Uint8Array(await response.arrayBuffer());
         ensureCapacity(whole.byteLength);
-        if (!buffer) throw new Error('下载内容为空');
+        if (!buffer) throw new DownloadError('下载内容为空', { retryable: true });
         buffer.set(whole, loaded);
         loaded += whole.byteLength;
         onChunk?.(loaded, total);
@@ -146,7 +224,7 @@ export async function downloadWithProgress(
           if (done) break;
           armIdle();
           ensureCapacity(value.byteLength);
-          if (!buffer) throw new Error('下载内容为空');
+          if (!buffer) throw new DownloadError('下载内容为空', { retryable: true });
           buffer.set(value, loaded);
           loaded += value.byteLength;
           onChunk?.(loaded, total);
@@ -154,20 +232,47 @@ export async function downloadWithProgress(
       }
 
       if (total > 0 && loaded < total) {
-        throw new Error(`下载中断 (${formatBytes(loaded)} / ${formatBytes(total)})`);
+        throw new DownloadError(`下载中断 (${formatBytes(loaded)} / ${formatBytes(total)})`, {
+          retryable: true,
+        });
+      }
+      if (expectedSize && expectedSize > 0 && loaded !== expectedSize) {
+        if (loaded > expectedSize || (total > 0 && loaded >= total)) {
+          loaded = 0;
+          buffer = null;
+        }
+        throw new DownloadError(`分块长度不符（${loaded} != ${expectedSize}）`, { retryable: true });
       }
       if (loaded === 0 || !buffer) {
-        throw new Error('下载内容为空');
+        throw new DownloadError('下载内容为空', { retryable: true });
       }
 
       const result = buffer;
       return (loaded === result.byteLength ? result.buffer : result.buffer.slice(0, loaded)) as ArrayBuffer;
     } catch (error) {
-      lastError = error;
-      // 一个字节都没收到时续传没有意义，直接交给调用方换源
-      if (loaded === 0) break;
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = undefined;
+      }
+      if (externalSignal?.aborted) {
+        throw error instanceof Error ? error : new DownloadError('下载已取消', { retryable: false });
+      }
+      const normalized = timedOut
+        ? new DownloadError(`连接超时（${Math.round(idleTimeoutMs / 1000)} 秒无数据响应）`, { retryable: true })
+        : error instanceof DownloadError
+        ? error
+        : new DownloadError(error instanceof Error ? error.message : 'Network Error', { retryable: true });
+      lastError = normalized;
+      if (!normalized.retryable) break;
+      if (attempt < maxRetries) {
+        await sleepWithSignal(
+          computeRetryDelayMs(attempt, retryBaseDelayMs, normalized.retryAfterMs),
+          externalSignal
+        );
+      }
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
     }
   }
 
@@ -201,34 +306,65 @@ export interface PartsManifest {
   source?: string;
 }
 
-export async function fetchPartsManifest(url: string, timeoutMs = 15_000): Promise<PartsManifest> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      cache: 'no-store',
-      // 清单是本站产物，跳转一律视为异常
-      redirect: 'manual',
-    });
-    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
-      throw new Error('分片清单地址发生跳转，已拒绝跟随');
+export async function fetchPartsManifest(
+  url: string,
+  timeoutMs = 15_000,
+  maxRetries = 2
+): Promise<PartsManifest> {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        cache: 'no-store',
+        // 清单是本站产物，跳转一律视为异常
+        redirect: 'manual',
+      });
+      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+        throw new DownloadError('分片清单地址发生跳转，已拒绝跟随', { retryable: false });
+      }
+      if (!response.ok) {
+        throw new DownloadError(`HTTP ${response.status}`, {
+          retryable: isRetryableHttpStatus(response.status),
+          status: response.status,
+          retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+        });
+      }
+      const data = (await response.json()) as PartsManifest;
+      if (
+        !data ||
+        !Array.isArray(data.parts) ||
+        data.parts.length === 0 ||
+        !Number.isFinite(data.totalSize) ||
+        data.totalSize <= 0
+      ) {
+        throw new DownloadError('分片清单格式无效', { retryable: false });
+      }
+      return data;
+    } catch (error) {
+      clearTimeout(timer);
+      const normalized = timedOut
+        ? new DownloadError(`获取分块清单超时（${Math.round(timeoutMs / 1000)} 秒无响应）`, { retryable: true })
+        : error instanceof DownloadError
+        ? error
+        : new DownloadError(error instanceof Error ? error.message : 'Network Error', { retryable: true });
+      lastError = normalized;
+      if (!normalized.retryable || attempt >= maxRetries) break;
+      await sleepWithSignal(computeRetryDelayMs(attempt, 500, normalized.retryAfterMs));
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = (await response.json()) as PartsManifest;
-    if (
-      !data ||
-      !Array.isArray(data.parts) ||
-      data.parts.length === 0 ||
-      !Number.isFinite(data.totalSize) ||
-      data.totalSize <= 0
-    ) {
-      throw new Error('分片清单格式无效');
-    }
-    return data;
-  } finally {
-    clearTimeout(timer);
   }
+
+  throw lastError instanceof Error ? lastError : new Error('获取分块清单失败');
 }
 
 /**
@@ -566,7 +702,15 @@ export async function downloadParts(
   manifest: PartsManifest,
   options: DownloadOptions = {}
 ): Promise<ArrayBuffer> {
-  const { onChunk, idleTimeoutMs, maxRetries, cache = 'no-store', onCacheHit } = options;
+  const {
+    onChunk,
+    idleTimeoutMs,
+    maxRetries,
+    retryBaseDelayMs,
+    signal,
+    cache = 'no-store',
+    onCacheHit,
+  } = options;
   const base = typeof location !== 'undefined' && location.href ? location.href : 'http://localhost/';
   const resolvedManifest = new URL(manifestUrl, base).href;
   const origin = manifestOrigin(resolvedManifest);
@@ -592,6 +736,8 @@ export async function downloadParts(
       onChunk,
       idleTimeoutMs,
       maxRetries,
+      retryBaseDelayMs,
+      signal,
       cache,
     });
   } else {
@@ -599,6 +745,8 @@ export async function downloadParts(
       onChunk,
       idleTimeoutMs,
       maxRetries,
+      retryBaseDelayMs,
+      signal,
       cache,
       onCacheHit,
     });
@@ -633,7 +781,15 @@ async function downloadContentAddressedChunks(
   origin: string,
   options: DownloadOptions
 ): Promise<void> {
-  const { onChunk, idleTimeoutMs, maxRetries, cache = 'no-store', onCacheHit } = options;
+  const {
+    onChunk,
+    idleTimeoutMs,
+    maxRetries,
+    retryBaseDelayMs,
+    signal: externalSignal,
+    cache = 'no-store',
+    onCacheHit,
+  } = options;
 
   const declaredSize = new Map<string, number>();
   for (const chunk of manifest.chunks ?? []) {
@@ -675,20 +831,26 @@ async function downloadContentAddressedChunks(
     throw new Error(`分块总长度 ${offset} 与清单 ${out.byteLength} 不一致`);
   }
 
-  // 每个块只下载一次，即使它在 parts 里出现多次
+  // 预先索引每块对应的全部输出偏移，并在拿到块后立即写入 out，
+  // 省掉一整份 ~198 MB 的中间 contents Map 内存占用
+  const offsetsBySha = new Map<string, number[]>();
   const unique = new Map<string, number>();
-  for (const placement of placements) unique.set(placement.sha256, placement.size);
+  for (const placement of placements) {
+    unique.set(placement.sha256, placement.size);
+    const list = offsetsBySha.get(placement.sha256);
+    if (list) list.push(placement.offset);
+    else offsetsBySha.set(placement.sha256, [placement.offset]);
+  }
+  const writeChunkToOutput = (digest: string, buffer: ArrayBuffer) => {
+    const view = new Uint8Array(buffer);
+    for (const pos of offsetsBySha.get(digest) ?? []) {
+      out.set(view, pos);
+    }
+  };
+
   const digests = Array.from(unique.keys());
   const chunkCache = await openChunkCache();
   const index = await readChunkIndex(chunkCache);
-
-  /**
-   * 块内容表：缓存命中的与刚下载的都放在这里。
-   * 不能用「下完再从 Cache Storage 读回来」的方式拼包——Cache Storage 在
-   * http 非 localhost、隐私模式、老 WebView 下根本不可用，那样会导致
-   * 明明下载成功却永远拼不出包。内容一律以内存里这份为准。
-   */
-  const contents = new Map<string, ArrayBuffer>();
 
   /** 每块当前已接收的字节数，用于汇总总进度 */
   const progress = new Map<string, number>();
@@ -700,66 +862,84 @@ async function downloadContentAddressedChunks(
     onChunk(loaded, manifest.totalSize);
   };
 
-  // 先扫一遍缓存：命中的块直接计入进度，界面能立刻显示「已复用多少」
+  // 先扫一遍缓存：命中的块直接写入输出缓冲，扫完后统一回报一次命中数
   const missing: string[] = [];
+  const completedShas = new Set<string>();
+  let cachedCount = 0;
   for (const digest of digests) {
     const size = unique.get(digest)!;
     const buffer = await readCachedChunk(chunkCache, chunkCacheKey(origin, digest), size);
     if (buffer) {
-      contents.set(digest, buffer);
+      writeChunkToOutput(digest, buffer);
+      completedShas.add(digest);
+      cachedCount++;
       doneBytes += buffer.byteLength;
-      onCacheHit?.(contents.size, digests.length);
-      report();
     } else {
       missing.push(digest);
     }
+  }
+  if (cachedCount > 0) {
+    onCacheHit?.(cachedCount, digests.length);
+    report();
   }
 
   const now = Date.now();
   let failure: unknown = null;
   if (missing.length > 0) {
-    await runWithConcurrency(missing, CHUNK_CONCURRENCY, async (digest) => {
-      // 一块失败就停：继续下载只会白耗流量，错误由调用方统一处理
-      if (failure) return;
-      const size = unique.get(digest)!;
-      const partUrl = new URL(`chunks/${digest}.bin`, resolvedManifest).href;
-      try {
-        const buffer = await downloadWithProgress(partUrl, {
-          idleTimeoutMs,
-          maxRetries,
-          cache,
-          onChunk: (loaded) => {
-            progress.set(digest, Math.min(loaded, size));
-            report();
-          },
-        });
-        if (buffer.byteLength !== size) {
-          throw new Error(`分块长度不符（${buffer.byteLength} != ${size}）`);
+    const batchController = new AbortController();
+    const onExternalAbort = () => batchController.abort();
+    externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    try {
+      await runWithConcurrency(missing, CHUNK_CONCURRENCY, async (digest) => {
+        // 一块失败就立即中止其余在途请求，避免继续耗流量或傻等超时
+        if (failure || batchController.signal.aborted) return;
+        const size = unique.get(digest)!;
+        const partUrl = new URL(`chunks/${digest}.bin`, resolvedManifest).href;
+        try {
+          const buffer = await downloadWithProgress(partUrl, {
+            idleTimeoutMs: idleTimeoutMs ?? 30_000,
+            maxRetries: maxRetries ?? 4,
+            retryBaseDelayMs,
+            expectedSize: size,
+            cache,
+            signal: batchController.signal,
+            onChunk: (loaded) => {
+              progress.set(digest, Math.min(loaded, size));
+              report();
+            },
+          });
+          if (buffer.byteLength !== size) {
+            throw new Error(`分块长度不符（${buffer.byteLength} != ${size}）`);
+          }
+          // 直接落入输出缓冲再写缓存：缓存写不进去也照样能装
+          writeChunkToOutput(digest, buffer);
+          completedShas.add(digest);
+          progress.delete(digest);
+          doneBytes += size;
+          report();
+          await writeCachedChunk(chunkCache, chunkCacheKey(origin, digest), buffer);
+        } catch (error) {
+          progress.delete(digest);
+          if (!failure) {
+            failure = error;
+            batchController.abort();
+          }
         }
-        // 先记进内存再写缓存：缓存写不进去也照样能装
-        contents.set(digest, buffer);
-        progress.delete(digest);
-        doneBytes += size;
-        report();
-        await writeCachedChunk(chunkCache, chunkCacheKey(origin, digest), buffer);
-      } catch (error) {
-        progress.delete(digest);
-        if (!failure) failure = error;
-      }
-    });
+      });
+    } finally {
+      externalSignal?.removeEventListener('abort', onExternalAbort);
+    }
   }
   if (failure) {
     const reason = failure instanceof Error ? failure.message : String(failure);
     throw new Error(`分块下载失败：${reason}`);
   }
 
-  // 按 parts 顺序拼接（重复块在多处复用同一份内容）
   for (const placement of placements) {
-    const buffer = contents.get(placement.sha256);
-    if (!buffer) {
+    if (!completedShas.has(placement.sha256)) {
       throw new Error(`分块 ${placement.sha256.slice(0, 12)}… 缺失，请重试`);
     }
-    out.set(new Uint8Array(buffer), placement.offset);
     index[placement.sha256] = { lastUsed: now, size: placement.size };
   }
 
@@ -787,7 +967,7 @@ async function downloadLegacyParts(
   origin: string,
   options: DownloadOptions
 ): Promise<void> {
-  const { onChunk, idleTimeoutMs, maxRetries, cache = 'no-store' } = options;
+  const { onChunk, idleTimeoutMs, maxRetries, retryBaseDelayMs, signal, cache = 'no-store' } = options;
   const declaredPartSize = Number(manifest.partSize);
   const knownPartSize = Number.isFinite(declaredPartSize) && declaredPartSize > 0 ? declaredPartSize : 0;
   let offset = 0;
@@ -805,6 +985,8 @@ async function downloadLegacyParts(
       buffer = await downloadWithProgress(partUrl.href, {
         idleTimeoutMs,
         maxRetries,
+        retryBaseDelayMs,
+        signal,
         cache,
         onChunk: onChunk ? (loaded) => onChunk(offset + loaded, manifest.totalSize) : undefined,
       });
