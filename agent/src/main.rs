@@ -529,18 +529,28 @@ async fn main() {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Target directory does not exist" })));
                 }
 
-                let cursor = Cursor::new(body);
-                let mut zip = match zip::ZipArchive::new(cursor) {
-                    Ok(z) => z,
-                    Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Invalid ZIP archive: {}", e) }))),
-                };
+                // 解压是同步阻塞操作：放进 spawn_blocking，避免长时间占住 Tokio 工作线程
+                let extract_result = tokio::task::spawn_blocking(move || -> Result<usize, (StatusCode, String)> {
+                    let cursor = Cursor::new(body);
+                    let mut zip = zip::ZipArchive::new(cursor)
+                        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid ZIP archive: {}", e)))?;
+                    let file_count = zip.len();
+                    zip.extract(&target_dir)
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Extract error: {}", e)))?;
+                    Ok(file_count)
+                })
+                .await;
 
-                let file_count = zip.len();
-                if let Err(e) = zip.extract(&target_dir) {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("Extract error: {}", e) })));
+                match extract_result {
+                    Ok(Ok(file_count)) => {
+                        (StatusCode::OK, Json(serde_json::json!({ "success": true, "fileCount": file_count })))
+                    }
+                    Ok(Err((status, message))) => (status, Json(serde_json::json!({ "error": message }))),
+                    Err(join_error) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": format!("Extract task failed: {}", join_error) })),
+                    ),
                 }
-
-                (StatusCode::OK, Json(serde_json::json!({ "success": true, "fileCount": file_count })))
             }),
         )
         .route(
@@ -554,8 +564,9 @@ async fn main() {
         .layer(
             tower::ServiceBuilder::new()
                 // OpenMap 的 Forever 包含整套地图贴图，压缩包已达 198 MB（208,253,793 B）。
-                // 原来的 200 MiB 上限只剩 1.4 MB 余量，上游再涨一点就会 413，因此放宽到 512 MiB。
-                .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
+                // 原来的 200 MiB 上限只剩 1.4 MB 余量，抬高到 256 MiB 留出增长空间；
+                // 注意请求体是先整块缓冲再交给处理函数的，所以这个值同时也是单请求的内存上限。
+                .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
                 .layer(
                     CorsLayer::new()
                         .allow_origin(Any)

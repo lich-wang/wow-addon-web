@@ -325,30 +325,16 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
     headers['X-Addons-Path'] = addonsPath;
   }
 
+  // 只有 fetch 本身失败（bridge 没起来 / 网络层错误）才回退到 IPC。
+  // 服务端已经给出业务错误（比如解压失败）时再走一次 invoke 只会重复安装、
+  // 并用 IPC 的错误信息盖掉真正的原因。
+  let res: Response;
   try {
-    const res = await fetch(`${AGENT_BASE}/api/install-zip?path=${encodedPath}`, {
+    res = await fetch(`${AGENT_BASE}/api/install-zip?path=${encodedPath}`, {
       method: 'POST',
       headers,
       body: zipBlob,
     });
-    if (!res.ok) {
-      if (res.status === 413) {
-        throw new Error(
-          '本地助手/客户端版本过旧：单次安装请求上限仍是 200 MB，装不下 OpenMap（约 198.6 MB）。请更新到最新版客户端或助手后重试。'
-        );
-      }
-      const err = await res.json().catch(() => ({}));
-      if (!isAsciiOnly && (res.status === 400 || res.status === 404)) {
-        throw new Error(
-          err.error
-            ? `${err.error} (如果使用中文等特殊游戏路径，请下载并升级至最新版客户端/助手)`
-            : '本地助手安装插件失败，如果游戏路径包含中文，请升级至最新版助手客户端'
-        );
-      }
-      throw new Error(err.error || '本地助手安装插件失败');
-    }
-    const data = await res.json();
-    return data.fileCount || 0;
   } catch (error) {
     // 桌面端的内置 bridge 未就绪时，≤32 MB 的小包仍可用 invoke 兜底；
     // 大包宁可明确报错，也不要再走一次会让界面假死的 JSON 序列化。
@@ -356,17 +342,37 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
       try {
         const arrayBuffer = await zipBlob.arrayBuffer();
         const zipBytes = Array.from(new Uint8Array(arrayBuffer));
-        const res = await invoke<{ success: boolean; fileCount: number }>('install_zip', {
+        const invokeRes = await invoke<{ success: boolean; fileCount: number }>('install_zip', {
           addonsPath,
           zipBytes,
         });
-        return res.fileCount || 0;
+        return invokeRes.fileCount || 0;
       } catch (invokeError) {
         throw new Error(String(invokeError) || '安装插件失败');
       }
     }
     throw error instanceof Error ? error : new Error(String(error) || '本地助手安装插件失败');
   }
+
+  if (!res.ok) {
+    if (res.status === 413) {
+      throw new Error(
+        '本地助手/客户端版本过旧：单次安装请求体上限不足以容纳这个包。请更新到最新版客户端或助手后重试。'
+      );
+    }
+    const err = await res.json().catch(() => ({}));
+    if (!isAsciiOnly && (res.status === 400 || res.status === 404)) {
+      throw new Error(
+        err.error
+          ? `${err.error} (如果使用中文等特殊游戏路径，请下载并升级至最新版客户端/助手)`
+          : '本地助手安装插件失败，如果游戏路径包含中文，请升级至最新版助手客户端'
+      );
+    }
+    throw new Error(err.error || '本地助手安装插件失败');
+  }
+
+  const data = await res.json();
+  return data.fileCount || 0;
 }
 
 /**

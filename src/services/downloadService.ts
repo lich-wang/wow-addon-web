@@ -31,9 +31,10 @@ export function formatBytes(bytes: number): string {
 
 /**
  * 流式下载并返回完整内容。
- * - 服务器支持 Range 时，中途断开会从已下载位置续传；
- * - 服务器忽略 Range（返回 200）时，自动清空缓冲从头下载；
- * - 超过 idleTimeoutMs 没有任何数据则中断并抛出，由调用方决定换源。
+ * - 服务器支持 Range 时，中途断开会带 If-Range 从已下载位置续传；
+ * - 服务器忽略 Range / 校验器失效（返回 200）时，自动清空缓冲从头下载；
+ * - 超过 idleTimeoutMs 没有任何数据则中断并抛出，由调用方决定换源；
+ * - 不跟随跳转（避免清单/包地址被重定向到站外）。
  */
 export async function downloadWithProgress(
   url: string,
@@ -50,6 +51,8 @@ export async function downloadWithProgress(
   let total = 0;
   let buffer: Uint8Array | null = null;
   let lastError: unknown = null;
+  /** 强校验器（ETag/Last-Modified）：续传时用 If-Range 保证拼的是同一份内容 */
+  let validator: string | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
@@ -61,30 +64,55 @@ export async function downloadWithProgress(
 
     try {
       const resumeFrom = loaded;
+      const headers: Record<string, string> = {};
+      if (resumeFrom > 0) {
+        headers.Range = `bytes=${resumeFrom}-`;
+        if (validator) headers['If-Range'] = validator;
+      }
       armIdle();
       const response = await fetch(url, {
         signal: controller.signal,
-        headers: resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
         cache,
+        // 静态产物不应跳转：跳转可能把请求带到站外，而调用方的来源校验只覆盖第一跳
+        redirect: 'manual',
       });
+      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+        throw new Error('下载地址发生跳转，已拒绝跟随');
+      }
 
       if (!response.ok) {
+        controller.abort(); // 放弃这个响应，别把连接挂着
         throw new Error(`HTTP ${response.status}`);
       }
 
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('text/html')) {
+        controller.abort();
         throw new Error('收到 HTML 页面而不是插件压缩包');
       }
 
       if (response.status === 206) {
-        const range = /\/(\d+)\s*$/.exec(response.headers.get('content-range') || '');
-        if (range) total = Number(range[1]);
+        const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') || '');
+        if (!range) {
+          controller.abort();
+          throw new Error('服务器返回 206 但缺少 Content-Range');
+        }
+        total = Number(range[3]);
+        if (Number(range[1]) !== resumeFrom) {
+          // 起点对不上，不能把新响应的字节接在旧缓冲后面
+          controller.abort();
+          loaded = 0;
+          buffer = null;
+          lastError = new Error('续传起点与本地缓冲不一致，改为重新下载');
+          continue;
+        }
       } else {
-        // 服务器不接受 Range（或首次请求）：丢弃已收数据，从头开始
+        // 服务器不接受 Range（或 If-Range 校验器失效）：丢弃已收数据，从头开始
         loaded = 0;
         buffer = null;
         total = Number(response.headers.get('content-length') || 0);
+        validator = response.headers.get('etag') || response.headers.get('last-modified') || null;
       }
 
       if (!buffer) {
@@ -150,10 +178,11 @@ export interface PartsManifest {
   version?: string;
   totalSize: number;
   partSize?: number;
+  /** 完整 zip 的 sha256，客户端拼接后据此校验 */
   sha256?: string;
-  /** 分片路径（相对清单所在目录，如 "v0.8.13/part-001.bin"） */
+  /** 分片路径（相对清单所在目录，如 "<sha256>/part-001.bin"） */
   parts: string[];
-  /** 兜底直链（原始 GitHub Release 地址），分片整体不可用时可回退 */
+  /** 仅用于溯源的上游地址；客户端不得把它当作下载地址使用 */
   source?: string;
 }
 
@@ -161,7 +190,15 @@ export async function fetchPartsManifest(url: string, timeoutMs = 15_000): Promi
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal, cache: 'no-store' });
+    const response = await fetch(url, {
+      signal: controller.signal,
+      cache: 'no-store',
+      // 清单是本站产物，跳转一律视为异常
+      redirect: 'manual',
+    });
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      throw new Error('分片清单地址发生跳转，已拒绝跟随');
+    }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = (await response.json()) as PartsManifest;
     if (
@@ -180,6 +217,20 @@ export async function fetchPartsManifest(url: string, timeoutMs = 15_000): Promi
 }
 
 /**
+ * 把拼接结果转成小写十六进制 sha256
+ * @param buffer 待校验内容
+ * @returns sha256 十六进制字符串；环境不支持 SubtleCrypto 时返回 null
+ */
+async function sha256Hex(buffer: ArrayBuffer): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  const digest = await subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
  * 按清单下载全部分片并拼接成一个 ArrayBuffer。
  * 进度以「已收到的字节 / totalSize」汇总上报，耗时最长的下载阶段也能显示真实百分比。
  */
@@ -193,12 +244,17 @@ export async function downloadParts(
   const resolvedManifest = new URL(manifestUrl, base).href;
   const out = new Uint8Array(manifest.totalSize);
   let offset = 0;
+  const manifestOrigin = new URL(resolvedManifest).origin;
 
   for (const [index, part] of manifest.parts.entries()) {
-    const partUrl = new URL(part, resolvedManifest).href;
+    const partUrl = new URL(part, resolvedManifest);
+    // 清单里的分片地址必须与清单同源，否则等于把下载引向站外
+    if (partUrl.origin !== manifestOrigin) {
+      throw new Error(`分片 ${index + 1}/${manifest.parts.length} 指向站外地址（${partUrl.origin}），已拒绝下载`);
+    }
     let buffer: ArrayBuffer;
     try {
-      buffer = await downloadWithProgress(partUrl, {
+      buffer = await downloadWithProgress(partUrl.href, {
         idleTimeoutMs,
         maxRetries,
         cache,
@@ -218,5 +274,14 @@ export async function downloadParts(
   if (offset !== out.byteLength) {
     throw new Error(`分片总长度 ${offset} 与清单 ${out.byteLength} 不一致`);
   }
+
+  // 长度一致不代表内容正确（等长分片互换、单点损坏都查不出来），再比一次整包 sha256
+  if (manifest.sha256) {
+    const actual = await sha256Hex(out.buffer as ArrayBuffer);
+    if (actual && actual !== manifest.sha256.toLowerCase()) {
+      throw new Error('分片拼接结果校验失败（sha256 与清单不一致）');
+    }
+  }
+
   return out.buffer as ArrayBuffer;
 }

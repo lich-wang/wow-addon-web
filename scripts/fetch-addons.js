@@ -851,10 +851,12 @@ const OPENMAP_PART_BYTES = 20 * 1024 * 1024;
  * @param {string} sourceUrl - 上游原始 zip 地址，仅作为溯源信息记录（客户端不会使用）
  * @returns {object} 写出的分片清单
  */
-function writeOpenMapParts(buf, tag, version, sourceUrl) {
+function writeOpenMapParts(buf, version, sourceUrl) {
   fs.rmSync(OPENMAP_PARTS_DIR, { recursive: true, force: true });
   const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
-  const bucket = `${tag}-${sha256.slice(0, 8)}`;
+  // 目录名直接用完整 sha256：既不依赖可能含 `#`/空格等 URL 特殊字符的 tag，
+  // 也保证内容一变 URL 就变（配合 immutable 缓存）
+  const bucket = sha256;
   // 统一放在 parts/ 子目录下：public/_headers 用 `/addons/openmap/parts/*` 一条规则就能给分片配 immutable
   const partsDir = path.join(OPENMAP_PARTS_DIR, 'parts', bucket);
   fs.mkdirSync(partsDir, { recursive: true });
@@ -896,71 +898,74 @@ async function processOpenMap() {
     fs.unlinkSync(legacyOutPath);
   }
 
-  if (!latest?.url) {
-    // 查询上游失败：只要本地还留着上一次的完整包，就继续用它切分片；
-    // 绝不能把版本清单指回 GitHub —— 所有插件都必须由本站 Pages 分发。
-    const cachedPath = path.join(UPSTREAM_CACHE_DIR, 'openmap-forever.zip');
-    if (fs.existsSync(cachedPath)) {
-      console.warn('[Warn] 无法查询 OpenMap 最新版本，改用本地缓存的上游包重建分片');
-      const cached = fs.readFileSync(cachedPath);
-      const cachedTag = fs.existsSync(`${cachedPath}.tag`)
-        ? fs.readFileSync(`${cachedPath}.tag`, 'utf-8').trim()
-        : fallbackTag;
-      let cachedVersion = cachedTag;
-      try {
-        cachedVersion = (await readTocVersion(await JSZip.loadAsync(cached), 'OpenMap/OpenMap.toc')) || cachedTag;
-      } catch {
-        cachedVersion = cachedTag;
+  const cachePath = path.join(UPSTREAM_CACHE_DIR, 'openmap-forever.zip');
+  const cacheTagPath = `${cachePath}.tag`;
+  const readCacheTag = () =>
+    fs.existsSync(cacheTagPath) ? fs.readFileSync(cacheTagPath, 'utf-8').trim() : '';
+
+  let buf = null;
+  let tag = latest?.tag || fallbackTag;
+  let sourceUrl = latest?.url || fallbackUrl;
+
+  if (latest?.url) {
+    // 198 MB 的包在每次构建都重下太浪费：tag 相同则直接复用 .cache 里的上游原包
+    if (readCacheTag() === latest.tag && fs.existsSync(cachePath)) {
+      buf = fs.readFileSync(cachePath);
+      console.log(`[Cache Hit] openmap ${latest.tag} (${(buf.length / 1048576).toFixed(1)} MB)`);
+    } else {
+      buf = await downloadBuffer(latest.url, 'openmap-forever.zip', latest.tag);
+      // 下载失败时 downloadBuffer 会回退到缓存包，此时标签与来源必须跟着实际内容走
+      tag = buf.releaseTag || latest.tag;
+      sourceUrl = buf.sourceUrl || latest.url;
+      if (tag !== latest.tag) {
+        console.warn(`[Warn] 上游 ${latest.tag} 下载失败，改用缓存的上游包 ${tag}`);
       }
-      writeOpenMapParts(cached, cachedTag, cachedVersion, fallbackUrl);
-      recordBundledVersion('openmap', cachedVersion, '/addons/openmap/parts.json');
-      console.log(`[✓] openmap => ${cachedVersion}（本地缓存重建分片）`);
-      return;
     }
+  } else if (fs.existsSync(cachePath)) {
+    // 查询失败但本地有上次的完整包：用它重建分片，绝不把版本清单指回 GitHub
+    console.warn('[Warn] 无法查询 OpenMap 最新版本，改用本地缓存的上游包重建分片');
+    buf = fs.readFileSync(cachePath);
+    tag = readCacheTag() || fallbackTag;
+  } else {
     throw new Error(
       '无法查询 OpenMap 最新版本，且本地缓存中没有 openmap-forever.zip；' +
         '所有插件必须托管在本站 Pages 上，拒绝回退到 GitHub 外部下载'
     );
   }
 
-  const tag = latest.tag || fallbackTag;
-  const cachePath = path.join(UPSTREAM_CACHE_DIR, 'openmap-forever.zip');
-  const cacheTagPath = `${cachePath}.tag`;
-  let buf = null;
-
-  // 198 MB 的包在每次构建都重下太浪费：tag 相同则直接复用 .cache 里的上游原包
+  // 先确认是有效 ZIP 再发布分片；上游返回错误页（HTTP 200 + HTML）时缓存里的包不能留
+  let zip;
   try {
-    if (
-      fs.existsSync(cachePath) &&
-      fs.existsSync(cacheTagPath) &&
-      fs.readFileSync(cacheTagPath, 'utf-8').trim() === tag
-    ) {
-      buf = fs.readFileSync(cachePath);
-      console.log(`[Cache Hit] openmap ${tag} (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+    zip = await JSZip.loadAsync(buf);
+  } catch (e) {
+    for (const bad of [cachePath, cacheTagPath]) {
+      try {
+        if (fs.existsSync(bad)) fs.unlinkSync(bad);
+      } catch {
+        // 清理失败不掩盖主错误
+      }
     }
-  } catch {
-    buf = null;
-  }
-
-  if (!buf) {
-    buf = await downloadBuffer(latest.url, 'openmap-forever.zip', tag);
+    throw new Error(
+      `OpenMap 上游返回的内容不是有效 ZIP（${e.message}），已清除缓存；请稍后重试，或手动放置 .cache/upstream-addons/openmap-forever.zip`
+    );
   }
 
   let version = tag;
   try {
-    version = (await readTocVersion(await JSZip.loadAsync(buf), 'OpenMap/OpenMap.toc')) || tag;
+    version = (await readTocVersion(zip, 'OpenMap/OpenMap.toc')) || tag;
   } catch (e) {
+    // ZIP 有效但读不到 TOC：退回 Release tag，不影响分片发布
     console.warn(`[Warn] 读取 OpenMap TOC 版本失败（${e.message}），改用 Release tag: ${tag}`);
   }
 
-  const manifest = writeOpenMapParts(buf, tag, version, latest.url);
+  const manifest = writeOpenMapParts(buf, version, sourceUrl);
   const bytes = manifest.parts.reduce(
     (sum, rel) => sum + fs.statSync(path.join(OPENMAP_PARTS_DIR, ...rel.split('/'))).size,
     0
   );
   recordBundledVersion('openmap', version, '/addons/openmap/parts.json');
   console.log(
-    `[✓] openmap => ${version}：${manifest.parts.length} 个分片，共 ${(bytes / 1024 / 1024).toFixed(1)} MB（Pages 单文件上限 25 MiB）`
+    `[✓] openmap => ${version}：${manifest.parts.length} 个分片，共 ${(bytes / 1048576).toFixed(1)} MB（Pages 单文件上限 25 MiB）`
   );
 }
 

@@ -494,28 +494,37 @@ pub fn start_bridge_server() {
                             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Target directory does not exist" })));
                         }
 
-                        let cursor = Cursor::new(body);
-                        let mut zip = match zip::ZipArchive::new(cursor) {
-                            Ok(z) => z,
-                            Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Invalid ZIP archive: {}", e) }))),
-                        };
+                        // 解压是同步阻塞操作：放进 spawn_blocking，避免长时间占住 Tokio 工作线程
+                        let extract_result = tokio::task::spawn_blocking(move || -> Result<usize, (StatusCode, String)> {
+                            let cursor = Cursor::new(body);
+                            let mut zip = zip::ZipArchive::new(cursor)
+                                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid ZIP archive: {}", e)))?;
 
-                        for i in 0..zip.len() {
-                            let file = match zip.by_index(i) {
-                                Ok(f) => f,
-                                Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Failed to read zip entry: {}", e) }))),
-                            };
-                            if file.enclosed_name().is_none() {
-                                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Zip contains unsafe relative paths" })));
+                            for i in 0..zip.len() {
+                                let file = zip.by_index(i)
+                                    .map_err(|e| (StatusCode::BAD_REQUEST, format!("Failed to read zip entry: {}", e)))?;
+                                if file.enclosed_name().is_none() {
+                                    return Err((StatusCode::BAD_REQUEST, "Zip contains unsafe relative paths".to_string()));
+                                }
                             }
-                        }
 
-                        let file_count = zip.len();
-                        if let Err(e) = zip.extract(&target_dir) {
-                            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("Extract error: {}", e) })));
-                        }
+                            let file_count = zip.len();
+                            zip.extract(&target_dir)
+                                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Extract error: {}", e)))?;
+                            Ok(file_count)
+                        })
+                        .await;
 
-                        (StatusCode::OK, Json(serde_json::json!({ "success": true, "fileCount": file_count })))
+                        match extract_result {
+                            Ok(Ok(file_count)) => {
+                                (StatusCode::OK, Json(serde_json::json!({ "success": true, "fileCount": file_count })))
+                            }
+                            Ok(Err((status, message))) => (status, Json(serde_json::json!({ "error": message }))),
+                            Err(join_error) => (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({ "error": format!("Extract task failed: {}", join_error) })),
+                            ),
+                        }
                     }),
                 )
                 .route(
@@ -528,8 +537,8 @@ pub fn start_bridge_server() {
                 .layer(
                     tower::ServiceBuilder::new()
                         // OpenMap Forever 压缩包已 198 MB（208,253,793 B），200 MiB 上限只剩 1.4 MB 余量，
-                        // 上游再增加贴图就会 413，因此放宽到 512 MiB。
-                        .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
+                        // 抬高到 256 MiB 留出增长空间；请求体是先整块缓冲的，这个值即单请求内存上限。
+                        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
                         .layer(
                             CorsLayer::new()
                                 .allow_origin(Any)

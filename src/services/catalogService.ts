@@ -229,25 +229,37 @@ const SITE_HOST = 'wow.lich.tech';
  * 生成下载候选地址。
  * 只允许「当前站点」与「wow.lich.tech」两个来源——插件包要么是本目录下的 zip，
  * 要么是 build 期切好的分片清单，绝不回退到外部域名。
- * @throws 当下载地址被配置成外部域名时抛错（构建阶段的校验会先拦住这种情况）
+ * 来源比较用完整的 origin（含端口），因此 `https://wow.lich.tech:8443` 之类也会被拒。
+ * @throws 当下载地址被配置成外部域名、协议相对地址或含路径穿越时抛错
  */
 function buildDownloadCandidates(addon: CuratedAddon): string[] {
-  if (addon.downloadUrl.startsWith('http')) {
-    let host = '';
+  const pageOrigin =
+    typeof location !== 'undefined' && /^https?:$/.test(location.protocol) ? location.origin : null;
+  const allowedOrigins = new Set<string>([`https://${SITE_HOST}`]);
+  if (pageOrigin) allowedOrigins.add(pageOrigin);
+
+  if (/^https?:\/\//i.test(addon.downloadUrl)) {
+    let parsed: URL;
     try {
-      host = new URL(addon.downloadUrl).hostname;
+      parsed = new URL(addon.downloadUrl);
     } catch {
-      host = '';
+      throw new Error(`插件 ${addon.name} 的下载地址无法解析：${addon.downloadUrl}`);
     }
-    const allowed = host === SITE_HOST || (typeof location !== 'undefined' && host === location.hostname);
-    if (!allowed) {
-      throw new Error(`插件 ${addon.name} 的下载源不在本站（${host || addon.downloadUrl}），已拒绝外部下载`);
+    if (!allowedOrigins.has(parsed.origin)) {
+      throw new Error(`插件 ${addon.name} 的下载源不在本站（${parsed.origin}），已拒绝外部下载`);
     }
-    return [withVersionQuery(addon.downloadUrl, addon.latestVersion)];
+    return [withVersionQuery(parsed.href, addon.latestVersion)];
+  }
+
+  if (addon.downloadUrl.startsWith('//')) {
+    throw new Error(`插件 ${addon.name} 使用了协议相对下载地址，已拒绝：${addon.downloadUrl}`);
+  }
+  if (!addon.downloadUrl.startsWith('/') || addon.downloadUrl.includes('..')) {
+    throw new Error(`插件 ${addon.name} 的下载地址必须是本站绝对路径：${addon.downloadUrl}`);
   }
 
   const candidates: string[] = [];
-  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+  if (pageOrigin) {
     candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
   }
   candidates.push(withVersionQuery(`https://${SITE_HOST}${addon.downloadUrl}`, addon.latestVersion));
