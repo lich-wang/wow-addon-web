@@ -444,52 +444,79 @@ export async function releaseDownloadCache(protectedShas?: Iterable<string>): Pr
     const index = await readChunkIndex(chunkCache);
     const requests = await chunkCache.keys();
 
-    /** sha256 → 实际缓存中的请求 URL（删除时必须用它，而不是用当前 origin 重新拼） */
-    const requestsBySha = new Map<string, string>();
+    /**
+     * 实际缓存中的全部块副本。
+     *
+     * 缓存键里带 origin（页面原域与 https://wow.lich.tech 两个候选来源），
+     * 同一块在两个来源下会各存一份。按 sha 去重会让多出来的副本既不计数
+     * 也删不掉，所以这里保留每个副本，按副本累计占用、按 sha 决定淘汰。
+     */
+    const copies: { sha: string; url: string }[] = [];
+    const urlsBySha = new Map<string, string[]>();
     for (const request of requests) {
       const match = /\/([0-9a-f]{64})$/.exec(new URL(request.url).pathname);
-      if (match) requestsBySha.set(match[1], request.url);
+      if (!match) continue;
+      const sha = match[1];
+      copies.push({ sha, url: request.url });
+      const list = urlsBySha.get(sha);
+      if (list) list.push(request.url);
+      else urlsBySha.set(sha, [request.url]);
     }
 
-    // 索引里有、磁盘上没有的块（被浏览器回收或上次写失败）先从索引移除
-    for (const sha of Object.keys(index)) {
-      if (!requestsBySha.has(sha)) delete index[sha];
-    }
-
-    // 磁盘上有、索引里没有的块：补录大小（lastUsed 记 0，让它们优先被淘汰）。
-    // 用 blob().size 取长度，避免把这些块整体读进 JS 堆。
-    let dirty = false;
-    for (const [sha, url] of requestsBySha) {
-      if (index[sha]) continue;
-      let size = 0;
-      try {
-        const hit = await chunkCache.match(url);
-        size = hit ? (await hit.blob()).size : 0;
-      } catch {
-        size = 0;
+    // 每个 sha 的块大小：索引里已有就直接用（同一内容的块大小恒定），
+    // 缺的读一次 blob 元数据（不 materialize 内容，避免把整块读进 JS 堆）
+    const sizeBySha = new Map<string, number>();
+    for (const [sha, urls] of urlsBySha) {
+      const known = index[sha]?.size;
+      if (known && known > 0) {
+        sizeBySha.set(sha, known);
+        continue;
       }
-      if (size <= 0) continue;
-      index[sha] = { lastUsed: 0, size };
-      dirty = true;
+      for (const url of urls) {
+        try {
+          const hit = await chunkCache.match(url);
+          const size = hit ? (await hit.blob()).size : 0;
+          if (size > 0) {
+            sizeBySha.set(sha, size);
+            break;
+          }
+        } catch {
+          // 读不到就跳过这份副本，下次再补录
+        }
+      }
     }
 
-    let totalBytes = Object.values(index).reduce((sum, entry) => sum + entry.size, 0);
+    // 按副本累计真实占用（同一块存了 N 份就计 N 份）
+    let totalBytes = 0;
+    for (const copy of copies) {
+      totalBytes += sizeBySha.get(copy.sha) ?? 0;
+    }
+
+    /** 本次被淘汰的 sha；它们的所有副本都会删掉 */
+    const evicted = new Set<string>();
     if (totalBytes > CHUNK_CACHE_BUDGET_BYTES) {
       // 刚用过的排最后：它们很可能在这次升级的后续重试里还要用
-      const candidates = Object.entries(index)
-        .filter(([sha]) => !keepWarm.has(sha))
-        .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-      for (const [sha, entry] of candidates) {
+      const candidates = Array.from(urlsBySha.keys())
+        .filter((sha) => !keepWarm.has(sha))
+        .sort((a, b) => (index[a]?.lastUsed ?? 0) - (index[b]?.lastUsed ?? 0));
+      for (const sha of candidates) {
         if (totalBytes <= CHUNK_CACHE_BUDGET_BYTES) break;
-        const url = requestsBySha.get(sha);
-        if (url) await chunkCache.delete(url);
-        delete index[sha];
-        totalBytes -= entry.size;
-        dirty = true;
+        const urls = urlsBySha.get(sha) ?? [];
+        for (const url of urls) {
+          await chunkCache.delete(url);
+          totalBytes -= sizeBySha.get(sha) ?? 0;
+        }
+        evicted.add(sha);
       }
     }
 
-    if (dirty) await writeChunkIndex(chunkCache, index);
+    // 重建索引：只保留仍有副本的块（顺带清掉「索引有、磁盘没有」的失效条目）
+    const next: ChunkIndex = {};
+    for (const [sha, size] of sizeBySha) {
+      if (evicted.has(sha)) continue;
+      next[sha] = { lastUsed: index[sha]?.lastUsed ?? 0, size };
+    }
+    await writeChunkIndex(chunkCache, next);
   } catch {
     // 清理失败不影响安装
   }
