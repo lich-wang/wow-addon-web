@@ -357,7 +357,7 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
   if (!res.ok) {
     if (res.status === 413) {
       throw new Error(
-        '本地助手/客户端版本过旧：单次安装请求体上限不足以容纳这个包。请更新到最新版客户端或助手后重试。'
+        '安装包超过了本地客户端的单次请求上限（新版 256 MB，旧版 200 MB）：请更新客户端，或改用体积更小的安装包。'
       );
     }
     const err = await res.json().catch(() => ({}));

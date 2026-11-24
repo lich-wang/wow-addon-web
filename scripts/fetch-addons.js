@@ -900,25 +900,41 @@ async function processOpenMap() {
 
   const cachePath = path.join(UPSTREAM_CACHE_DIR, 'openmap-forever.zip');
   const cacheTagPath = `${cachePath}.tag`;
+  const cacheSourcePath = `${cachePath}.source`;
   const readCacheTag = () =>
     fs.existsSync(cacheTagPath) ? fs.readFileSync(cacheTagPath, 'utf-8').trim() : '';
+  const readCacheSource = () =>
+    fs.existsSync(cacheSourcePath) ? fs.readFileSync(cacheSourcePath, 'utf-8').trim() : '';
 
   let buf = null;
   let tag = latest?.tag || fallbackTag;
   let sourceUrl = latest?.url || fallbackUrl;
+  let fromCache = false;
 
   if (latest?.url) {
     // 198 MB 的包在每次构建都重下太浪费：tag 相同则直接复用 .cache 里的上游原包
     if (readCacheTag() === latest.tag && fs.existsSync(cachePath)) {
       buf = fs.readFileSync(cachePath);
+      sourceUrl = readCacheSource() || latest.url;
+      fromCache = true;
       console.log(`[Cache Hit] openmap ${latest.tag} (${(buf.length / 1048576).toFixed(1)} MB)`);
     } else {
-      buf = await downloadBuffer(latest.url, 'openmap-forever.zip', latest.tag);
-      // 下载失败时 downloadBuffer 会回退到缓存包，此时标签与来源必须跟着实际内容走
-      tag = buf.releaseTag || latest.tag;
-      sourceUrl = buf.sourceUrl || latest.url;
-      if (tag !== latest.tag) {
-        console.warn(`[Warn] 上游 ${latest.tag} 下载失败，改用缓存的上游包 ${tag}`);
+      try {
+        // 注意：先只读进内存，校验通过之后才覆盖缓存，避免坏包把上一份有效缓存顶掉
+        buf = await downloadBuffer(latest.url);
+      } catch (e) {
+        if (fs.existsSync(cachePath)) {
+          console.warn(`[Warn] 上游 ${latest.tag} 下载失败（${e.message}），改用缓存的上游包`);
+          buf = fs.readFileSync(cachePath);
+          tag = readCacheTag() || fallbackTag;
+          sourceUrl = readCacheSource() || fallbackUrl;
+          fromCache = true;
+        } else {
+          throw new Error(
+            `OpenMap ${latest.tag} 下载失败（${e.message}），且本地没有可用缓存；` +
+              '所有插件必须托管在本站 Pages 上，拒绝回退到 GitHub 外部下载'
+          );
+        }
       }
     }
   } else if (fs.existsSync(cachePath)) {
@@ -926,6 +942,8 @@ async function processOpenMap() {
     console.warn('[Warn] 无法查询 OpenMap 最新版本，改用本地缓存的上游包重建分片');
     buf = fs.readFileSync(cachePath);
     tag = readCacheTag() || fallbackTag;
+    sourceUrl = readCacheSource() || fallbackUrl;
+    fromCache = true;
   } else {
     throw new Error(
       '无法查询 OpenMap 最新版本，且本地缓存中没有 openmap-forever.zip；' +
@@ -933,21 +951,57 @@ async function processOpenMap() {
     );
   }
 
-  // 先确认是有效 ZIP 再发布分片；上游返回错误页（HTTP 200 + HTML）时缓存里的包不能留
-  let zip;
+  // 发布前把整包读一遍（checkCRC32 会逐条校验 CRC）：上游返回 HTML 错误页、
+  // 或者包内有损坏条目，都不能变成用户下载的分片
+  let zip = null;
   try {
-    zip = await JSZip.loadAsync(buf);
+    zip = await JSZip.loadAsync(buf, { checkCRC32: true });
   } catch (e) {
-    for (const bad of [cachePath, cacheTagPath]) {
+    if (!fromCache && fs.existsSync(cachePath)) {
+      const cached = fs.readFileSync(cachePath);
       try {
-        if (fs.existsSync(bad)) fs.unlinkSync(bad);
-      } catch {
-        // 清理失败不掩盖主错误
+        zip = await JSZip.loadAsync(cached, { checkCRC32: true });
+        console.warn(`[Warn] 上游返回的包校验失败（${e.message}），改用缓存的上游包`);
+        buf = cached;
+        tag = readCacheTag() || fallbackTag;
+        sourceUrl = readCacheSource() || fallbackUrl;
+        fromCache = true;
+      } catch (cacheError) {
+        for (const bad of [cachePath, cacheTagPath, cacheSourcePath]) {
+          try {
+            if (fs.existsSync(bad)) fs.unlinkSync(bad);
+          } catch {
+            // 清理失败不掩盖主错误
+          }
+        }
+        throw new Error(
+          `OpenMap 上游与本地上游缓存都不是有效 ZIP（${e.message} / ${cacheError.message}），已清除缓存`
+        );
       }
+    } else {
+      for (const bad of [cachePath, cacheTagPath, cacheSourcePath]) {
+        try {
+          if (fs.existsSync(bad)) fs.unlinkSync(bad);
+        } catch {
+          // 同上
+        }
+      }
+      throw new Error(
+        `OpenMap 上游返回的内容不是有效 ZIP（${e.message}），已清除缓存；请稍后重试，或手动放置 .cache/upstream-addons/openmap-forever.zip`
+      );
     }
-    throw new Error(
-      `OpenMap 上游返回的内容不是有效 ZIP（${e.message}），已清除缓存；请稍后重试，或手动放置 .cache/upstream-addons/openmap-forever.zip`
-    );
+  }
+
+  // 校验通过的才写回缓存
+  if (!fromCache) {
+    try {
+      fs.mkdirSync(UPSTREAM_CACHE_DIR, { recursive: true });
+      fs.writeFileSync(cachePath, buf);
+      fs.writeFileSync(cacheTagPath, tag, 'utf-8');
+      fs.writeFileSync(cacheSourcePath, sourceUrl, 'utf-8');
+    } catch (e) {
+      console.warn(`[Warn] 写入 OpenMap 上游缓存失败：${e.message}`);
+    }
   }
 
   let version = tag;

@@ -19,6 +19,11 @@ use tower_http::cors::{Any, CorsLayer};
 
 const PORT: u16 = 24642;
 
+/// 同一时间只允许一个 zip 安装任务解压，避免两个请求交错写同一个 AddOns 目录、
+/// 留下「半个旧版 + 半个新版」的混合目录。请求体仍会先各自缓冲，
+/// 所以这里只保证解压阶段的互斥。
+static INSTALL_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct WowInstallation {
@@ -494,7 +499,11 @@ pub fn start_bridge_server() {
                             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Target directory does not exist" })));
                         }
 
-                        // 解压是同步阻塞操作：放进 spawn_blocking，避免长时间占住 Tokio 工作线程
+                        // 解压是同步阻塞操作：放进 spawn_blocking，避免长时间占住 Tokio 工作线程；
+                        // 同时持有全局安装锁，保证同一目录不会被两个请求同时解压
+                        let install_lock = INSTALL_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+                        let _install_guard = install_lock.lock().await;
+
                         let extract_result = tokio::task::spawn_blocking(move || -> Result<usize, (StatusCode, String)> {
                             let cursor = Cursor::new(body);
                             let mut zip = zip::ZipArchive::new(cursor)

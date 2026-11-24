@@ -246,6 +246,11 @@ export async function downloadParts(
   let offset = 0;
   const manifestOrigin = new URL(resolvedManifest).origin;
 
+  // 构建端一定会写 sha256；没有摘要就无法判断「等长但内容错误」的分片
+  if (!/^[0-9a-f]{64}$/i.test(String(manifest.sha256 || ''))) {
+    throw new Error('分片清单缺少有效的 sha256，拒绝安装');
+  }
+
   for (const [index, part] of manifest.parts.entries()) {
     const partUrl = new URL(part, resolvedManifest);
     // 清单里的分片地址必须与清单同源，否则等于把下载引向站外
@@ -276,11 +281,12 @@ export async function downloadParts(
   }
 
   // 长度一致不代表内容正确（等长分片互换、单点损坏都查不出来），再比一次整包 sha256
-  if (manifest.sha256) {
-    const actual = await sha256Hex(out.buffer as ArrayBuffer);
-    if (actual && actual !== manifest.sha256.toLowerCase()) {
-      throw new Error('分片拼接结果校验失败（sha256 与清单不一致）');
-    }
+  const actual = await sha256Hex(out.buffer as ArrayBuffer);
+  if (!actual) {
+    throw new Error('当前环境不支持 sha256 校验（需要 HTTPS/localhost），已拒绝安装');
+  }
+  if (actual !== String(manifest.sha256).toLowerCase()) {
+    throw new Error('分片拼接结果校验失败（sha256 与清单不一致）');
   }
 
   return out.buffer as ArrayBuffer;

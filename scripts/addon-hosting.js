@@ -86,22 +86,38 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
     problems.push('openmap: parts.json 缺少分片列表或 totalSize');
     return null;
   }
+  // 构建端一定会写 sha256；缺失说明清单被改坏或来自旧版本，不能靠长度兜底
+  if (!/^[0-9a-f]{64}$/i.test(String(partsManifest.sha256 || ''))) {
+    problems.push('openmap: parts.json 缺少有效的 sha256');
+    return null;
+  }
 
+  // 分片路径相对于清单所在目录解析（而不是固定 openmap/），保证门禁校验的
+  // 正是客户端按清单请求的那批文件
+  const partsBaseDir = path.dirname(manifestFile);
   const missing = [];
   const truncated = [];
   let sum = 0;
+  let oversized = 0;
   const hash = crypto.createHash('sha256');
 
   for (let i = 0; i < parts.length; i++) {
     const partRel = String(parts[i]);
-    const file = path.join(addonsDir, 'openmap', ...partRel.split('/'));
+    const file = path.join(partsBaseDir, ...partRel.split('/'));
+    if (!file.startsWith(partsBaseDir + path.sep)) {
+      problems.push(`openmap: 分片路径越界 ${partRel}`);
+      return null;
+    }
     const stat = fs.statSync(file, { throwIfNoEntry: false });
     if (!stat || !stat.isFile()) {
       missing.push(partRel);
       continue;
     }
     if (stat.size > PAGES_MAX_FILE_BYTES) {
+      // 超限的分片已经部署不了，别为它把整片读进内存算哈希
       problems.push(`openmap: ${partRel} 超过 Pages 单文件上限`);
+      oversized++;
+      continue;
     }
     if (partSize > 0) {
       const expected = i === parts.length - 1 ? totalSize - sum : partSize;
@@ -121,19 +137,44 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
     problems.push(`openmap: 分片长度不符（${truncated.slice(0, 3).join('；')}）`);
     return null;
   }
+  if (oversized > 0) {
+    return null;
+  }
   if (sum !== totalSize) {
     problems.push(`openmap: 分片总长 ${sum} 与清单 totalSize ${totalSize} 不一致`);
     return null;
   }
-  if (partsManifest.sha256) {
-    const actual = hash.digest('hex');
-    if (actual !== String(partsManifest.sha256).toLowerCase()) {
-      problems.push(`openmap: 分片拼接后的 sha256 与清单不一致（${actual.slice(0, 12)}…）`);
-      return null;
-    }
+  const actual = hash.digest('hex');
+  if (actual !== String(partsManifest.sha256).toLowerCase()) {
+    problems.push(`openmap: 分片拼接后的 sha256 与清单不一致（${actual.slice(0, 12)}…）`);
+    return null;
   }
 
   return { id: 'openmap', kind: 'parts', bytes: sum, files: parts.length };
+}
+
+/**
+ * 快速判断文件是不是 ZIP（检查末尾的 End of Central Directory 签名）。
+ * 用来拦住「下载失败但写了 1 KB HTML 错误页」这种情况，不解析整个压缩包。
+ * @param {string} file 文件路径
+ * @returns {boolean}
+ */
+function hasZipEndRecord(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (size < 22) return false;
+    // EOCD 固定 22 字节，注释最长 64 KiB
+    const tailSize = Math.min(size, 66 * 1024);
+    const tail = Buffer.alloc(tailSize);
+    fs.readSync(fd, tail, 0, tailSize, size - tailSize);
+    return tail.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) >= 0;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 /**
@@ -187,6 +228,10 @@ export function verifyAddonHosting(options = {}) {
     }
     if (stat.size < 200) {
       problems.push(`${id}: ${zipPath} 只有 ${stat.size} 字节，可能是下载失败的空壳`);
+      continue;
+    }
+    if (!hasZipEndRecord(zipPath)) {
+      problems.push(`${id}: ${id}.zip 不是有效 ZIP（可能是下载失败写进来的错误页）`);
       continue;
     }
     ok.push({ id, kind: 'zip', bytes: stat.size, files: 1 });
