@@ -260,11 +260,18 @@ function buildDownloadCandidates(addon: CuratedAddon): string[] {
   }
 
   const candidates: string[] = [];
+  const seenResolved = new Set<string>();
+  const addCandidate = (candidateUrl: string) => {
+    const resolved = pageOrigin ? new URL(candidateUrl, pageOrigin).href : candidateUrl;
+    if (seenResolved.has(resolved)) return;
+    seenResolved.add(resolved);
+    candidates.push(candidateUrl);
+  };
   if (pageOrigin) {
-    candidates.push(withVersionQuery(addon.downloadUrl, addon.latestVersion));
+    addCandidate(withVersionQuery(addon.downloadUrl, addon.latestVersion));
   }
-  candidates.push(withVersionQuery(`https://${SITE_HOST}${addon.downloadUrl}`, addon.latestVersion));
-  return Array.from(new Set(candidates));
+  addCandidate(withVersionQuery(`https://${SITE_HOST}${addon.downloadUrl}`, addon.latestVersion));
+  return candidates;
 }
 
 /**
@@ -288,12 +295,11 @@ export async function fetchCuratedAddonZip(
 
   let lastEmit = 0;
   let lastPercent = -1;
+  let progressFloor = DOWNLOAD_PERCENT_START;
   const report = (loaded: number, total: number) => {
     const ratio = total > 0 ? Math.min(1, loaded / total) : 0;
-    const percent = Math.min(
-      DOWNLOAD_PERCENT_END,
-      DOWNLOAD_PERCENT_START + Math.floor(ratio * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START))
-    );
+    const rawPercent = DOWNLOAD_PERCENT_START + Math.floor(ratio * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START));
+    const percent = Math.min(DOWNLOAD_PERCENT_END, Math.max(progressFloor, rawPercent));
     const now = Date.now();
     // 已知总长度时按百分比变化节流；未知时按时间节流（否则百分比永远不变，进度条不会动）
     if (now - lastEmit < (total > 0 ? PROGRESS_THROTTLE_MS : 500)) return;
@@ -316,20 +322,49 @@ export async function fetchCuratedAddonZip(
   if (isChunked) {
     // Pages 分块路线：先取清单，再按内容寻址下载各块并拼接。
     // 块 URL 只由内容决定，所以升级到新版本时只有真正变化的块会重新下载。
+    const partsDownloadOptions = {
+      onChunk: report,
+      onCacheHit: (cached: number, total: number) => {
+        const cachedPercent = Math.min(
+          DOWNLOAD_PERCENT_END,
+          DOWNLOAD_PERCENT_START +
+            Math.floor((cached / Math.max(1, total)) * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START))
+        );
+        progressFloor = Math.max(progressFloor, cachedPercent);
+        lastPercent = Math.max(lastPercent, progressFloor);
+        onProgress?.({
+          status: 'downloading',
+          addonName: addon.name,
+          percent: progressFloor,
+          message: `复用本地缓存：已有 ${cached}/${total} 个分块命中，只需下载变化的 ${total - cached} 块`,
+        });
+      },
+    };
+
+    const baseOrigin =
+      typeof location !== 'undefined' && /^https?:$/.test(location.protocol)
+        ? location.origin
+        : `https://${SITE_HOST}`;
+
     for (const url of candidates) {
+      progressFloor = DOWNLOAD_PERCENT_START;
+      lastPercent = -1;
+      lastEmit = 0;
       try {
         const manifest = await fetchPartsManifest(url);
-        const buffer = await downloadParts(url, manifest, {
-          onChunk: report,
-          onCacheHit: (cached, total) => {
-            onProgress?.({
-              status: 'downloading',
-              addonName: addon.name,
-              percent: DOWNLOAD_PERCENT_START,
-              message: `复用本地缓存：已有 ${cached}/${total} 个分块命中，只需下载变化的 ${total - cached} 块`,
-            });
-          },
-        });
+        let buffer: ArrayBuffer;
+        try {
+          buffer = await downloadParts(url, manifest, partsDownloadOptions);
+        } catch (partsError) {
+          const message = partsError instanceof Error ? partsError.message : String(partsError);
+          if (!/HTTP 404/.test(message)) throw partsError;
+          // CDN 缓存了旧清单时可能指向已替换的分块，绕过缓存重拉一次清单再试
+          const parsed = new URL(url, baseOrigin);
+          parsed.searchParams.set('_t', String(Date.now()));
+          const bustUrl = url.startsWith('/') ? `${parsed.pathname}${parsed.search}${parsed.hash}` : parsed.href;
+          const freshManifest = await fetchPartsManifest(bustUrl);
+          buffer = await downloadParts(bustUrl, freshManifest, partsDownloadOptions);
+        }
         if (buffer.byteLength > 200) return buffer;
         lastError = new Error('分块拼接结果为空');
       } catch (error) {
