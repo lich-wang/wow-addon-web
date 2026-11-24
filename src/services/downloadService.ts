@@ -239,7 +239,9 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string | null> {
  *
  * 198 MB 的包切成 10 片后，任何一片失败、用户关页面、或者手动重试，都不该让
  * 已经下完的那几片白费。这里用 Cache Storage（磁盘缓存，浏览器/Tauri 的 WebView 都支持）
- * 按「内容 sha256 + 分片相对路径」存分片，键里带内容哈希，所以升级版本天然失效。
+ * 按「插件包 → 内容 sha256 → 分片相对路径」存分片：
+ * - 键里带 sha256，升级版本天然失效；
+ * - 键里带插件包身份（如 openmap），安装别的插件不会误删这个包的断点。
  */
 const PART_CACHE_NAME = 'wow-addon-parts-v1';
 const PART_CACHE_PREFIX = '/__addon-parts/';
@@ -258,20 +260,25 @@ async function openPartCache(): Promise<Cache | null> {
 }
 
 /**
- * 生成分片缓存的键（绝对 URL，保证不同页面/不同次会话一致）
- * @param manifestOrigin 站点 origin
- * @param sha256 整包内容哈希
- * @param partRel 分片相对路径
+ * 从清单地址推断插件包身份，例如 /addons/openmap/parts.json -> openmap
+ * @param resolvedManifest 清单绝对地址
+ * @returns 稳定的插件包标识
  */
-function partCacheKey(manifestOrigin: string, sha256: string, partRel: string): string {
-  return `${manifestOrigin}${PART_CACHE_PREFIX}${sha256}/${partRel.replace(/^\/+/, '')}`;
+function derivePackageId(resolvedManifest: string): string {
+  try {
+    const segments = new URL(resolvedManifest).pathname.split('/').filter(Boolean);
+    segments.pop(); // 去掉 parts.json
+    return segments.pop() || 'default';
+  } catch {
+    return 'default';
+  }
 }
 
 /**
  * 读取已缓存的分片，长度不符的直接丢弃（例如上次写了一半）
  * @param partCache 分片缓存
  * @param key 缓存键
- * @param expectedSize 该分片应有的字节数
+ * @param expectedSize 该分片应有的字节数；0 表示清单未提供 partSize，只做非空校验
  * @returns 分片内容或 null
  */
 async function readCachedPart(
@@ -284,7 +291,7 @@ async function readCachedPart(
     const hit = await partCache.match(key);
     if (!hit) return null;
     const buffer = await hit.arrayBuffer();
-    if (buffer.byteLength !== expectedSize) {
+    if (buffer.byteLength === 0 || (expectedSize > 0 && buffer.byteLength !== expectedSize)) {
       await partCache.delete(key);
       return null;
     }
@@ -313,24 +320,23 @@ async function writeCachedPart(partCache: Cache | null, key: string, buffer: Arr
 }
 
 /**
- * 清理不属于当前版本的分片缓存，避免旧版本残留占满配额
+ * 清理同一插件包的其它版本残留（不影响别的插件的断点）
  * @param partCache 分片缓存
- * @param manifestOrigin 站点 origin
- * @param keepSha 当前版本的内容哈希
+ * @param packageRoot 该插件包的键前缀（到插件包标识为止）
+ * @param keepPrefix 当前版本保留的键前缀
  */
 async function pruneOtherVersions(
   partCache: Cache | null,
-  manifestOrigin: string,
-  keepSha: string
+  packageRoot: string,
+  keepPrefix: string
 ): Promise<void> {
   if (!partCache) return;
   try {
-    const keepPrefix = `${manifestOrigin}${PART_CACHE_PREFIX}${keepSha}/`;
     const keys = await partCache.keys();
     await Promise.all(
       keys
         .map((request) => request.url)
-        .filter((url) => url.startsWith(`${manifestOrigin}${PART_CACHE_PREFIX}`) && !url.startsWith(keepPrefix))
+        .filter((url) => url.startsWith(packageRoot) && !url.startsWith(keepPrefix))
         .map((url) => partCache.delete(url))
     );
   } catch {
@@ -339,15 +345,26 @@ async function pruneOtherVersions(
 }
 
 /**
- * 安装成功后清空分片缓存（释放 198 MB 磁盘占用）。
- * 下载完成但解压失败时不清，这样重试还能复用已下载的分片。
+ * 安装成功后清掉「指定插件」的分片缓存（释放磁盘占用）。
+ * 只按插件标识匹配，所以安装别的插件不会误删这里的断点；
+ * 下载完成但解压失败时调用方不会调到这，重试还能复用已下载的分片。
+ * @param addonId 插件标识，需与该插件清单所在目录同名（如 openmap → /addons/openmap/parts.json）
  */
-export async function releaseDownloadCache(): Promise<void> {
-  if (typeof caches === 'undefined') return;
+export async function releaseDownloadCache(addonId?: string): Promise<void> {
+  if (!addonId) return;
+  const partCache = await openPartCache();
+  if (!partCache) return;
   try {
-    await caches.delete(PART_CACHE_NAME);
+    const marker = `${PART_CACHE_PREFIX}${addonId}/`;
+    const keys = await partCache.keys();
+    await Promise.all(
+      keys
+        .map((request) => request.url)
+        .filter((url) => url.includes(marker))
+        .map((url) => partCache.delete(url))
+    );
   } catch {
-    // 清不掉就算了，下次安装会按 sha 覆盖/裁剪
+    // 清不掉就算了，下次安装会按 sha 裁剪
   }
 }
 
@@ -374,8 +391,14 @@ export async function downloadParts(
     throw new Error('分片清单缺少有效的 sha256，拒绝安装');
   }
 
+  const packageId = derivePackageId(resolvedManifest);
+  const packageRoot = `${manifestOrigin}${PART_CACHE_PREFIX}${packageId}/`;
+  const versionPrefix = `${packageRoot}${packageSha}/`;
   const partCache = await openPartCache();
-  await pruneOtherVersions(partCache, manifestOrigin, packageSha);
+  await pruneOtherVersions(partCache, packageRoot, versionPrefix);
+  // partSize 是可选字段：缺失时不做单片长度校验，交给最后的整包 sha256 兜底
+  const declaredPartSize = Number(manifest.partSize);
+  const knownPartSize = Number.isFinite(declaredPartSize) && declaredPartSize > 0 ? declaredPartSize : 0;
   let cachedParts = 0;
 
   for (const [index, part] of manifest.parts.entries()) {
@@ -385,8 +408,8 @@ export async function downloadParts(
       throw new Error(`分片 ${index + 1}/${manifest.parts.length} 指向站外地址（${partUrl.origin}），已拒绝下载`);
     }
 
-    const expectedSize = Math.min(manifest.totalSize - offset, Number(manifest.partSize) || Number.POSITIVE_INFINITY);
-    const cacheKey = partCacheKey(manifestOrigin, packageSha, part);
+    const expectedSize = knownPartSize > 0 ? Math.min(manifest.totalSize - offset, knownPartSize) : 0;
+    const cacheKey = `${versionPrefix}${String(part).replace(/^\/+/, '')}`;
     let buffer = await readCachedPart(partCache, cacheKey, expectedSize);
 
     if (buffer) {
@@ -405,7 +428,7 @@ export async function downloadParts(
         const reason = error instanceof Error ? error.message : String(error);
         throw new Error(`分片 ${index + 1}/${manifest.parts.length} 下载失败：${reason}`);
       }
-      if (buffer.byteLength !== expectedSize && expectedSize !== Number.POSITIVE_INFINITY) {
+      if (expectedSize > 0 && buffer.byteLength !== expectedSize) {
         throw new Error(`分片 ${index + 1}/${manifest.parts.length} 长度不符（${buffer.byteLength} != ${expectedSize}）`);
       }
       await writeCachedPart(partCache, cacheKey, buffer);
@@ -428,10 +451,30 @@ export async function downloadParts(
     throw new Error('当前环境不支持 sha256 校验（需要 HTTPS/localhost），已拒绝安装');
   }
   if (actual !== String(manifest.sha256).toLowerCase()) {
-    // 缓存里的分片已经被证明不可信，清掉让下次安装重新下载
-    await releaseDownloadCache();
+    // 缓存里的分片已经被证明不可信：只清掉这个插件包的，让下次重新下载
+    await clearPackageCache(versionPrefix);
     throw new Error('分片拼接结果校验失败（sha256 与清单不一致）');
   }
 
   return out.buffer as ArrayBuffer;
+}
+
+/**
+ * 清掉指定前缀下的分片缓存
+ * @param prefix 键前缀
+ */
+async function clearPackageCache(prefix: string): Promise<void> {
+  const partCache = await openPartCache();
+  if (!partCache) return;
+  try {
+    const keys = await partCache.keys();
+    await Promise.all(
+      keys
+        .map((request) => request.url)
+        .filter((url) => url.startsWith(prefix))
+        .map((url) => partCache.delete(url))
+    );
+  } catch {
+    // 清不掉就算了
+  }
 }

@@ -385,7 +385,7 @@ export async function downloadAndInstallAddon(
   );
 
   // 装完才清断点缓存：解压/写盘失败时保留，重试不必重下 198 MB
-  await releaseDownloadCache();
+  await releaseDownloadCache(addon.id);
 
   return { installedFolders: [addon.defaultFolderName] };
 }
