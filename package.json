@@ -27,6 +27,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test:tocs": "node --test scripts/bundled-tocs.test.mjs",
+    "test:chunks": "node --test scripts/openmap-chunks.test.mjs",
     "publish:curseforge": "node scripts/publish-curseforge.js",
     "sim:wowf": "node scripts/wow-ui-simulator/cli.js --assert",
     "prepare": "git config core.hooksPath .githooks || true"
