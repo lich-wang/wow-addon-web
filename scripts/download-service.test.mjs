@@ -248,7 +248,9 @@ test('downloadParts (format 2) 在并发分块出现瞬态错误且含重复块�
   assert.ok(progressUpdates.length > 0);
 });
 
-test('downloadParts (format 2) 遇到不可重试 404 时立即失败并中止其余在途并发请求', async () => {
+test('downloadParts (format 2) 遇到不可重试 404 时立即失败并中止其余在途并发请求', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
   const c1 = makePayload(32, 0x01);
   const c2 = makePayload(32, 0x02);
   const c3 = makePayload(32, 0x03);
@@ -291,17 +293,171 @@ test('downloadParts (format 2) 遇到不可重试 404 时立即失败并中止�
     });
   };
 
+  try {
+    // 使用受控计时器而不 tick，确保任何兄弟请求自身的 idleTimeoutMs 都不会触发；
+    // 唯有 404 触发 batchController.abort() 才能结束全部三个兄弟请求。
+    await assert.rejects(
+      downloadParts('https://wow.lich.tech/addons/openmap/parts.json', manifest, {
+        idleTimeoutMs: 10_000,
+        maxRetries: 3,
+        retryBaseDelayMs: 1,
+      }),
+      /分块下载失败：HTTP 404/
+    );
+    assert.equal(abortedSiblings, 3);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('downloadWithProgress 支持 HTTP 日期格式的 Retry-After', async () => {
+  const payload = makePayload(16, 0x55);
+  let calls = 0;
+
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls === 1) {
+      const retryAt = new Date(Date.now() + 1500).toUTCString();
+      return new Response('slow down', {
+        status: 503,
+        headers: { 'Retry-After': retryAt },
+      });
+    }
+    return new Response(payload, {
+      status: 200,
+      headers: { 'Content-Length': String(payload.byteLength) },
+    });
+  };
+
   const startedAt = Date.now();
-  await assert.rejects(
-    downloadParts('https://wow.lich.tech/addons/openmap/parts.json', manifest, {
-      idleTimeoutMs: 10_000,
-      maxRetries: 3,
-      retryBaseDelayMs: 1,
-    }),
-    /分块下载失败：HTTP 404/
-  );
+  const result = await downloadWithProgress('https://wow.lich.tech/addons/openmap/chunks/date.bin', {
+    maxRetries: 1,
+    retryBaseDelayMs: 1,
+  });
   const elapsed = Date.now() - startedAt;
 
-  assert.ok(elapsed < 1000, `应在 1s 内快速中止，实际耗时 ${elapsed}ms`);
-  assert.equal(abortedSiblings, 3);
+  assert.equal(calls, 2);
+  assert.ok(elapsed >= 400, `应按 Retry-After 日期等待后再重试，实际耗时 ${elapsed}ms`);
+  assert.deepEqual(new Uint8Array(result), payload);
+});
+
+test('downloadWithProgress 在响应携带弱 ETag 与 Last-Modified 时不发送 Range/If-Range 并从头重试', async () => {
+  const payload = makePayload(32, 0x77);
+  let calls = 0;
+
+  globalThis.fetch = async (_url, init) => {
+    calls++;
+    if (calls === 1) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(payload.subarray(0, 10));
+          controller.error(new Error('stream reset'));
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'Content-Length': String(payload.byteLength),
+          ETag: 'W/"weak-etag"',
+          'Last-Modified': 'Wed, 21 Oct 2015 07:28:00 GMT',
+          Date: 'Wed, 21 Oct 2015 07:29:00 GMT',
+        },
+      });
+    }
+    const headers = init?.headers ?? {};
+    assert.equal(headers.Range, undefined);
+    assert.equal(headers['If-Range'], undefined);
+    return new Response(payload, {
+      status: 200,
+      headers: { 'Content-Length': String(payload.byteLength) },
+    });
+  };
+
+  const result = await downloadWithProgress('https://wow.lich.tech/addons/sbf.zip', {
+    maxRetries: 2,
+    retryBaseDelayMs: 1,
+  });
+
+  assert.equal(calls, 2);
+  assert.deepEqual(new Uint8Array(result), payload);
+});
+
+test('downloadWithProgress 在无 Content-Length 且长度不符时清空缓冲从头重试', async () => {
+  const expected = makePayload(32, 0x99);
+  let calls = 0;
+
+  globalThis.fetch = async (_url, init) => {
+    calls++;
+    if (calls === 1) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(expected.subarray(0, 12));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }
+    const headers = init?.headers ?? {};
+    assert.equal(headers.Range, undefined);
+    return new Response(expected, {
+      status: 200,
+      headers: { 'Content-Length': String(expected.byteLength) },
+    });
+  };
+
+  const result = await downloadWithProgress('https://wow.lich.tech/addons/openmap/chunks/nolength.bin', {
+    expectedSize: expected.byteLength,
+    maxRetries: 2,
+    retryBaseDelayMs: 1,
+  });
+
+  assert.equal(calls, 2);
+  assert.deepEqual(new Uint8Array(result), expected);
+});
+
+test('fetchPartsManifest 收到 200 text/html 页面时不重试并立即失败', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response('<html>blocked</html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  };
+
+  await assert.rejects(
+    fetchPartsManifest('https://wow.lich.tech/addons/openmap/parts.json', 1000, 2),
+    /HTML/
+  );
+  assert.equal(calls, 1);
+});
+
+test('downloadParts 在调用前已取消时立即拒绝且不发起网络请求', async () => {
+  const chunk = makePayload(16, 0xaa);
+  const sha = sha256(chunk);
+  const manifest = {
+    version: 'v0.8.13',
+    format: 2,
+    totalSize: chunk.byteLength,
+    sha256: sha,
+    chunks: [{ sha256: sha, size: chunk.byteLength }],
+    parts: [`chunks/${sha}.bin`],
+  };
+
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(chunk, { status: 200 });
+  };
+
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    downloadParts('https://wow.lich.tech/addons/openmap/parts.json', manifest, {
+      signal: controller.signal,
+    }),
+    /取消/
+  );
+  assert.equal(calls, 0);
 });

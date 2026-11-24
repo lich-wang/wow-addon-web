@@ -295,12 +295,11 @@ export async function fetchCuratedAddonZip(
 
   let lastEmit = 0;
   let lastPercent = -1;
+  let progressFloor = DOWNLOAD_PERCENT_START;
   const report = (loaded: number, total: number) => {
     const ratio = total > 0 ? Math.min(1, loaded / total) : 0;
-    const percent = Math.min(
-      DOWNLOAD_PERCENT_END,
-      DOWNLOAD_PERCENT_START + Math.floor(ratio * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START))
-    );
+    const rawPercent = DOWNLOAD_PERCENT_START + Math.floor(ratio * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START));
+    const percent = Math.min(DOWNLOAD_PERCENT_END, Math.max(progressFloor, rawPercent));
     const now = Date.now();
     // 已知总长度时按百分比变化节流；未知时按时间节流（否则百分比永远不变，进度条不会动）
     if (now - lastEmit < (total > 0 ? PROGRESS_THROTTLE_MS : 500)) return;
@@ -331,16 +330,26 @@ export async function fetchCuratedAddonZip(
           DOWNLOAD_PERCENT_START +
             Math.floor((cached / Math.max(1, total)) * (DOWNLOAD_PERCENT_END - DOWNLOAD_PERCENT_START))
         );
+        progressFloor = Math.max(progressFloor, cachedPercent);
+        lastPercent = Math.max(lastPercent, progressFloor);
         onProgress?.({
           status: 'downloading',
           addonName: addon.name,
-          percent: cachedPercent,
+          percent: progressFloor,
           message: `复用本地缓存：已有 ${cached}/${total} 个分块命中，只需下载变化的 ${total - cached} 块`,
         });
       },
     };
 
+    const baseOrigin =
+      typeof location !== 'undefined' && /^https?:$/.test(location.protocol)
+        ? location.origin
+        : `https://${SITE_HOST}`;
+
     for (const url of candidates) {
+      progressFloor = DOWNLOAD_PERCENT_START;
+      lastPercent = -1;
+      lastEmit = 0;
       try {
         const manifest = await fetchPartsManifest(url);
         let buffer: ArrayBuffer;
@@ -350,7 +359,9 @@ export async function fetchCuratedAddonZip(
           const message = partsError instanceof Error ? partsError.message : String(partsError);
           if (!/HTTP 404/.test(message)) throw partsError;
           // CDN 缓存了旧清单时可能指向已替换的分块，绕过缓存重拉一次清单再试
-          const bustUrl = `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+          const parsed = new URL(url, baseOrigin);
+          parsed.searchParams.set('_t', String(Date.now()));
+          const bustUrl = url.startsWith('/') ? `${parsed.pathname}${parsed.search}${parsed.hash}` : parsed.href;
           const freshManifest = await fetchPartsManifest(bustUrl);
           buffer = await downloadParts(bustUrl, freshManifest, partsDownloadOptions);
         }

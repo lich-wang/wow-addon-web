@@ -57,10 +57,14 @@ function isRetryableHttpStatus(status: number): boolean {
 function parseRetryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined;
   const trimmed = header.trim();
-  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return undefined;
-  const seconds = Number(trimmed);
-  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
-  return Math.min(15_000, Math.round(seconds * 1000));
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+    return Math.min(15_000, Math.round(seconds * 1000));
+  }
+  const timestamp = Date.parse(trimmed);
+  if (!Number.isFinite(timestamp)) return undefined;
+  return Math.min(15_000, Math.max(0, timestamp - Date.now()));
 }
 
 function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
@@ -140,6 +144,11 @@ export async function downloadWithProgress(
     };
 
     try {
+      if (loaded > 0 && !validator) {
+        // 没有强校验器时不发 Range，避免无校验拼接不同版本响应
+        loaded = 0;
+        buffer = null;
+      }
       const resumeFrom = loaded;
       const headers: Record<string, string> = {};
       if (resumeFrom > 0) {
@@ -193,7 +202,22 @@ export async function downloadWithProgress(
         buffer = null;
         total = Number(response.headers.get('content-length') || 0);
         const etag = response.headers.get('etag');
-        validator = (etag && !etag.startsWith('W/') ? etag : null) || response.headers.get('last-modified') || null;
+        if (etag) {
+          // 存在弱 ETag 时不能退回 Last-Modified（RFC 9110 §13.1.5）
+          validator = !etag.startsWith('W/') ? etag : null;
+        } else {
+          const lastModified = response.headers.get('last-modified');
+          const dateHeader = response.headers.get('date');
+          const lmTime = lastModified ? Date.parse(lastModified) : NaN;
+          const dateTime = dateHeader ? Date.parse(dateHeader) : NaN;
+          validator =
+            lastModified &&
+            Number.isFinite(lmTime) &&
+            Number.isFinite(dateTime) &&
+            dateTime - lmTime >= 1000
+              ? lastModified
+              : null;
+        }
       }
 
       if (!buffer) {
@@ -237,11 +261,12 @@ export async function downloadWithProgress(
         });
       }
       if (expectedSize && expectedSize > 0 && loaded !== expectedSize) {
-        if (loaded > expectedSize || (total > 0 && loaded >= total)) {
+        const actualLoaded = loaded;
+        if (total === 0 || loaded > expectedSize || (total > 0 && loaded >= total)) {
           loaded = 0;
           buffer = null;
         }
-        throw new DownloadError(`分块长度不符（${loaded} != ${expectedSize}）`, { retryable: true });
+        throw new DownloadError(`分块长度不符（${actualLoaded} != ${expectedSize}）`, { retryable: true });
       }
       if (loaded === 0 || !buffer) {
         throw new DownloadError('下载内容为空', { retryable: true });
@@ -329,14 +354,21 @@ export async function fetchPartsManifest(
         redirect: 'manual',
       });
       if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+        controller.abort();
         throw new DownloadError('分片清单地址发生跳转，已拒绝跟随', { retryable: false });
       }
       if (!response.ok) {
+        controller.abort();
         throw new DownloadError(`HTTP ${response.status}`, {
           retryable: isRetryableHttpStatus(response.status),
           status: response.status,
           retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
         });
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        controller.abort();
+        throw new DownloadError('收到 HTML 页面而不是分块清单', { retryable: false });
       }
       const data = (await response.json()) as PartsManifest;
       if (
@@ -711,6 +743,9 @@ export async function downloadParts(
     cache = 'no-store',
     onCacheHit,
   } = options;
+  if (signal?.aborted) {
+    throw new DownloadError('下载已取消', { retryable: false });
+  }
   const base = typeof location !== 'undefined' && location.href ? location.href : 'http://localhost/';
   const resolvedManifest = new URL(manifestUrl, base).href;
   const origin = manifestOrigin(resolvedManifest);
@@ -761,6 +796,9 @@ export async function downloadParts(
     // 缓存里的块已经被证明不可信：整份清掉，让下次重新下载
     await clearChunkCache();
     throw new Error('分块拼接结果校验失败（sha256 与清单不一致）');
+  }
+  if (signal?.aborted) {
+    throw new DownloadError('下载已取消', { retryable: false });
   }
 
   return out.buffer as ArrayBuffer;
@@ -882,6 +920,9 @@ async function downloadContentAddressedChunks(
     onCacheHit?.(cachedCount, digests.length);
     report();
   }
+  if (externalSignal?.aborted) {
+    throw new DownloadError('下载已取消', { retryable: false });
+  }
 
   const now = Date.now();
   let failure: unknown = null;
@@ -889,6 +930,7 @@ async function downloadContentAddressedChunks(
     const batchController = new AbortController();
     const onExternalAbort = () => batchController.abort();
     externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+    if (externalSignal?.aborted) batchController.abort();
 
     try {
       await runWithConcurrency(missing, CHUNK_CONCURRENCY, async (digest) => {
@@ -930,6 +972,9 @@ async function downloadContentAddressedChunks(
     } finally {
       externalSignal?.removeEventListener('abort', onExternalAbort);
     }
+  }
+  if (externalSignal?.aborted) {
+    throw new DownloadError('下载已取消', { retryable: false });
   }
   if (failure) {
     const reason = failure instanceof Error ? failure.message : String(failure);
