@@ -8,6 +8,7 @@ import { patchBagnon } from './locales/bagnon.js';
 import { patchQuestie, patchQuestieDB } from './locales/quests.js';
 import { syncFlavorTocs, validateFlavorTocs } from './bundled-tocs.js';
 import { describeHosting, verifyAddonHosting } from './addon-hosting.js';
+import { buildChunkManifest, chunkBuffer } from './openmap-chunks.js';
 import { patchForeverMouseTooltip } from './locales/tooltip.js';
 import {
   buildWoWFAddon,
@@ -835,51 +836,46 @@ async function processForeverMouseTooltip() {
 // 9. OpenMap (Seamless World Map for WoW Forever)
 // ---------------------------------------------------------------------------
 // OpenMap 的 Forever 包约 198 MB（v0.8.13 实测 208,253,793 B），远超 Pages 25 MiB 单文件上限。
-// 但它又是「必须留在自己域名下分发」的插件，所以切成 <=20 MiB 的分片放进 public/addons/openmap/，
-// 客户端按 parts.json 顺序下载后拼回完整 zip（见 src/services/downloadService.ts）。
+// 但它又是「必须留在自己域名下分发」的插件，所以切成内容定义块（CDC）放进
+// public/addons/openmap/chunks/，客户端按 parts.json 下载后拼回完整 zip
+// （见 src/services/downloadService.ts）。
+//
+// 为什么不是固定 20 MiB 切片：固定偏移只要包内任意 1 字节变化，后面全部错位。
+// 实测 v0.8.12 → v0.8.13 只改了 17 个文件 / 1.07 MiB，固定切片却要重下 100%。
+// CDC 按内容找边界，同一段字节永远算出同一个哈希，于是升级只下变化的块（实测 0.6%）。
 const OPENMAP_PARTS_DIR = path.join(OUTPUT_DIR, 'openmap');
-const OPENMAP_PART_BYTES = 20 * 1024 * 1024;
+const OPENMAP_CHUNKS_DIR = path.join(OPENMAP_PARTS_DIR, 'chunks');
 
 /**
- * 把完整 zip 切成多个分片并写出清单。
- * 分片目录名带内容哈希（<tag>-<sha8>）：只要内容变了 URL 就变，因此可以放心让
- * CDN/浏览器长期缓存（public/_headers 里给分片配了 immutable）。
- * 每次重新生成前会清空整个 openmap 目录，避免历史版本分片在 public/ 里堆积。
+ * 把完整 zip 切成内容定义块并写出清单。
+ * 块按内容寻址命名（chunks/<sha256>.bin）：URL 只由内容决定，跨版本稳定，
+ * 因此可以放心让 CDN/客户端长期缓存（public/_headers 给 /addons/openmap/chunks/* 配了 immutable）。
+ * 每次重新生成前清空整个 openmap 目录，只保留本次版本真正需要的块——
+ * 历史版本的块对「已经装过旧版」的客户端没有用处（它们本地已有），留着只会挤占 Pages 文件预算。
  * @param {Buffer} buf - 完整 zip 内容
- * @param {string} tag - Release tag，用于分片目录命名
  * @param {string} version - 取自 TOC 的真实版本号，供版本清单展示
  * @param {string} sourceUrl - 上游原始 zip 地址，仅作为溯源信息记录（客户端不会使用）
- * @returns {object} 写出的分片清单
+ * @returns {object} 写出的分块清单
  */
-function writeOpenMapParts(buf, version, sourceUrl) {
+function writeOpenMapChunks(buf, version, sourceUrl) {
   fs.rmSync(OPENMAP_PARTS_DIR, { recursive: true, force: true });
-  const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
-  // 目录名直接用完整 sha256：既不依赖可能含 `#`/空格等 URL 特殊字符的 tag，
-  // 也保证内容一变 URL 就变（配合 immutable 缓存）
-  const bucket = sha256;
-  // 统一放在 parts/ 子目录下：public/_headers 用 `/addons/openmap/parts/*` 一条规则就能给分片配 immutable
-  const partsDir = path.join(OPENMAP_PARTS_DIR, 'parts', bucket);
-  fs.mkdirSync(partsDir, { recursive: true });
+  fs.mkdirSync(OPENMAP_CHUNKS_DIR, { recursive: true });
 
-  const parts = [];
-  for (let offset = 0, index = 1; offset < buf.length; offset += OPENMAP_PART_BYTES, index++) {
-    const slice = buf.subarray(offset, Math.min(offset + OPENMAP_PART_BYTES, buf.length));
-    if (slice.length > PAGES_MAX_FILE_BYTES) {
-      throw new Error(`OpenMap 分片 ${index} 仍有 ${(slice.length / 1024 / 1024).toFixed(2)} MiB，超过 Pages 单文件上限`);
+  const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
+  // 逐块写出：offset 由前面各块长度累加得到，与 chunkBuffer 的顺序严格一致
+  const written = new Set();
+  for (const chunk of chunkBuffer(bytes)) {
+    if (chunk.size > PAGES_MAX_FILE_BYTES) {
+      throw new Error(
+        `OpenMap 分块 ${chunk.sha256.slice(0, 12)}… 有 ${(chunk.size / 1024 / 1024).toFixed(2)} MiB，超过 Pages 单文件上限`
+      );
     }
-    const name = `part-${String(index).padStart(3, '0')}.bin`;
-    fs.writeFileSync(path.join(partsDir, name), slice);
-    parts.push(`parts/${bucket}/${name}`);
+    if (written.has(chunk.sha256)) continue;
+    written.add(chunk.sha256);
+    fs.writeFileSync(path.join(OPENMAP_CHUNKS_DIR, `${chunk.sha256}.bin`), bytes.subarray(chunk.offset, chunk.offset + chunk.size));
   }
 
-  const manifest = {
-    version,
-    totalSize: buf.length,
-    partSize: OPENMAP_PART_BYTES,
-    sha256,
-    parts,
-    source: sourceUrl,
-  };
+  const manifest = buildChunkManifest(bytes, { version, source: sourceUrl });
   fs.writeFileSync(path.join(OPENMAP_PARTS_DIR, 'parts.json'), JSON.stringify(manifest, null, 2));
   return manifest;
 }
@@ -1012,14 +1008,10 @@ async function processOpenMap() {
     console.warn(`[Warn] 读取 OpenMap TOC 版本失败（${e.message}），改用 Release tag: ${tag}`);
   }
 
-  const manifest = writeOpenMapParts(buf, version, sourceUrl);
-  const bytes = manifest.parts.reduce(
-    (sum, rel) => sum + fs.statSync(path.join(OPENMAP_PARTS_DIR, ...rel.split('/'))).size,
-    0
-  );
+  const manifest = writeOpenMapChunks(buf, version, sourceUrl);
   recordBundledVersion('openmap', version, '/addons/openmap/parts.json');
   console.log(
-    `[✓] openmap => ${version}：${manifest.parts.length} 个分片，共 ${(bytes / 1048576).toFixed(1)} MB（Pages 单文件上限 25 MiB）`
+    `[✓] openmap => ${version}：${manifest.chunks.length} 个内容定义块，共 ${(manifest.totalSize / 1048576).toFixed(1)} MB（Pages 单文件上限 25 MiB）`
   );
 }
 

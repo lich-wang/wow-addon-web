@@ -314,7 +314,8 @@ export async function fetchCuratedAddonZip(
   let lastError: unknown = null;
 
   if (isChunked) {
-    // Pages 分片路线：先取清单，再顺序下载各分片并拼接（已完成的分片会命中断点缓存）
+    // Pages 分块路线：先取清单，再按内容寻址下载各块并拼接。
+    // 块 URL 只由内容决定，所以升级到新版本时只有真正变化的块会重新下载。
     for (const url of candidates) {
       try {
         const manifest = await fetchPartsManifest(url);
@@ -325,17 +326,17 @@ export async function fetchCuratedAddonZip(
               status: 'downloading',
               addonName: addon.name,
               percent: DOWNLOAD_PERCENT_START,
-              message: `从断点继续：已有 ${cached}/${total} 个分片在本地缓存，跳过重下`,
+              message: `复用本地缓存：已有 ${cached}/${total} 个分块命中，只需下载变化的 ${total - cached} 块`,
             });
           },
         });
         if (buffer.byteLength > 200) return buffer;
-        lastError = new Error('分片拼接结果为空');
+        lastError = new Error('分块拼接结果为空');
       } catch (error) {
         lastError = error;
       }
     }
-    // 注意：这里绝不回退到清单里的 source（GitHub 直链）。本站分片不可用时宁可报错，
+    // 注意：这里绝不回退到清单里的 source（GitHub 直链）。本站分块不可用时宁可报错，
     // 也不要让用户的下载绕到外部源——这正是「所有插件都由本站 Pages 分发」的要求。
   } else {
     for (const url of candidates) {
@@ -384,8 +385,10 @@ export async function downloadAndInstallAddon(
     { percentRange: [DOWNLOAD_PERCENT_END, 97] }
   );
 
-  // 装完才清断点缓存：解压/写盘失败时保留，重试不必重下 198 MB
-  await releaseDownloadCache(addon.id);
+  // 装完才整理缓存：解压/写盘失败时保留，重试不必重下 198 MB。
+  // 注意这里不再按插件清空——分块按内容寻址，旧版本的块就是新版本的块，
+  // 清掉等于把下次升级重新变回全量下载；只在超出预算时淘汰最久未用的。
+  await releaseDownloadCache();
 
   return { installedFolders: [addon.defaultFolderName] };
 }

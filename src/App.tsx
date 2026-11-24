@@ -444,8 +444,9 @@ export function App() {
         });
 
         await agentInstallZip(directoryState.agentPath, blob);
-        // 装完才清断点缓存：解压失败时保留，重试不必重下 198 MB
-        await releaseDownloadCache(addon.id);
+        // 装完才整理缓存：解压失败时保留，重试不必重下 198 MB。
+        // 分块按内容寻址，旧版本的块就是新版本的块，因此这里只按预算淘汰、不整体清空。
+        await releaseDownloadCache();
 
         setInstallProgress({
           status: 'completed',
@@ -518,7 +519,7 @@ export function App() {
             message: `[${i + 1}/${outdatedItems.length}] 正在解压写入: ${curated.name}...`,
           });
           await agentInstallZip(directoryState.agentPath, blob);
-          await releaseDownloadCache(curated.id);
+          await releaseDownloadCache();
         } else if (directoryState.handle) {
           await downloadAndInstallAddon(curated, directoryState.handle, (p) => {
             setInstallProgress({

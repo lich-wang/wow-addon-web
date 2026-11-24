@@ -53,7 +53,12 @@ function resolveAddonRelativePath(source) {
 }
 
 /**
- * 校验 OpenMap 分片清单与分片文件
+ * 校验 OpenMap 分块清单与分块文件。
+ *
+ * 支持两种清单格式：
+ * - format 2（当前）：`chunks` 是按内容寻址的去重块表，`parts` 是顺序拼接列表。逐块校验
+ *   「长度符合清单 + 文件内容 sha256 与文件名一致」，再按 parts 顺序累加长度并复算整包 sha256。
+ * - 旧格式（无 format、有 partSize）：固定偏移切片，只校验长度与整包 sha256。
  * @param {string} addonsDir public/addons 目录
  * @param {{ version?: string, source?: string }} entry 版本清单条目
  * @param {string[]} problems 收集问题
@@ -81,7 +86,6 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
 
   const parts = Array.isArray(partsManifest.parts) ? partsManifest.parts : [];
   const totalSize = Number(partsManifest.totalSize) || 0;
-  const partSize = Number(partsManifest.partSize) || 0;
   if (parts.length === 0 || totalSize <= 0) {
     problems.push('openmap: parts.json 缺少分片列表或 totalSize');
     return null;
@@ -95,8 +99,23 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
   // 分片路径相对于清单所在目录解析（而不是固定 openmap/），保证门禁校验的
   // 正是客户端按清单请求的那批文件
   const partsBaseDir = path.dirname(manifestFile);
+  const isChunked = Number(partsManifest.format) >= 2 && Array.isArray(partsManifest.chunks);
+  const declaredSize = new Map();
+  if (isChunked) {
+    for (const chunk of partsManifest.chunks) {
+      const digest = String(chunk?.sha256 || '').toLowerCase();
+      const size = Number(chunk?.size) || 0;
+      if (!/^[0-9a-f]{64}$/.test(digest) || size <= 0) {
+        problems.push('openmap: chunks 条目缺少有效的 sha256 或 size');
+        return null;
+      }
+      declaredSize.set(digest, size);
+    }
+  }
+
   const missing = [];
   const truncated = [];
+  const badDigest = [];
   let sum = 0;
   let oversized = 0;
   const hash = crypto.createHash('sha256');
@@ -119,6 +138,30 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
       oversized++;
       continue;
     }
+    // 内容寻址块：文件名就是内容 sha256，长度也必须与清单一致
+    const nameDigest = /^([0-9a-f]{64})\.bin$/i.exec(path.basename(file));
+    if (isChunked && nameDigest) {
+      const digest = nameDigest[1].toLowerCase();
+      const expected = declaredSize.get(digest);
+      if (expected === undefined) {
+        problems.push(`openmap: 块 ${partRel} 不在清单 chunks 里`);
+        return null;
+      }
+      if (stat.size !== expected) {
+        truncated.push(`${partRel} 实际 ${stat.size} 预期 ${expected}`);
+        continue;
+      }
+      const content = fs.readFileSync(file);
+      if (crypto.createHash('sha256').update(content).digest('hex') !== digest) {
+        badDigest.push(partRel);
+        continue;
+      }
+      sum += stat.size;
+      hash.update(content);
+      continue;
+    }
+    // 旧格式（固定偏移）：只能按顺序累加后由整包 sha256 兜底
+    const partSize = Number(partsManifest.partSize) || 0;
     if (partSize > 0) {
       const expected = i === parts.length - 1 ? totalSize - sum : partSize;
       if (expected > 0 && stat.size !== expected) {
@@ -137,6 +180,10 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
     problems.push(`openmap: 分片长度不符（${truncated.slice(0, 3).join('；')}）`);
     return null;
   }
+  if (badDigest.length > 0) {
+    problems.push(`openmap: 分块内容与文件名 sha256 不符（${badDigest.slice(0, 3).join(', ')}）`);
+    return null;
+  }
   if (oversized > 0) {
     return null;
   }
@@ -150,7 +197,7 @@ function verifyOpenMapParts(addonsDir, entry, problems) {
     return null;
   }
 
-  return { id: 'openmap', kind: 'parts', bytes: sum, files: parts.length };
+  return { id: 'openmap', kind: 'parts', bytes: sum, files: isChunked ? declaredSize.size : parts.length };
 }
 
 /**
