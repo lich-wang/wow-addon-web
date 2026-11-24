@@ -4,5 +4,13 @@
 /addons/*.zip
   Cache-Control: public, max-age=0, must-revalidate
 
+# OpenMap 分片：目录名带内容哈希（<tag>-<sha8>），URL 不可变，可以长期缓存
+/addons/openmap/parts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 分片清单要能及时指向新版本
+/addons/openmap/parts.json
+  Cache-Control: public, max-age=0, must-revalidate
+
 /downloads/client-version.json
   Cache-Control: public, max-age=0, must-revalidate

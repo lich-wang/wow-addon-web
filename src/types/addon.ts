@@ -58,4 +58,6 @@ export interface InstallProgress {
   addonName: string;
   percent: number;
   message: string;
+  /** 无法预知进度的阶段（如本地原生解压）：进度条改为脉冲动画而不是停在某个百分比 */
+  indeterminate?: boolean;
 }

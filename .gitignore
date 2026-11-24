@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 public/addons/*.zip
+# OpenMap 分片产物（198 MB 无法入库，由 scripts/fetch-addons.js 构建时生成）
+public/addons/openmap/
 public/downloads/*.exe
 public/downloads/*.dmg
 

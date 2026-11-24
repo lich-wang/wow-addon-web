@@ -29,6 +29,7 @@ import {
   isUpdateAvailable,
   canCompareVersions,
   findMatchingCuratedAddon,
+  isChunkedAddon,
   withVersionQuery,
 } from '../services/catalogService';
 import type { AddonInfo, CuratedAddon, GameFlavor } from '../types/addon';
@@ -307,15 +308,17 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                 <div className="flex items-center space-x-2">
                   {installed ? (
                     <div className="flex items-center space-x-1.5">
-                      <a
-                        href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
-                        download={`${addon.defaultFolderName}.zip`}
-                        title="直接下载插件 ZIP 压缩包"
-                        className="inline-flex items-center space-x-1 px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors"
-                      >
-                        <Download className="w-3 h-3" />
-                        <span>ZIP</span>
-                      </a>
+                      {!isChunkedAddon(addon) && (
+                        <a
+                          href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
+                          download={`${addon.defaultFolderName}.zip`}
+                          title="直接下载插件 ZIP 压缩包"
+                          className="inline-flex items-center space-x-1 px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 transition-colors"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>ZIP</span>
+                        </a>
+                      )}
                       {hasUpdate ? (
                         <>
                           <span className="inline-flex items-center space-x-1 text-xs text-amber-300 font-semibold bg-amber-950/60 border border-amber-500/40 px-2 py-1 rounded-md animate-pulse">
@@ -372,15 +375,17 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                     </div>
                   ) : hasDirectory ? (
                     <div className="flex items-center space-x-1.5">
-                      <a
-                        href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
-                        download={`${addon.defaultFolderName}.zip`}
-                        title="直接下载插件 ZIP 压缩包到本地"
-                        className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-slate-100 text-xs font-medium transition-colors"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>下载 ZIP</span>
-                      </a>
+                      {!isChunkedAddon(addon) && (
+                        <a
+                          href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
+                          download={`${addon.defaultFolderName}.zip`}
+                          title="直接下载插件 ZIP 压缩包到本地"
+                          className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-slate-100 text-xs font-medium transition-colors"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>下载 ZIP</span>
+                        </a>
+                      )}
                       <button
                         onClick={() => onInstallAddon(addon)}
                         className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition-all hover:scale-102 cursor-pointer"
@@ -399,15 +404,17 @@ export const AddonMarket: React.FC<AddonMarketProps> = ({
                         <FolderOpen className="w-3.5 h-3.5" />
                         <span>连目录安装</span>
                       </button>
-                      <a
-                        href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
-                        download={`${addon.defaultFolderName}.zip`}
-                        title="无需设置目录，直接下载插件 ZIP 压缩包"
-                        className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition-all hover:scale-102 cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>直接下载 ZIP</span>
-                      </a>
+                      {!isChunkedAddon(addon) && (
+                        <a
+                          href={withVersionQuery(addon.downloadUrl, addon.latestVersion)}
+                          download={`${addon.defaultFolderName}.zip`}
+                          title="无需设置目录，直接下载插件 ZIP 压缩包"
+                          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition-all hover:scale-102 cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>直接下载 ZIP</span>
+                        </a>
+                      )}
                     </div>
                   )}
                 </div>

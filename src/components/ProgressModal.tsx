@@ -49,16 +49,20 @@ export const ProgressModal: React.FC<ProgressModalProps> = ({ progress, onClose 
         {!isError && (
           <div className="space-y-1.5">
             <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
-              <div
-                className={`h-full transition-all duration-300 ${
-                  isDone ? 'bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                }`}
-                style={{ width: `${progress.percent}%` }}
-              />
+              {progress.indeterminate && !isDone ? (
+                <div className="h-full w-full bg-gradient-to-r from-amber-500/40 via-yellow-400 to-amber-500/40 animate-pulse" />
+              ) : (
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    isDone ? 'bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                  }`}
+                  style={{ width: `${progress.percent}%` }}
+                />
+              )}
             </div>
             <div className="flex justify-between text-[11px] font-mono text-slate-500">
               <span>{isDone ? '写入完成' : '执行中...'}</span>
-              <span>{progress.percent}%</span>
+              <span>{progress.indeterminate && !isDone ? '处理中' : `${progress.percent}%`}</span>
             </div>
           </div>
         )}

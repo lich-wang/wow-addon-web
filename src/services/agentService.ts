@@ -307,22 +307,13 @@ export async function agentDeleteAddon(addonsPath: string, folderName: string): 
 
 /**
  * Install addon ZIP directly via agent or Tauri IPC
+ *
+ * 大包（OpenMap 约 198 MB / 3593 个文件）必须走本地 bridge 的 HTTP 直传：
+ * Tauri 的 `invoke` 会把 `Vec<u8>` 序列化成「每个字节一个数字」的 JSON 数组，
+ * 198 MB 会膨胀成 2 亿多个数字（>2 GB 内存 + 数百 MB JSON），WebView 直接卡死。
+ * 因此这里优先 POST 二进制到 bridge，只有 bridge 不可用且包很小时才回退到 invoke。
  */
 export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promise<number> {
-  if (isTauriEnv()) {
-    try {
-      const arrayBuffer = await zipBlob.arrayBuffer();
-      const zipBytes = Array.from(new Uint8Array(arrayBuffer));
-      const res = await invoke<{ success: boolean; fileCount: number }>('install_zip', {
-        addonsPath,
-        zipBytes,
-      });
-      return res.fileCount || 0;
-    } catch (e) {
-      throw new Error(String(e) || '安装插件失败');
-    }
-  }
-
   const encodedPath = encodeURIComponent(addonsPath);
   const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
   const headers: Record<string, string> = {
@@ -334,12 +325,41 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
     headers['X-Addons-Path'] = addonsPath;
   }
 
-  const res = await fetch(`${AGENT_BASE}/api/install-zip?path=${encodedPath}`, {
-    method: 'POST',
-    headers,
-    body: zipBlob,
-  });
+  // 只有 fetch 本身失败（bridge 没起来 / 网络层错误）才回退到 IPC。
+  // 服务端已经给出业务错误（比如解压失败）时再走一次 invoke 只会重复安装、
+  // 并用 IPC 的错误信息盖掉真正的原因。
+  let res: Response;
+  try {
+    res = await fetch(`${AGENT_BASE}/api/install-zip?path=${encodedPath}`, {
+      method: 'POST',
+      headers,
+      body: zipBlob,
+    });
+  } catch (error) {
+    // 桌面端的内置 bridge 未就绪时，≤32 MB 的小包仍可用 invoke 兜底；
+    // 大包宁可明确报错，也不要再走一次会让界面假死的 JSON 序列化。
+    if (isTauriEnv() && zipBlob.size <= 32 * 1024 * 1024) {
+      try {
+        const arrayBuffer = await zipBlob.arrayBuffer();
+        const zipBytes = Array.from(new Uint8Array(arrayBuffer));
+        const invokeRes = await invoke<{ success: boolean; fileCount: number }>('install_zip', {
+          addonsPath,
+          zipBytes,
+        });
+        return invokeRes.fileCount || 0;
+      } catch (invokeError) {
+        throw new Error(String(invokeError) || '安装插件失败');
+      }
+    }
+    throw error instanceof Error ? error : new Error(String(error) || '本地助手安装插件失败');
+  }
+
   if (!res.ok) {
+    if (res.status === 413) {
+      throw new Error(
+        '安装包超过了本地客户端的单次请求上限（新版 256 MB，旧版 200 MB）：请更新客户端，或改用体积更小的安装包。'
+      );
+    }
     const err = await res.json().catch(() => ({}));
     if (!isAsciiOnly && (res.status === 400 || res.status === 404)) {
       throw new Error(
@@ -350,6 +370,7 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
     }
     throw new Error(err.error || '本地助手安装插件失败');
   }
+
   const data = await res.json();
   return data.fileCount || 0;
 }

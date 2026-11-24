@@ -429,23 +429,17 @@ export function App() {
 
     try {
       if (directoryState.mode === 'agent' && directoryState.agentPath) {
-        setInstallProgress({
-          status: 'downloading',
-          addonName: addon.name,
-          percent: 25,
-          message: `正在从 wow.lich.tech 下载 ${addon.name}...`,
-        });
-
         const arrayBuffer = await fetchCuratedAddonZip(addon, (p: InstallProgress) => {
           setInstallProgress(p);
         });
         const blob = new Blob([arrayBuffer], { type: 'application/zip' });
 
         setInstallProgress({
-          status: 'writing',
+          status: 'extracting',
           addonName: addon.name,
-          percent: 75,
-          message: `正在写入本地 AddOns 目录...`,
+          percent: 65,
+          indeterminate: true,
+          message: `正在解压到本地 AddOns 目录（${(blob.size / (1024 * 1024)).toFixed(1)} MB，大包约需数秒）...`,
         });
 
         await agentInstallZip(directoryState.agentPath, blob);
@@ -506,8 +500,20 @@ export function App() {
         });
 
         if (directoryState.mode === 'agent' && directoryState.agentPath) {
-          const arrayBuffer = await fetchCuratedAddonZip(curated);
+          const arrayBuffer = await fetchCuratedAddonZip(curated, (p) => {
+            setInstallProgress({
+              ...p,
+              message: `[${i + 1}/${outdatedItems.length}] ${p.message}`,
+            });
+          });
           const blob = new Blob([arrayBuffer], { type: 'application/zip' });
+          setInstallProgress({
+            status: 'extracting',
+            addonName: curated.name,
+            percent: 65,
+            indeterminate: true,
+            message: `[${i + 1}/${outdatedItems.length}] 正在解压写入: ${curated.name}...`,
+          });
           await agentInstallZip(directoryState.agentPath, blob);
         } else if (directoryState.handle) {
           await downloadAndInstallAddon(curated, directoryState.handle, (p) => {
@@ -557,7 +563,8 @@ export function App() {
           status: 'writing',
           addonName: file.name,
           percent: 50,
-          message: `本地助手正在解压写入 ${file.name}...`,
+          indeterminate: true,
+          message: `本地助手正在解压写入 ${file.name}（${(file.size / (1024 * 1024)).toFixed(1)} MB）...`,
         });
 
         await agentInstallZip(directoryState.agentPath, file);
