@@ -102,7 +102,7 @@ local COMMON_COMMANDS = {
     category = "本百科 / 快捷入口",
     code = "/wowf arb",
     desc = "直达制造套利页：读取拍卖行行情与角色专业等级，递归折算中间产物后筛出当前能赚钱的配方。",
-    note = "需要启用 EasyAuction 或黑石交易技能并提供行情数据；附魔角色可切换「分解套利」模式。",
+    note = "需要启用黑石交易技能（Blackthornes_TS）并提供行情数据；附魔角色可切换「分解套利」模式。",
   },
   {
     title = "Questie 任务雷达设置",
@@ -162,9 +162,12 @@ local state = {
   craftProfession = nil, -- 过滤的专业集合（nil = 全部，table = { [key] = true }）
   craftCrossOwner = true, -- 允许借用同账号其他角色的中间产物配方
   craftOnlySkillUp = false, -- 只看还能涨点的配方
-  craftSource = "craft", -- 套利来源: "craft" 制作套利 | "vendor" 商人购入→拍卖出售 | "both" 全部
+  craftSource = "craft", -- 套利来源: "craft" 制作套利 | "vendor" 商人→拍卖 | "flip" 拍卖→商人 | "both" 全部
   craftPreferVendor = false, -- 制作成本是否优先采用已采集的 NPC 商人价
   craftMinSupply = false, -- 是否过滤掉拍卖行在售少于 100 件的物品（异常价格）
+  craftFlipWheel = false, -- 是否开启鼠标滚轮上滚连续扫货（仅拍卖行打开且在「拍卖→商人」扫货中生效）
+  craftFlipGearOnly = true, -- 「拍卖→商人」默认仅显示武器/护甲与实测卖店品，避开致盲粉等客户端假卖价杂物
+  merchantSellMode = "safe", -- 商人窗口一键全卖范围: "safe" | "unbound" | "all"
   repFilter = nil, -- 声望页筛选集合（nil = 全部，table = { [key] = true }）
   repFilterMode = "multi", -- 声望页筛选模式："multi" 多选 | "single" 单选
 }
@@ -190,6 +193,9 @@ local PERSISTED_STATE_KEYS = {
   "craftSource",
   "craftPreferVendor",
   "craftMinSupply",
+  "craftFlipWheel",
+  "craftFlipGearOnly",
+  "merchantSellMode",
   "repFilter",
   "repFilterMode",
 }
@@ -4066,19 +4072,103 @@ local function AcquireCard(index)
   return c
 end
 
-local arbToolbar
-local repFilterBar
+local flipBuy = { wheelBound = false, wheelLastAt = 0, pendingCapRetry = {} }
+
+function flipBuy.CanUseWheel()
+  local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+  return state.craftFlipWheel == true
+    and state.activeTab == 8
+    and mainFrame and mainFrame.IsShown and mainFrame:IsShown() == true
+    and fb and fb.IsActive and fb.IsActive() == true
+    and fb.IsAuctionHouseOpen and fb.IsAuctionHouseOpen() == true
+    and not (InCombatLockdown and InCombatLockdown() == true)
+end
+
+function flipBuy.UpdateWheel()
+  local want = flipBuy.CanUseWheel()
+
+  if InCombatLockdown and InCombatLockdown() == true then return end
+
+  if want then
+    if not flipBuy.wheelOwner then
+      flipBuy.wheelOwner = CreateFrame("Frame", nil, UIParent)
+    end
+    if not flipBuy.wheelButton then
+      local wheelButton = CreateFrame("Button", "WoWFFlipBuyWheelBtn", UIParent)
+      wheelButton:SetSize(1, 1)
+      if wheelButton.SetAlpha then wheelButton:SetAlpha(0) end
+      if wheelButton.EnableMouse then wheelButton:EnableMouse(false) end
+      if wheelButton.RegisterForClicks then wheelButton:RegisterForClicks("AnyUp", "AnyDown") end
+      wheelButton:SetScript("OnClick", function(_, _, down)
+        if down == false then return end
+        if not flipBuy.CanUseWheel() then return end
+        local nowAt = (type(GetTime) == "function" and GetTime()) or 0
+        if flipBuy.wheelLastAt > 0 and nowAt > 0 and nowAt - flipBuy.wheelLastAt < 0.35 then return end
+        flipBuy.wheelLastAt = nowAt
+        local buyerMod = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+        if buyerMod and buyerMod.Step then buyerMod.Step() end
+      end)
+      flipBuy.wheelButton = wheelButton
+    end
+    if type(SetOverrideBindingClick) == "function" then
+      if flipBuy.wheelBound and type(ClearOverrideBindings) == "function" then
+        pcall(ClearOverrideBindings, flipBuy.wheelOwner)
+      end
+      pcall(SetOverrideBindingClick, flipBuy.wheelOwner, true, "MOUSEWHEELUP", "WoWFFlipBuyWheelBtn", "LeftButton")
+      flipBuy.wheelBound = true
+    end
+  elseif flipBuy.wheelBound and flipBuy.wheelOwner then
+    if type(ClearOverrideBindings) == "function" then
+      pcall(ClearOverrideBindings, flipBuy.wheelOwner)
+    end
+    flipBuy.wheelBound = false
+  end
+end
+
+function flipBuy.SubmitShoppingList(retryKey, chatPrefix, colorHex, itemID, maxPay, addFn, successDescFn)
+  local pendingRetry = flipBuy.pendingCapRetry[retryKey]
+  if pendingRetry and type(WoWF_CraftArb.UpdateShoppingListMaxPay) == "function" then
+    local cap = pendingRetry.maxPay or maxPay
+    local okCap, idOrReason, capNote = WoWF_CraftArb.UpdateShoppingListMaxPay(pendingRetry.listId, itemID, cap)
+    if okCap then
+      flipBuy.pendingCapRetry[retryKey] = nil
+      DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cff%s[%s]|r 已补写购物清单最高买价 %s（清单 ID: %s%s）。",
+        colorHex, chatPrefix, FormatMoney(cap),
+        tostring(idOrReason), capNote and ("，" .. tostring(capNote)) or ""))
+    else
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff5555[%s]|r 补写最高买价失败: %s。", chatPrefix, tostring(idOrReason)))
+    end
+    return
+  end
+  local ok, listIDOrReason, note = addFn()
+  if not ok then
+    if type(note) == "table" and note.partial and note.listId then
+      flipBuy.pendingCapRetry[retryKey] = { listId = note.listId, maxPay = maxPay }
+    end
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff5555[%s]|r 写入购物清单失败: %s。", chatPrefix, tostring(listIDOrReason)))
+    return
+  end
+  flipBuy.pendingCapRetry[retryKey] = nil
+  DEFAULT_CHAT_FRAME:AddMessage(successDescFn(listIDOrReason, note))
+end
 
 local function HideUnusedCards(fromIndex)
   for i = fromIndex, #cardPool do
     cardPool[i]:Hide()
   end
-  if arbToolbar and state.activeTab ~= 8 then
-    arbToolbar:Hide()
+  if flipBuy.arbToolbar and state.activeTab ~= 8 then
+    flipBuy.arbToolbar:Hide()
   end
-  if repFilterBar and state.activeTab ~= 9 then
-    if repFilterBar:IsShown() then
-      repFilterBar:Hide()
+  if flipBuy.bar and state.activeTab ~= 8 then
+    flipBuy.bar:Hide()
+  end
+  if state.activeTab ~= 8 then
+    flipBuy.UpdateWheel()
+  end
+  if flipBuy.repFilterBar and state.activeTab ~= 9 then
+    if flipBuy.repFilterBar:IsShown() then
+      flipBuy.repFilterBar:Hide()
       if CloseDropDownMenus then CloseDropDownMenus() end
     end
   end
@@ -5834,7 +5924,7 @@ local function RenderTabDungeons()
 end
 
 -- ============================================================================
--- 制造套利页：EasyAuction 行情 + 角色专业等级 + 中间产物递归折算 + 分解套利
+-- 制造套利页：黑石交易技能行情 + 角色专业等级 + 中间产物递归折算 + 分解套利
 -- ============================================================================
 
 local CRAFT_DIFFICULTY_LABEL = {
@@ -5861,12 +5951,13 @@ local function CraftSignColor(value)
   return (tonumber(value) or 0) >= 0 and "|cff44ff88" or "|cffff5555"
 end
 
----在售数量展示：少于 100 件标红提示异常价格风险；nil 时区分「从没扫描过」和「扫描快照不完整」
+---在售数量展示：少于 100 件标红提示异常价格风险；nil 时区分「从没扫描过」和「全服共享价(无件数)」
 local function SupplyText(supply, source)
   if supply == nil then
-    if source == "partial" then return "|cffffb030未知(快照不完整)|r" end
+    if source == "shared" then return "|cffffb030未知(共享价无件数)|r" end
     return "|cffffd100未知(行情未扫描)|r"
   end
+  if supply == 0 then return "|cffff55550 件(当前无挂单)|r" end
   if supply < 100 then return string.format("|cffff5555%d 件(偏少)|r", supply) end
   return string.format("|cff44ff88%d 件|r", supply)
 end
@@ -5902,56 +5993,58 @@ local OpenControlDropdown
 local function LayoutArbToolbar(yOffset, opts)
   local width = (contentChild:GetWidth() or CONTENT_CHILD_WIDTH) - 16
   if width < 500 then width = CONTENT_CHILD_WIDTH - 16 end
-  if not arbToolbar then
+  local bar = flipBuy.arbToolbar
+  if not bar then
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    arbToolbar = CreateFrame("Frame", nil, contentChild, template)
-    arbToolbar:SetHeight(34)
-    if arbToolbar.SetBackdrop then
-      arbToolbar:SetBackdrop({
+    bar = CreateFrame("Frame", nil, contentChild, template)
+    bar:SetHeight(34)
+    if bar.SetBackdrop then
+      bar:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true, tileSize = 8, edgeSize = 10,
         insets = { left = 2, right = 2, top = 2, bottom = 2 },
       })
-      arbToolbar:SetBackdropColor(0.06, 0.09, 0.14, 0.94)
-      arbToolbar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
+      bar:SetBackdropColor(0.06, 0.09, 0.14, 0.94)
+      bar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
     end
-    arbToolbar.btns = {}
+    bar.btns = {}
+    flipBuy.arbToolbar = bar
   end
 
   local items = opts.buttons or {}
   local count = #items
   if count == 0 then
-    arbToolbar:Hide()
+    bar:Hide()
     return yOffset
   end
 
-  arbToolbar:SetWidth(width)
-  arbToolbar:ClearAllPoints()
-  arbToolbar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
-  arbToolbar:Show()
+  bar:SetWidth(width)
+  bar:ClearAllPoints()
+  bar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
+  bar:Show()
 
   for i = 1, count do
-    if not arbToolbar.btns[i] then
-      local btn = CreateFrame("Button", nil, arbToolbar, "UIPanelButtonTemplate")
+    if not bar.btns[i] then
+      local btn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
       btn:SetHeight(22)
-      arbToolbar.btns[i] = btn
+      bar.btns[i] = btn
     end
   end
-  for i = count + 1, #arbToolbar.btns do
-    arbToolbar.btns[i]:Hide()
+  for i = count + 1, #bar.btns do
+    bar.btns[i]:Hide()
   end
 
   local gap = 6
   local btnW = math.floor((width - 16 - gap * math.max(0, count - 1)) / count)
   for i, item in ipairs(items) do
-    local btn = arbToolbar.btns[i]
+    local btn = bar.btns[i]
     btn:SetWidth(btnW)
     btn:ClearAllPoints()
     if i == 1 then
-      btn:SetPoint("LEFT", arbToolbar, "LEFT", 8, 0)
+      btn:SetPoint("LEFT", bar, "LEFT", 8, 0)
     else
-      btn:SetPoint("LEFT", arbToolbar.btns[i - 1], "RIGHT", gap, 0)
+      btn:SetPoint("LEFT", bar.btns[i - 1], "RIGHT", gap, 0)
     end
     btn:SetText(item.label)
     btn:SetScript("OnClick", item.fn)
@@ -5960,6 +6053,358 @@ local function LayoutArbToolbar(yOffset, opts)
   end
 
   return yOffset + 34 + 8
+end
+
+function flipBuy.UpdateBar()
+  flipBuy.UpdateWheel()
+  local bar = flipBuy.bar
+  if not bar or not bar:IsShown() then return end
+  local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+  if not fb or type(fb.Status) ~= "function" then return end
+  local st = fb.Status()
+  local cur = st.current
+  local stats = st.stats or {}
+
+  local primaryLabel
+  if not st.active then
+    primaryLabel = (st.phase == "done" and (st.total or 0) > 0) and "重新连续扫货" or "开始连续扫货"
+  elseif st.armed then
+    primaryLabel = "|cffff5555再次确认 (≥10金)|r"
+  elseif st.phase == "ready_item" then
+    primaryLabel = string.format("|cff44ff88买入下一件|r (%s)", FormatMoney(st.liveAuction and st.liveAuction.total or 0))
+  elseif st.phase == "planned_commodity" then
+    primaryLabel = string.format("|cffffd100锁价 (%d件)|r", st.commodity and st.commodity.count or 0)
+  elseif st.phase == "requote_commodity" then
+    primaryLabel = "|cffffd100重查锁价|r"
+  elseif st.phase == "ready_commodity" then
+    primaryLabel = string.format("|cff44ff88确认付款 (%s)|r", FormatMoney(st.commodity and st.commodity.quotedTotal or 0))
+  elseif st.phase == "searching" then
+    primaryLabel = "实时检索中..."
+  elseif st.phase == "quoting_commodity" then
+    primaryLabel = "锁价中..."
+  elseif st.phase == "buying" then
+    primaryLabel = "购买确认中..."
+  else
+    primaryLabel = "继续扫货"
+  end
+  bar.primaryBtn:SetText(primaryLabel)
+  if bar.gearBtn then
+    bar.gearBtn:SetText(state.craftFlipGearOnly ~= false and "|cff44ff88仅扫装备: 开|r" or "|cffffd100仅扫装备: 关|r")
+  end
+  bar.wheelBtn:SetText(state.craftFlipWheel == true and "|cff00ffcc滚轮连买: 开|r" or "滚轮连买: 关")
+
+  local ahTag = st.ahOpen and "|cff44ff88拍卖行已打开|r" or "|cffff8800请先打开拍卖行|r"
+  local wheelTag = (st.active and state.craftFlipWheel == true)
+    and "  ·  |cff00ffcc向上滚滚轮直接买|r" or ""
+  local progTag = st.active and cur
+    and string.format("进度 |cffffd100%d/%d|r (%s)", st.index or 0, st.total or 0, cur.name or "")
+    or string.format("待扫清单 |cffffd100%d|r 种", #(bar.flipRows or {}))
+  local boughtTag = string.format("已买 |cff44ff88%d|r 笔(%d件) · 预计净赚 |cff44ff88%s|r",
+    stats.boughtCount or 0, stats.boughtUnits or 0, FormatMoney(stats.estProfit or 0))
+  local line1 = string.format("|cff44ff88[快速扫货]|r %s  ·  %s  ·  %s%s", ahTag, progTag, boughtTag, wheelTag)
+  local line2 = "|cffd0e0f0" .. tostring(st.message or "") .. "|r"
+  bar.statusText:SetText(line1 .. "\n" .. line2)
+end
+
+function flipBuy.LayoutBar(yOffset, flipRows)
+  local width = (contentChild:GetWidth() or CONTENT_CHILD_WIDTH) - 16
+  if width < 500 then width = CONTENT_CHILD_WIDTH - 16 end
+  local bar = flipBuy.bar
+  if not bar then
+    local template = BackdropTemplateMixin and "BackdropTemplate" or nil
+    bar = CreateFrame("Frame", nil, contentChild, template)
+    bar:SetHeight(70)
+    if bar.SetBackdrop then
+      bar:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 8, edgeSize = 10,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+      })
+      bar:SetBackdropColor(0.05, 0.12, 0.10, 0.96)
+      bar:SetBackdropBorderColor(0.25, 0.85, 0.55, 0.90)
+    end
+
+    local statusText = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    statusText:SetPoint("TOPLEFT", bar, "TOPLEFT", 10, -7)
+    statusText:SetPoint("TOPRIGHT", bar, "TOPRIGHT", -10, -7)
+    statusText:SetJustifyH("LEFT")
+    statusText:SetSpacing(2)
+    bar.statusText = statusText
+
+    local primaryBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    primaryBtn:SetHeight(22)
+    primaryBtn:SetScript("OnClick", function()
+      local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+      if not fb then return end
+      if fb.IsActive() then
+        fb.Step()
+      else
+        local ok, err = fb.Start(bar.flipRows or {})
+        if not ok and err then
+          DEFAULT_CHAT_FRAME:AddMessage("|cffff8800[WoWF 拍卖→商人]|r " .. tostring(err))
+        end
+      end
+      flipBuy.UpdateBar()
+    end)
+    AttachTooltip(primaryBtn, "连续扫货（硬件点击合规）",
+      "暴雪客户端要求每次拍卖行下单都由真实点击或滚轮触发。\n"
+      .. "1. 点击「开始连续扫货」后会后台按利润高→低逐个实时查询当前拍卖行最新挂单；\n"
+      .. "2. 装备/武器查到便宜一口价后点此按钮（或向上滚滚轮）直接买下 1 件；有多个便宜挂单会原地连买；\n"
+      .. "3. 可堆叠商品分两步：点一下锁价，再点一下付款（每次最多 50 件，自动剔除自己挂单与涨价商品）。")
+    bar.primaryBtn = primaryBtn
+
+    local skipBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    skipBtn:SetHeight(22)
+    skipBtn:SetText("跳过当前")
+    skipBtn:SetScript("OnClick", function()
+      local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+      if fb and fb.IsActive() then fb.Skip() end
+      flipBuy.UpdateBar()
+    end)
+    AttachTooltip(skipBtn, "跳过当前物品", "放弃当前正在看的这件商品，立刻检索扫货队列中的下一个物品。")
+    bar.skipBtn = skipBtn
+
+    local gearBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    gearBtn:SetHeight(22)
+    gearBtn:SetScript("OnClick", function()
+      state.craftFlipGearOnly = (state.craftFlipGearOnly == false)
+      local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+      if fb and fb.IsActive and fb.IsActive() then
+        local reason = state.craftFlipGearOnly
+          and "已开启「仅扫装备」，本轮扫货已停止，请重新点击「开始连续扫货」以按新范围扫描"
+          or "已关闭「仅扫装备」，本轮扫货已停止，请重新点击「开始连续扫货」以按新范围扫描"
+        if type(fb.StopAfterPending) == "function" then
+          fb.StopAfterPending(reason)
+        elseif type(fb.Stop) == "function" then
+          fb.Stop(reason)
+        end
+      end
+      RefreshUI()
+    end)
+    AttachTooltip(gearBtn, "仅扫装备防护（防买到致盲粉等假卖价杂物）",
+      "无限服 1.60.1 部分非装备杂物/材料/任务品虽然客户端旧数据标了卖价，实际无法卖给 NPC 商人（如致盲粉）。\n"
+      .. "开启时只展示「武器 / 护甲」及「你已实测卖给过商人的物品」，最稳妥；关闭后可查看全部品类（扫货下单前仍会自动检查 Tooltip 是否有卖价，不可卖店会自动拉黑跳过）。\n"
+      .. "也可使用 /wowf arbignore <物品ID或链接> 手动拉黑任何商人拒收的物品。")
+    bar.gearBtn = gearBtn
+
+    local wheelBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    wheelBtn:SetHeight(22)
+    wheelBtn:SetScript("OnClick", function()
+      state.craftFlipWheel = state.craftFlipWheel ~= true
+      SavePersistedState()
+      flipBuy.UpdateBar()
+    end)
+    AttachTooltip(wheelBtn, "鼠标滚轮连买开关",
+      "开启且开始扫货时（拍卖行与本窗口均打开，非战斗状态），向上滚动鼠标滚轮等同于点击「买入下一件 / 锁价 / 确认付款」，每 0.35 秒触发一次。\n"
+      .. "停止扫货、离开套利页或关闭拍卖行/本窗口会自动归还滚轮默认功能。")
+    bar.wheelBtn = wheelBtn
+
+    local stopBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    stopBtn:SetHeight(22)
+    stopBtn:SetText("停止扫货")
+    stopBtn:SetScript("OnClick", function()
+      local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+      if fb and fb.IsActive and fb.IsActive() then
+        if type(fb.StopAfterPending) == "function" then
+          fb.StopAfterPending()
+        elseif type(fb.Stop) == "function" then
+          fb.Stop()
+        end
+      end
+      flipBuy.UpdateBar()
+    end)
+    AttachTooltip(stopBtn, "停止扫货", "结束本轮扫货队列并清理滚轮绑定与未付款锁价。")
+    bar.stopBtn = stopBtn
+    flipBuy.bar = bar
+  end
+
+  if WoWF_CraftArb and WoWF_CraftArb.FlipBuyer and WoWF_CraftArb.FlipBuyer.SetListener then
+    WoWF_CraftArb.FlipBuyer.SetListener(flipBuy.UpdateBar)
+  end
+
+  bar.flipRows = flipRows or {}
+  bar:SetWidth(width)
+  bar:ClearAllPoints()
+  bar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
+
+  local innerW = width - 20 - 24
+  local wPrimary = math.floor(innerW * 0.34)
+  local wOther = math.floor((innerW - wPrimary) / 4)
+  bar.primaryBtn:SetWidth(wPrimary)
+  bar.skipBtn:SetWidth(wOther)
+  bar.gearBtn:SetWidth(wOther)
+  bar.wheelBtn:SetWidth(wOther)
+  bar.stopBtn:SetWidth(wOther)
+
+  bar.primaryBtn:ClearAllPoints()
+  bar.primaryBtn:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 10, 7)
+  bar.skipBtn:ClearAllPoints()
+  bar.skipBtn:SetPoint("LEFT", bar.primaryBtn, "RIGHT", 6, 0)
+  bar.gearBtn:ClearAllPoints()
+  bar.gearBtn:SetPoint("LEFT", bar.skipBtn, "RIGHT", 6, 0)
+  bar.wheelBtn:ClearAllPoints()
+  bar.wheelBtn:SetPoint("LEFT", bar.gearBtn, "RIGHT", 6, 0)
+  bar.stopBtn:ClearAllPoints()
+  bar.stopBtn:SetPoint("LEFT", bar.wheelBtn, "RIGHT", 6, 0)
+
+  bar:Show()
+  flipBuy.UpdateBar()
+  return yOffset + 70 + 8
+end
+
+function flipBuy.EnsureMerchantButton()
+  if flipBuy.merchantSellBtn then return flipBuy.merchantSellBtn end
+  local parent = _G.MerchantFrame
+  if not parent then return nil end
+
+  local btn = CreateFrame("Button", "WoWFMercSellAllButton", parent, "UIPanelButtonTemplate")
+  btn:SetSize(64, 22)
+  if btn.SetFrameLevel and type(parent.GetFrameLevel) == "function" then
+    local okLv, lv = pcall(parent.GetFrameLevel, parent)
+    if okLv and type(lv) == "number" then btn:SetFrameLevel(lv + 20) end
+  end
+  if btn.RegisterForClicks then
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  end
+  btn:SetScript("OnClick", function(_, mouseButton)
+    local ms = WoWF_CraftArb and WoWF_CraftArb.MerchantSeller
+    if not ms then return end
+    if mouseButton == "RightButton" then
+      local newMode = ms.CycleMode()
+      state.merchantSellMode = newMode
+      SavePersistedState()
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ffcc[WoWF 一键全卖]|r 当前范围已切换为：|cffffd100%s|r", ms.ModeLabel(newMode)))
+      flipBuy.UpdateMerchantButton()
+      return
+    end
+    local status, msg = ms.Click(function(soldSlots, soldValue, blockedMsg)
+      if blockedMsg then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[WoWF 一键全卖]|r " .. tostring(blockedMsg))
+      elseif (soldSlots or 0) > 0 then
+        DEFAULT_CHAT_FRAME:AddMessage(string.format(
+          "|cff44ff88[WoWF 一键全卖]|r 本轮共售出 |cffffd100%d|r 格物品，预计收入 |cff44ff88%s|r。",
+          soldSlots, FormatMoney(soldValue or 0)))
+      end
+      flipBuy.UpdateMerchantButton()
+    end)
+    if status == "confirm" then
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[WoWF 一键全卖]|r " .. tostring(msg))
+    elseif status == "empty" or status == "closed" or status == "busy" or status == "error" then
+      DEFAULT_CHAT_FRAME:AddMessage("|cffff8800[WoWF 一键全卖]|r " .. tostring(msg))
+    elseif status == "done" then
+      DEFAULT_CHAT_FRAME:AddMessage("|cff44ff88[WoWF 一键全卖]|r " .. tostring(msg))
+    end
+    flipBuy.UpdateMerchantButton()
+  end)
+
+  AttachTooltip(btn, "一键出售背包物品", function()
+    local ms = WoWF_CraftArb and WoWF_CraftArb.MerchantSeller
+    if not ms then return "套利引擎尚未就绪。" end
+    local st = ms.Status()
+    local items, summary = ms.Scan(st.mode)
+    local lines = {
+      string.format("当前模式：|cffffd100%s|r", st.modeLabel or "安全全卖"),
+      string.format("预计出售：|cff44ff88%d|r 格（%d 件），共约 |cff44ff88%s|r",
+        #items, summary and summary.totalUnits or 0, FormatMoney(summary and summary.totalValue or 0)),
+    }
+    if summary and (summary.boundCount or 0) > 0 then
+      table.insert(lines, string.format("|cffff5555警告：含 %d 格已绑定物品！|r", summary.boundCount))
+    end
+    if summary and (summary.highQualityCount or 0) > 0 then
+      table.insert(lines, string.format("|cffff5555警告：含 %d 格蓝/紫以上品质物品！|r", summary.highQualityCount))
+    end
+    table.insert(lines, "自动跳过：任务品、锁定格、无卖价/商人拒收品（如致盲粉）。")
+    table.insert(lines, "|cff00ffcc左键点击：|r首次预览确认，5 秒内再次点击开始出售")
+    table.insert(lines, "|cff00ffcc右键点击：|r切换范围（安全未绑定灰白绿 / 全部未绑定 / 全部含绑定蓝紫）")
+    return table.concat(lines, "\n")
+  end)
+
+  flipBuy.merchantSellBtn = btn
+  if not flipBuy.merchantHooked and type(hooksecurefunc) == "function" and type(_G.MerchantFrame_Update) == "function" then
+    flipBuy.merchantHooked = true
+    hooksecurefunc("MerchantFrame_Update", function()
+      flipBuy.UpdateMerchantButton()
+    end)
+  end
+  return btn
+end
+
+function flipBuy.UpdateMerchantButton()
+  local ms = WoWF_CraftArb and WoWF_CraftArb.MerchantSeller
+  local open = ms and ms.IsMerchantOpen and ms.IsMerchantOpen() == true
+  if not open then
+    if flipBuy.merchantSellBtn then flipBuy.merchantSellBtn:Hide() end
+    return
+  end
+  local btn = flipBuy.EnsureMerchantButton()
+  if not btn then return end
+
+  local mf = _G.MerchantFrame
+  if btn.SetFrameLevel and type(mf) == "table" and type(mf.GetFrameLevel) == "function" then
+    local okLv, lv = pcall(mf.GetFrameLevel, mf)
+    if okLv and type(lv) == "number" then btn:SetFrameLevel(lv + 20) end
+  end
+
+  local junk = _G.MerchantSellAllJunkButton
+  local junkShown = type(junk) == "table" and type(junk.IsShown) == "function" and select(2, pcall(junk.IsShown, junk)) == true
+  local narrow = false
+  btn:ClearAllPoints()
+  local placedBeside = false
+  if junkShown and type(junk.GetRight) == "function" then
+    local okRight, junkRight = pcall(junk.GetRight, junk)
+    if okRight and type(junkRight) == "number" then
+      local minRightEdge
+      if type(mf) == "table" and type(mf.GetRight) == "function" then
+        local okMfR, mfRight = pcall(mf.GetRight, mf)
+        if okMfR and type(mfRight) == "number" then minRightEdge = mfRight - 8 end
+      end
+      for _, sibling in ipairs({
+        _G.MerchantBuyBackItem,
+        _G.MerchantRepairItemButton,
+        _G.MerchantRepairAllButton,
+        _G.MerchantGuildBankRepairButton,
+      }) do
+        if type(sibling) == "table" and type(sibling.IsShown) == "function" and select(2, pcall(sibling.IsShown, sibling)) == true
+          and type(sibling.GetLeft) == "function" then
+          local okL, left = pcall(sibling.GetLeft, sibling)
+          if okL and type(left) == "number" and left > junkRight - 4 then
+            if not minRightEdge or left < minRightEdge then minRightEdge = left end
+          end
+        end
+      end
+      local gap = minRightEdge and (minRightEdge - junkRight) or nil
+      if gap and gap >= 68 then
+        btn:SetSize(64, 22)
+        btn:SetPoint("LEFT", junk, "RIGHT", 4, 0)
+        placedBeside = true
+      elseif gap and gap >= 44 then
+        narrow = true
+        btn:SetSize(40, 22)
+        btn:SetPoint("LEFT", junk, "RIGHT", 4, 0)
+        placedBeside = true
+      end
+    end
+  end
+  if not placedBeside then
+    -- 原生按钮紧挨或尚未布局完成时，停靠在商人框右下边缘外侧，彻底避开修理/回购/卖垃圾与底栏页签
+    btn:SetSize(72, 22)
+    btn:SetPoint("TOPRIGHT", mf, "BOTTOMRIGHT", -4, -2)
+  end
+
+  local st = ms.Status()
+  if st.selling then
+    btn:SetText("出售中...")
+  elseif st.armed then
+    btn:SetText(narrow and "|cffff5555确认|r" or "|cffff5555确认卖|r")
+  elseif st.mode == "all" then
+    btn:SetText(narrow and "|cffff8800全卖|r" or "|cffff8800全部全卖|r")
+  elseif st.mode == "unbound" then
+    btn:SetText(narrow and "|cffffd100未绑|r" or "|cffffd100未绑全卖|r")
+  else
+    btn:SetText(narrow and "全卖" or "一键全卖")
+  end
+  btn:Show()
 end
 
 local function IsCraftProfessionSelected(key)
@@ -6032,32 +6477,34 @@ local function LayoutRepFilterBar(yOffset, opts)
   local items = opts and opts.items or {}
   local count = #items
   if count == 0 then
-    if repFilterBar then repFilterBar:Hide() end
+    if flipBuy.repFilterBar then flipBuy.repFilterBar:Hide() end
     return yOffset
   end
 
   local width = (contentChild:GetWidth() or CONTENT_CHILD_WIDTH) - 16
   if width < 500 then width = CONTENT_CHILD_WIDTH - 16 end
-  if not repFilterBar then
+  local bar = flipBuy.repFilterBar
+  if not bar then
     local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-    repFilterBar = CreateFrame("Frame", nil, contentChild, template)
-    repFilterBar:SetHeight(34)
-    if repFilterBar.SetBackdrop then
-      repFilterBar:SetBackdrop({
+    bar = CreateFrame("Frame", nil, contentChild, template)
+    bar:SetHeight(34)
+    if bar.SetBackdrop then
+      bar:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true, tileSize = 8, edgeSize = 10,
         insets = { left = 2, right = 2, top = 2, bottom = 2 },
       })
-      repFilterBar:SetBackdropColor(0.06, 0.09, 0.14, 0.94)
-      repFilterBar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
+      bar:SetBackdropColor(0.06, 0.09, 0.14, 0.94)
+      bar:SetBackdropBorderColor(0.2, 0.55, 0.8, 0.85)
     end
-    repFilterBar.dropdownBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
-    repFilterBar.dropdownBtn:SetHeight(22)
-    repFilterBar.modeBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
-    repFilterBar.modeBtn:SetHeight(22)
-    repFilterBar.clearBtn = CreateFrame("Button", nil, repFilterBar, "UIPanelButtonTemplate")
-    repFilterBar.clearBtn:SetHeight(22)
+    bar.dropdownBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    bar.dropdownBtn:SetHeight(22)
+    bar.modeBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    bar.modeBtn:SetHeight(22)
+    bar.clearBtn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    bar.clearBtn:SetHeight(22)
+    flipBuy.repFilterBar = bar
   end
 
   local hasFilter = opts and opts.hasFilter == true
@@ -6077,11 +6524,11 @@ local function LayoutRepFilterBar(yOffset, opts)
   local clearW = 142
   local dropW = math.max(180, innerW - modeW - clearW - gap * 2)
 
-  repFilterBar.dropdownBtn:SetWidth(dropW)
-  repFilterBar.dropdownBtn:ClearAllPoints()
-  repFilterBar.dropdownBtn:SetPoint("LEFT", repFilterBar, "LEFT", 8, 0)
-  repFilterBar.dropdownBtn:SetText(FormatRepFilterButtonLabel(items, selectedCount, selectedNames))
-  repFilterBar.dropdownBtn:SetScript("OnClick", function(self)
+  bar.dropdownBtn:SetWidth(dropW)
+  bar.dropdownBtn:ClearAllPoints()
+  bar.dropdownBtn:SetPoint("LEFT", bar, "LEFT", 8, 0)
+  bar.dropdownBtn:SetText(FormatRepFilterButtonLabel(items, selectedCount, selectedNames))
+  bar.dropdownBtn:SetScript("OnClick", function(self)
     OpenControlDropdown(self, function()
       local singleMode = (state.repFilterMode == "single")
       local hasAnySelected = function()
@@ -6193,7 +6640,7 @@ local function LayoutRepFilterBar(yOffset, opts)
   end)
   local selectedSummary = hasFilter and table.concat(selectedNames, "、") or "全部可用声望"
   AttachTooltip(
-    repFilterBar.dropdownBtn,
+    bar.dropdownBtn,
     "筛选声望（下拉选择）",
     string.format(
       "当前已选：%s\n当前模式：%s。点击打开声望下拉列表，可按单个或多个声望筛选任务详情。",
@@ -6202,12 +6649,12 @@ local function LayoutRepFilterBar(yOffset, opts)
     )
   )
 
-  repFilterBar.modeBtn:SetWidth(modeW)
-  repFilterBar.modeBtn:ClearAllPoints()
-  repFilterBar.modeBtn:SetPoint("LEFT", repFilterBar.dropdownBtn, "RIGHT", gap, 0)
-  repFilterBar.modeBtn:SetText(isSingle and "筛选模式: 单选" or "筛选模式: 多选")
-  repFilterBar.modeBtn:UnlockHighlight()
-  repFilterBar.modeBtn:SetScript("OnClick", function()
+  bar.modeBtn:SetWidth(modeW)
+  bar.modeBtn:ClearAllPoints()
+  bar.modeBtn:SetPoint("LEFT", bar.dropdownBtn, "RIGHT", gap, 0)
+  bar.modeBtn:SetText(isSingle and "筛选模式: 单选" or "筛选模式: 多选")
+  bar.modeBtn:UnlockHighlight()
+  bar.modeBtn:SetScript("OnClick", function()
     if CloseDropDownMenus then CloseDropDownMenus() end
     if state.repFilterMode == "single" then
       state.repFilterMode = "multi"
@@ -6225,38 +6672,38 @@ local function LayoutRepFilterBar(yOffset, opts)
     RefreshUI()
   end)
   AttachTooltip(
-    repFilterBar.modeBtn,
+    bar.modeBtn,
     "切换单选 / 多选",
     isSingle
       and "当前为单选模式：在下拉框中点击声望即切换为该声望，再次点击已选项可恢复全部。点击此按钮切换为多选模式。"
       or "当前为多选模式：可在下拉框中勾选多个声望同时查看。点击此按钮切换为单选模式。"
   )
 
-  repFilterBar.clearBtn:SetWidth(clearW)
-  repFilterBar.clearBtn:ClearAllPoints()
-  repFilterBar.clearBtn:SetPoint("LEFT", repFilterBar.modeBtn, "RIGHT", gap, 0)
+  bar.clearBtn:SetWidth(clearW)
+  bar.clearBtn:ClearAllPoints()
+  bar.clearBtn:SetPoint("LEFT", bar.modeBtn, "RIGHT", gap, 0)
   if not hasFilter then
-    repFilterBar.clearBtn:SetText("|cff00ffcc✓ 全部声望|r")
-    repFilterBar.clearBtn:LockHighlight()
+    bar.clearBtn:SetText("|cff00ffcc✓ 全部声望|r")
+    bar.clearBtn:LockHighlight()
   else
-    repFilterBar.clearBtn:SetText("清空筛选 (显示全部)")
-    repFilterBar.clearBtn:UnlockHighlight()
+    bar.clearBtn:SetText("清空筛选 (显示全部)")
+    bar.clearBtn:UnlockHighlight()
   end
-  repFilterBar.clearBtn:SetScript("OnClick", function()
+  bar.clearBtn:SetScript("OnClick", function()
     if CloseDropDownMenus then CloseDropDownMenus() end
     state.repFilter = nil
     RefreshUI()
   end)
   AttachTooltip(
-    repFilterBar.clearBtn,
+    bar.clearBtn,
     "显示全部声望",
     "清除已选筛选条件，展示当前阵营可用的全部声望总览与任务详情。"
   )
 
-  repFilterBar:SetSize(width, 34)
-  repFilterBar:ClearAllPoints()
-  repFilterBar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
-  repFilterBar:Show()
+  bar:SetSize(width, 34)
+  bar:ClearAllPoints()
+  bar:SetPoint("TOPLEFT", contentChild, "TOPLEFT", 8, -yOffset)
+  bar:Show()
   return yOffset + 34 + 8
 end
 
@@ -6267,7 +6714,7 @@ local function RenderTabReputations()
   local factions = (guides and type(guides.factions) == "table") and guides.factions or {}
   local factionQuests = (Data and type(Data.factionQuests) == "table") and Data.factionQuests or {}
   if #factions == 0 and #factionQuests == 0 then
-    if repFilterBar then repFilterBar:Hide() end
+    if flipBuy.repFilterBar then flipBuy.repFilterBar:Hide() end
     list:Add({
       title = "|cff00ffcc[声望] 无限服新增第三方声望|r",
       body = "|cffff8800声望数据尚未打包：请更新 WoWF 插件或等待下一次数据同步。|r",
@@ -6768,8 +7215,8 @@ local function RenderTabCraftArb()
     return
   end
 
-  local source = state.craftSource == "vendor" and "vendor"
-    or (state.craftSource == "both" and "both" or "craft")
+  local source = (state.craftSource == "vendor" or state.craftSource == "flip" or state.craftSource == "both")
+    and state.craftSource or "craft"
   local rows, meta = arb.Analyse({
     mode = mode,
     source = source,
@@ -6780,13 +7227,21 @@ local function RenderTabCraftArb()
     onlySkillUp = state.craftOnlySkillUp == true,
     crossOwner = state.craftCrossOwner ~= false,
     sort = sortKey,
+    flipGearOnly = state.craftFlipGearOnly ~= false,
     query = (state.searchQuery and state.searchQuery ~= "") and state.searchQuery or nil,
   })
+
+  if type(arb.DebugReport) == "function" then
+    local okDbg, dbg = pcall(arb.DebugReport)
+    if okDbg and type(dbg) == "table" then
+      WoWFDB.arbDebug = dbg.data
+    end
+  end
 
   -- 1. 数据源与专业等级总览
   local infoLines = {}
   local stateText
-  local providerName = meta.provider == "blackthornes" and "黑石交易技能" or "EasyAuction"
+  local providerName = "黑石交易技能"
   if meta.state == "ready" then
     local snapshot = meta.market and tonumber(meta.market.updatedAt)
     local stamp = snapshot and snapshot > 0 and date("%m-%d %H:%M", snapshot) or nil
@@ -6794,9 +7249,9 @@ local function RenderTabCraftArb()
       and string.format("|cff00ff00已连接 %s 行情|r（快照: %s）", providerName, tostring(stamp))
       or string.format("|cff00ff00已连接 %s 行情|r", providerName)
   elseif meta.state == "loading" then
-    stateText = "|cffffd100已安装 EasyAuction / 黑石交易技能，但当前市场行情尚未初始化|r（扫描一次拍卖行或等待初始化完成）"
+    stateText = "|cffffd100已安装黑石交易技能，但当前市场行情尚未初始化|r（扫描一次拍卖行或等待初始化完成）"
   else
-    stateText = "|cffff5555未检测到 EasyAuction 或黑石交易技能行情|r，启用任一拍卖插件并扫描拍卖行后即可给出真实价格"
+    stateText = "|cffff5555未检测到黑石交易技能行情|r，启用黑石交易技能并扫描拍卖行后即可给出真实价格"
   end
   table.insert(infoLines, "|cff99e6ff行情数据:|r " .. stateText)
 
@@ -6831,7 +7286,19 @@ local function RenderTabCraftArb()
     recipeCount == 0 and "（打开一次专业窗口即可自动补全）" or ""
   ))
   local sourceLabel = source == "vendor" and "|cff00ffcc商人购入→拍卖出售|r"
-    or (source == "both" and "|cff99e6ff制作 + 商人|r" or "|cff99e6ff制作套利|r")
+    or (source == "flip" and "|cff44ff88拍卖行买入→卖商人|r"
+    or (source == "both" and "|cff99e6ff制作 + 商人 + 拍卖→商人|r" or "|cff99e6ff制作套利|r"))
+  local sourceExtra = ""
+  if source == "vendor" then
+    sourceExtra = string.format("  ·  已采集商人商品 |cffffd100%d|r 件", meta.vendorOffers or 0)
+  elseif source == "flip" then
+    local pendingText = (meta.flipPending and meta.flipPending > 0)
+      and string.format("，待读取 %d 件", meta.flipPending) or ""
+    sourceExtra = string.format("  ·  已核对 |cffffd100%d|r 件在售品%s", meta.flipChecked or 0, pendingText)
+  elseif source == "both" then
+    sourceExtra = string.format("  ·  商人商品 |cffffd100%d|r 件  ·  拍卖→商人 |cff44ff88%d|r 条",
+      meta.vendorOffers or 0, meta.flipOffers or 0)
+  end
   table.insert(infoLines, string.format(
     "|cff99e6ff统计:|r 已分析 |cffffd100%d|r 条，当前筛选下 |cffffd100%d|r 条，其中 |cff44ff88盈利 %d|r 条  ·  当前模式: %s  ·  来源: %s%s",
     meta.total or 0,
@@ -6839,7 +7306,7 @@ local function RenderTabCraftArb()
     meta.profitable or 0,
     mode == "de" and "|cffffd100分解套利|r" or "|cff99e6ff成品出售|r",
     sourceLabel,
-    source ~= "craft" and string.format("  ·  已采集商人商品 |cffffd100%d|r 件", meta.vendorOffers or 0) or ""
+    sourceExtra
   ))
   if mode == "de" and not hasEnchanting then
     table.insert(infoLines, "|cffff5555注意:|r 当前角色没有【附魔】，分解套利只代表「若能分解」的理论值，实际无法执行。")
@@ -6872,16 +7339,21 @@ local function RenderTabCraftArb()
   list.y = LayoutArbToolbar(list.y, {
     buttons = {
       {
-        label = source == "vendor" and "来源: 商人→拍卖" or (source == "both" and "来源: 全部" or "来源: 制作"),
+        label = source == "vendor" and "来源: 商人→拍卖"
+          or (source == "flip" and "来源: 拍卖→商人"
+          or (source == "both" and "来源: 全部" or "来源: 制作")),
         fn = function()
-          local nextSource = source == "craft" and "vendor" or (source == "vendor" and "both" or "craft")
+          local nextSource = source == "craft" and "vendor"
+            or (source == "vendor" and "flip"
+            or (source == "flip" and "both" or "craft"))
           state.craftSource = nextSource
           RefreshUI()
         end,
-        tipTitle = "套利来源（制作 / 商人→拍卖 / 全部）",
+        tipTitle = "套利来源（制作 / 商人→拍卖 / 拍卖→商人 / 全部）",
         tipBody = "制作：买材料做成成品卖拍卖行（可递归折算中间产物 / 分解套利）；"
-          .. "商人→拍卖：把打开 NPC 商人窗口时采集到的「买入价」与拍卖行对手最低价对比，直接倒买倒卖；"
-          .. "全部：两类结果合并排序。商人商品来自本插件自动采集，打开任意商人窗口即可记录。",
+          .. "商人→拍卖：把打开 NPC 商人窗口时采集到的「买入价」与拍卖行最低价对比，直接倒买倒卖；"
+          .. "拍卖→商人：在拍卖行最近一次扫描的在售物品中找出挂单价低于 NPC 商人收购价的商品（买来直接卖商店，0%% 手续费）；"
+          .. "全部：三类结果合并排序。",
       },
       {
         label = profBtnLabel,
@@ -7010,11 +7482,23 @@ local function RenderTabCraftArb()
         end,
         tipTitle = "拍卖行在售数量过滤（异常价格防护）",
         tipBody = "开启后过滤掉拍卖行在售数量少于 100 件的物品——挂单过少通常意味着个别人乱挂的异常价格。"
-          .. "EasyAuction 取全量扫描的 bookQuantity / GetDepth 总量；黑石交易技能取它最近一次扫描数到的挂单总件数"
-          .. "（与其物品提示的「现在在售」一致）。两边都还没扫描过该物品时记为「未知」，不参与过滤。",
+          .. "数量来自黑石交易技能最近一次扫描数到的挂单总件数（与其物品提示的「现在在售」一致）；"
+          .. "完整全量扫描中未出现的物品记为 0 件，还没扫描过该物品时记为「未知」，不参与过滤。",
       },
     },
   })
+
+  local flipRows = {}
+  for _, row in ipairs(rows) do
+    if row.kind == "flip" then table.insert(flipRows, row) end
+  end
+  local fbMod = arb.FlipBuyer
+  if source == "flip" or (source == "both" and #flipRows > 0) or (fbMod and fbMod.IsActive and fbMod.IsActive()) then
+    list.y = flipBuy.LayoutBar(list.y, flipRows)
+  elseif flipBuy.bar then
+    flipBuy.bar:Hide()
+    flipBuy.UpdateWheel()
+  end
 
   -- 3. 利润明细（最多 40 条，避免一次创建过多卡片）
   local shown = 0
@@ -7075,26 +7559,28 @@ local function RenderTabCraftArb()
         vendorAction = {
           label = sourceQty > 0 and "加入购物清单" or "加入购物清单(无限)",
           fn = function()
-            local api = arb.Market()
-            if not api or type(api.CreateShoppingList) ~= "function" or type(api.SetShoppingListItem) ~= "function" then
-              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 未检测到 EasyAuction 购物清单写入接口。")
+            if not WoWF_CraftArb or type(WoWF_CraftArb.AddVendorToShoppingList) ~= "function" then
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 套利引擎未加载，无法写入购物清单。")
               return
             end
             local qty = sourceQty > 0 and sourceQty or 1
-            local ok, listID = pcall(api.CreateShoppingList, "WoWF 商人套利", true)
-            if not ok or not listID then
-              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 创建购物清单失败。")
-              return
-            end
-            local wroteOK, wrote = pcall(api.SetShoppingListItem, listID, row.outputID, qty, buySource.price, row.name)
-            if not wroteOK or wrote == false then
-              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 写入购物清单失败（清单 ID: " .. tostring(listID) .. "）。")
-              return
-            end
-            DEFAULT_CHAT_FRAME:AddMessage(string.format(
-              "|cff00ffcc[WoWF 商人套利]|r 已把 %s ×%d 写入购物清单（清单 ID: %s），买入价 %s、到 %s 找 %s。",
-              FormatItemLink(row.outputID, row.name), qty, tostring(listID), FormatMoney(buySource.price),
-              buySource.zone or "?", buySource.npc or "?"))
+            flipBuy.SubmitShoppingList(
+              "vendor:" .. tostring(row.outputID),
+              "WoWF 商人套利",
+              "00ffcc",
+              row.outputID,
+              buySource.price,
+              function()
+                return WoWF_CraftArb.AddVendorToShoppingList(row.outputID, qty, buySource.price)
+              end,
+              function(listID, note)
+                return string.format(
+                  "|cff00ffcc[WoWF 商人套利]|r 已把 %s ×%d 写入黑石购物清单（清单 ID: %s）%s，买入价 %s、到 %s 找 %s。",
+                  FormatItemLink(row.outputID, row.name), qty, tostring(listID),
+                  type(note) == "string" and ("，" .. note) or "", FormatMoney(buySource.price),
+                  buySource.zone or "?", buySource.npc or "?")
+              end
+            )
           end,
         }
       end
@@ -7104,6 +7590,67 @@ local function RenderTabCraftArb()
         theme = profitable and "arbGood" or "arbBad",
         badge = row.profit and string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit)) or "无报价",
         action = vendorAction,
+      })
+    elseif row.kind == "flip" then
+      local flipLines = {}
+      local sellSrcText = row.vendorSellSource == "sold" and "实测卖店价"
+        or (row.vendorSellSource == "tooltip" and "提示已核实卖价"
+        or (row.vendorSellSource == "reported" and "无限服修正价" or "黑石缓存卖价(扫货将二次核实)"))
+      local loneNote = row.loneLow and " |cffffd100(孤立低价)|r" or ""
+      table.insert(flipLines, string.format(
+        "|cff99e6ff拍卖行买入:|r %s / 件%s  ·  |cff99e6ff商人收购:|r %s / 件（%s）  ·  |cff99e6ff在售:|r %s",
+        FormatMoney(row.buyPrice or 0), loneNote,
+        FormatMoney(row.vendorSell or 0), sellSrcText,
+        SupplyText(row.listedSupply, row.listedSupplySource)))
+      table.insert(flipLines, string.format(
+        "|cff99e6ff拍卖手续费:|r 0铜（卖给商人）  ·  单件净利润 %s%s|r  ·  ROI %s%.1f%%|r",
+        CraftSignColor(row.profit), FormatMoney(row.profit or 0),
+        CraftSignColor(row.roi), (row.roi or 0) * 100))
+      if row.buyableQty and row.buyableQty > 0 then
+        if row.totalProfit and row.totalProfit > 0 then
+          table.insert(flipLines, string.format(
+            "|cff99e6ff低于卖店价可扫:|r |cffffd100%d|r 件  ·  |cff99e6ff预计总赚:|r |cff44ff88%s|r（按价格阶梯逐档计价）",
+            row.buyableQty, FormatMoney(row.totalProfit)))
+        else
+          table.insert(flipLines, string.format(
+            "|cff99e6ff当前价位可买:|r |cffffd100%d|r 件",
+            row.buyableQty))
+        end
+      end
+      local profitable = (row.profit or 0) > 0
+      local flipAction = {
+        label = "加入购物清单",
+        fn = function()
+          if not WoWF_CraftArb or type(WoWF_CraftArb.AddFlipToShoppingList) ~= "function" then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 拍卖→商人]|r 套利引擎未加载，无法写入购物清单。")
+            return
+          end
+          local qty = (row.buyableQty and row.buyableQty > 0) and row.buyableQty or 1
+          local maxPay = math.max(1, math.floor((row.vendorSell or 1) - 1))
+          flipBuy.SubmitShoppingList(
+            "flip:" .. tostring(row.outputID),
+            "WoWF 拍卖→商人",
+            "44ff88",
+            row.outputID,
+            maxPay,
+            function()
+              return WoWF_CraftArb.AddFlipToShoppingList(row.outputID, qty, maxPay)
+            end,
+            function(listID, note)
+              return string.format(
+                "|cff44ff88[WoWF 拍卖→商人]|r 已把 %s ×%d 写入黑石购物清单（清单 ID: %s）%s，最高扫货价 %s（商人收 %s）。",
+                FormatItemLink(row.outputID, row.name, row.quality), qty, tostring(listID),
+                type(note) == "string" and ("，" .. note) or "", FormatMoney(maxPay), FormatMoney(row.vendorSell or 0))
+            end
+          )
+        end,
+      }
+      list:Add({
+        title = string.format("%s  |cff44ff88[拍卖→商人]|r", FormatItemLink(row.outputID, row.name, row.quality)),
+        body = table.concat(flipLines, "\n"),
+        theme = profitable and "arbGood" or "arbBad",
+        badge = string.format("%s%s|r", CraftSignColor(row.profit), FormatMoney(row.profit or 0)),
+        action = flipAction,
       })
     else
     local bodyLines = {}
@@ -7144,7 +7691,7 @@ local function RenderTabCraftArb()
       table.insert(bodyLines, "|cffffd100采购清单 (拍卖行):|r\n" .. table.concat(leafLines, "\n"))
     end
     if row.stockShort then
-      table.insert(bodyLines, "|cffff8800注意:|r 部分材料在 EasyAuction 当前深度里库存不足，实际可能买不齐，单价按现有挂单估算。")
+      table.insert(bodyLines, "|cffff8800注意:|r 部分材料在当前拍卖行深度里库存不足，实际可能买不齐，单价按现有挂单估算。")
     end
     if #craftNotes > 0 then
       table.insert(bodyLines, "|cff88ff88自产中间产物:|r\n" .. table.concat(craftNotes, "\n"))
@@ -7196,8 +7743,7 @@ local function RenderTabCraftArb()
     table.insert(bodyLines, string.format(
       "|cff99e6ff技能:|r %s  ·  角色 %s|r%s%s",
       CRAFT_DIFFICULTY_LABEL[row.skillUp] or CRAFT_DIFFICULTY_LABEL.unknown,
-      row.ownerSource == "easyauction" and "EasyAuction 专业库"
-        or (row.ownerSource == "blackthornes" and "黑石交易技能" or "本插件采集"),
+      row.ownerSource == "blackthornes" and "黑石交易技能" or "本插件采集",
       (row.skill and string.format(" · |cffffd100%d/%d|r", row.skill, row.skillMax or 0)) or "",
       row.ownCharacter and "" or " |cffff8800[同账号小号]|r"
     ))
@@ -7235,14 +7781,34 @@ local function RenderTabCraftArb()
       table.insert(emptyLines, "1. 走到任意 NPC 商人（杂货商、专业供应商等）面前，打开商人窗口，本插件会自动记录其出售物品的买入价与库存；")
       table.insert(emptyLines, "2. 记录后切回「制造套利」页，把来源切到「商人→拍卖」即可查看可直接倒买倒卖的商品；")
       table.insert(emptyLines, "3. 若拍卖行插件尚未扫描，将只显示商人买入价、无法计算利润，并不会把无报价当作 0 成本。")
+    elseif source == "flip" then
+      if meta.state ~= "ready" then
+        table.insert(emptyLines, "|cffffd100黑石交易技能行情尚未就绪，暂时无法扫描「拍卖→商人」捡漏。|r")
+        table.insert(emptyLines, "1. 请安装并启用黑石交易技能（Blackthornes_TS）；")
+        table.insert(emptyLines, "2. 在游戏内打开一次拍卖行并让黑石完成一次全量扫描；")
+        table.insert(emptyLines, "3. 扫描完成后切回本页即可自动按最新挂单计算可卖给商人的低价物品。")
+      else
+        table.insert(emptyLines, string.format(
+          "|cffffd100最近一次拍卖行扫描中，暂未发现「挂单价低于 NPC 商人收购价」的物品。|r已核对 %d 件在售商品%s。",
+          meta.flipChecked or 0,
+          (meta.flipPending and meta.flipPending > 0) and string.format("（另有 %d 件商人卖价待黑石在脱开拍卖行后读取）", meta.flipPending) or ""))
+        if state.craftFlipGearOnly ~= false then
+          table.insert(emptyLines, "提示：当前默认开启了「仅扫装备」防护，材料/药水等非装备暂被过滤；可在上方扫货条关闭「仅扫装备」后查看全部品类。")
+        end
+        if state.craftMinSupply == true then
+          table.insert(emptyLines, "提示：当前开启了「在售过滤: ≥100」，大多数低价清仓单件装会被隐藏；建议关闭在售过滤后查看。")
+        elseif state.craftFlipGearOnly == false then
+          table.insert(emptyLines, "可在黑石交易技能完成一次全量扫描后自动更新。")
+        end
+      end
     elseif meta.total == 0 then
       table.insert(emptyLines, "|cffffd100还没有可用于分析的配方数据。|r")
-      table.insert(emptyLines, "1. 安装并启用 EasyAuction 或黑石交易技能（Blackthornes_TS），进过拍卖行后其专业库会记录各角色已学配方；")
+      table.insert(emptyLines, "1. 安装并启用黑石交易技能（Blackthornes_TS），进过拍卖行后其专业库会记录各角色已学配方；")
       table.insert(emptyLines, "2. 也可以打开一次游戏原生专业窗口（裁缝/锻造/附魔等），本页面会自动采集当前角色的配方；")
-      table.insert(emptyLines, "3. 首次使用请让拍卖行插件扫描一次拍卖行，否则没有可比价的行情。")
+      table.insert(emptyLines, "3. 首次使用请让黑石交易技能扫描一次拍卖行，否则没有可比价的行情。")
     elseif meta.state ~= "ready" then
       table.insert(emptyLines, "|cffffd100行情尚未就绪，暂时无法算利润。|r")
-      table.insert(emptyLines, "请启用 EasyAuction 或黑石交易技能并至少扫描一次拍卖行；随后本页会自动按新行情重算。")
+      table.insert(emptyLines, "请启用黑石交易技能并至少扫描一次拍卖行；随后本页会自动按新行情重算。")
     elseif onlyProfitable then
       table.insert(emptyLines, string.format(
         "|cffffd100当前没有可盈利的配方。|r已分析 %d 条、有报价 %d 条；可点击上方「显示全部配方」查看亏损明细，或检查行情快照是否过期。",
@@ -7645,6 +8211,8 @@ local function CreateMainWindow()
   mainFrame:RegisterForDrag("LeftButton")
   mainFrame:SetScript("OnDragStart", mainFrame.StartMoving)
   mainFrame:SetScript("OnDragStop", mainFrame.StopMovingOrSizing)
+  mainFrame:SetScript("OnShow", function() flipBuy.UpdateWheel() end)
+  mainFrame:SetScript("OnHide", function() flipBuy.UpdateWheel() end)
   mainFrame:Hide()
 
   if mainFrame.SetBackdrop then
@@ -8071,12 +8639,22 @@ end
 for _, talentEv in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED", "SKILL_LINES_CHANGED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, talentEv)
 end
--- 制造套利：专业窗口打开时自动补全本插件的配方缓存，物品异步加载完成时重绘套利页
-for _, craftEv in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_CLOSE", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "GET_ITEM_INFO_RECEIVED", "ITEM_DATA_LOAD_RESULT" }) do
+-- 制造套利：专业窗口打开时自动补全本插件的配方缓存，物品异步加载完成时重绘套利页，
+-- 并监听拍卖行检索/购买回执用于「拍卖→商人」连续扫货
+for _, craftEv in ipairs({
+  "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_CLOSE",
+  "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",
+  "ITEM_SEARCH_RESULTS_UPDATED", "COMMODITY_SEARCH_RESULTS_UPDATED",
+  "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE",
+  "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED",
+  "AUCTION_HOUSE_PURCHASE_COMPLETED", "AUCTION_HOUSE_SHOW_ERROR",
+  "PLAYER_MONEY", "PLAYER_REGEN_ENABLED", "UPDATE_BINDINGS",
+  "GET_ITEM_INFO_RECEIVED", "ITEM_DATA_LOAD_RESULT",
+}) do
   pcall(eventFrame.RegisterEvent, eventFrame, craftEv)
 end
--- 商人套利：打开 NPC 商人窗口时自动采集其出售商品与买入价
-for _, vendorEv in ipairs({ "MERCHANT_SHOW", "MERCHANT_UPDATE" }) do
+-- 商人套利：打开 NPC 商人窗口时自动采集其出售商品与买入价，并驱动「一键全卖」按钮
+for _, vendorEv in ipairs({ "MERCHANT_SHOW", "MERCHANT_UPDATE", "MERCHANT_CLOSED" }) do
   pcall(eventFrame.RegisterEvent, eventFrame, vendorEv)
 end
 pcall(eventFrame.RegisterEvent, eventFrame, "GET_ITEM_INFO_RECEIVED")
@@ -8086,9 +8664,21 @@ local hasPrintedWelcome = false
 eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
     LoadPersistedState()
+    if WoWF_CraftArb and WoWF_CraftArb.FlipBuyer and WoWF_CraftArb.FlipBuyer.SetListener then
+      WoWF_CraftArb.FlipBuyer.SetListener(flipBuy.UpdateBar)
+    end
+    if WoWF_CraftArb and WoWF_CraftArb.MerchantSeller then
+      if type(WoWF_CraftArb.MerchantSeller.SetMode) == "function" then
+        WoWF_CraftArb.MerchantSeller.SetMode(state.merchantSellMode or "safe")
+      end
+      if type(WoWF_CraftArb.MerchantSeller.SetListener) == "function" then
+        WoWF_CraftArb.MerchantSeller.SetListener(flipBuy.UpdateMerchantButton)
+      end
+    end
     CreateMinimapButton()
     SyncPlayerCharacter()
     RefreshUI()
+    flipBuy.UpdateWheel()
     if event == "PLAYER_ENTERING_WORLD" and not hasPrintedWelcome then
       hasPrintedWelcome = true
       local route = GetCurrentRoute()
@@ -8119,12 +8709,16 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r " .. table.concat(msgParts, " · ") .. " (输入 /wowf 查看详情)")
     RefreshUI()
   elseif event == "UPDATE_FACTION" or event == "BAG_UPDATE_DELAYED" then
+    if event == "BAG_UPDATE_DELAYED" and WoWF_CraftArb and WoWF_CraftArb.MerchantSeller
+      and WoWF_CraftArb.MerchantSeller.OnEvent then
+      pcall(WoWF_CraftArb.MerchantSeller.OnEvent, event)
+    end
     local refreshReputation = (event == "UPDATE_FACTION" and state.activeTab == 9)
     if mainFrame and mainFrame:IsShown() and (state.activeTab == 1 or state.activeTab == 2 or refreshReputation) then
       ScheduleRefresh(true, 0.2)
     end
   elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then
-    -- 打开专业窗口时顺带补全配方缓存（离线也能给出成本，不必依赖 EasyAuction 采集）
+    -- 打开专业窗口时顺带补全配方缓存（离线也能给出成本，不必依赖黑石专业库采集）
     local ok, count = pcall(function() return WoWF_CraftArb and WoWF_CraftArb.Harvest() end)
     if ok and count and count > 0 then
       WoWFDB.craftHarvestCount = count
@@ -8136,8 +8730,14 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
       ScheduleRefresh(true, 0.2)
     end
-  elseif event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" then
-    if WoWF_CraftArb and WoWF_CraftArb.HarvestVendor then
+  elseif event == "MERCHANT_SHOW" or event == "MERCHANT_UPDATE" or event == "MERCHANT_CLOSED" then
+    if WoWF_CraftArb and WoWF_CraftArb.MerchantSeller and WoWF_CraftArb.MerchantSeller.OnEvent then
+      pcall(WoWF_CraftArb.MerchantSeller.OnEvent, event)
+    end
+    if event ~= "MERCHANT_CLOSED" and type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+      pcall(C_Timer.After, 0, flipBuy.UpdateMerchantButton)
+    end
+    if event ~= "MERCHANT_CLOSED" and WoWF_CraftArb and WoWF_CraftArb.HarvestVendor then
       local ok, count = pcall(WoWF_CraftArb.HarvestVendor)
       if ok and count and count > 0 and mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
         ScheduleRefresh(true, 0.2)
@@ -8146,9 +8746,23 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
   elseif event == "AUCTION_HOUSE_SHOW" or event == "AUCTION_HOUSE_CLOSED" then
     -- 行情快照只在拍卖行内更新：回到「制造套利」页时重新计算一次
     if WoWF_CraftArb then WoWF_CraftArb.Reset() end
+    if WoWF_CraftArb and WoWF_CraftArb.FlipBuyer and WoWF_CraftArb.FlipBuyer.OnEvent then
+      pcall(WoWF_CraftArb.FlipBuyer.OnEvent, event, arg1, arg2)
+    end
+    flipBuy.UpdateWheel()
     if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
       ScheduleRefresh(true, 0.2)
     end
+  elseif event == "ITEM_SEARCH_RESULTS_UPDATED" or event == "COMMODITY_SEARCH_RESULTS_UPDATED"
+    or event == "COMMODITY_PRICE_UPDATED" or event == "COMMODITY_PRICE_UNAVAILABLE"
+    or event == "COMMODITY_PURCHASE_SUCCEEDED" or event == "COMMODITY_PURCHASE_FAILED"
+    or event == "AUCTION_HOUSE_PURCHASE_COMPLETED" or event == "AUCTION_HOUSE_SHOW_ERROR"
+    or event == "PLAYER_MONEY" then
+    if WoWF_CraftArb and WoWF_CraftArb.FlipBuyer and WoWF_CraftArb.FlipBuyer.OnEvent then
+      pcall(WoWF_CraftArb.FlipBuyer.OnEvent, event, arg1, arg2)
+    end
+  elseif event == "PLAYER_REGEN_ENABLED" or event == "UPDATE_BINDINGS" then
+    flipBuy.UpdateWheel()
   elseif event == "GET_ITEM_INFO_RECEIVED" or event == "ITEM_DATA_LOAD_RESULT" then
     if arg2 == true then
       local itemID = tonumber(arg1)
@@ -8175,6 +8789,39 @@ SLASH_WOWF1 = "/wowf"
 SLASH_WOWF2 = "/wowfio"
 SlashCmdList["WOWF"] = function(msg)
   local cmd = string.lower(string.gsub(msg or "", "^%s*(.-)%s*$", "%1"))
+  local arbDebugArg = string.match(cmd, "^arbdebug%s*(.*)$")
+  if arbDebugArg ~= nil then
+    local itemID = tonumber(arbDebugArg) or tonumber(string.match(msg or "", "item:(%d+)"))
+    if WoWF_CraftArb and type(WoWF_CraftArb.DebugReport) == "function" then
+      local okDbg, dbg = pcall(WoWF_CraftArb.DebugReport, itemID)
+      if okDbg and type(dbg) == "table" then
+        WoWFDB.arbDebug = dbg.data
+        for _, line in ipairs(dbg.lines or {}) do
+          DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[WoWF 套利诊断]|r " .. tostring(line))
+        end
+      else
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 套利诊断]|r 执行失败: " .. tostring(dbg))
+      end
+    else
+      DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 套利诊断]|r CraftArb 未加载。")
+    end
+    return
+  end
+  local arbIgnoreArg = string.match(cmd, "^arbignore%s*(.*)$")
+  if arbIgnoreArg ~= nil then
+    local itemID = tonumber(arbIgnoreArg) or tonumber(string.match(msg or "", "item:(%d+)"))
+    if not itemID then
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[WoWF 拍卖→商人]|r 用法: /wowf arbignore <物品ID或物品链接>")
+    elseif WoWF_CraftArb and type(WoWF_CraftArb.MarkFlipUnsellable) == "function" and WoWF_CraftArb.MarkFlipUnsellable(itemID) then
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ffcc[WoWF 拍卖→商人]|r 已把 %s 拉入不可卖店黑名单，后续不再推荐和扫货。", FormatItemLink(itemID)))
+      if mainFrame and mainFrame:IsShown() and state.activeTab == 8 then
+        RefreshUI()
+      end
+    else
+      DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 拍卖→商人]|r 拉黑失败：CraftArb 未就绪或物品 ID 无效。")
+    end
+    return
+  end
   if cmd == "help" or cmd == "?" then
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ffcc[巫妖王的无限百科]|r 可用斜杠子命令:")
     DEFAULT_CHAT_FRAME:AddMessage("  |cffffd100/wowf|r — 打开智能匹配仪表盘")

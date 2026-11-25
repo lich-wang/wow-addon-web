@@ -2184,8 +2184,28 @@ async function main() {
       local sD = WoWF_CraftArb.ListedSupply(4496)
       local qD, _, qSrcD = WoWF_CraftArb.SellQuote(4496)
 
+      -- 场景 E：GetRealmName() 返回 "95"（与桶键 CN1 Realm 2 PvE-Alliance 不一致且命空桶），回退命中非空联盟桶
+      function GetRealmName() return "95" end
+      _G.BlackthornesTSCharDB = nil
+      _G.BlackthornesTSDB = {
+        prices = {
+          ["CN1 Realm 2 PvE-Alliance"] = {
+            [4497] = { market = 25241, min = 22700, rivalMin = 22700, quantity = 17, seen = 1795589810 },
+          },
+        },
+        realmPrices = {
+          ["CN1 Realm 2 PvE-Alliance"] = {
+            [3108] = { "sender", 1795589814, 13662, 13662 },
+          },
+        },
+      }
+      WoWF_CraftArb.Reset()
+      local sE = WoWF_CraftArb.ListedSupply(4497)
+      local sShared, sSharedSrc = WoWF_CraftArb.ListedSupply(3108)
+
       __WOW_BRIDGE__:emitString(table.concat({
-        tostring(sA), tostring(sB), tostring(sC), tostring(sD), tostring(qD), tostring(qSrcD)
+        tostring(sA), tostring(sB), tostring(sC), tostring(sD), tostring(qD), tostring(qSrcD),
+        tostring(sE), tostring(sShared), tostring(sSharedSrc)
       }, "|"))
     `, 'BtFallbackTest.lua');
 
@@ -2196,6 +2216,741 @@ async function main() {
     btChecks.push(['存档回退C-部落不串读Forever-Alliance(nil)', fbParts[2] === 'nil']);
     btChecks.push(['标准服名-SomeRealm-Alliance命中(13)', fbParts[3] === '13']);
     btChecks.push(['标准服名-min=0时SellQuote回退rivalMin(24000)', fbParts[4] === '24000' && fbParts[5] === 'rivalMin']);
+    btChecks.push(['空桶回退E-服名95命空桶回退CN1联盟桶(17)', fbParts[6] === '17']);
+    btChecks.push(['共享价标记-仅在realmPrices存在时返回nil/shared', fbParts[7] === 'nil' && fbParts[8] === 'shared']);
+
+    // 校验仅存在于 realmPrices 的商品在商人→拍卖 UI 中显示「未知(共享价无件数)」
+    btRt.execLua(`
+      _G.BlackthornesTS_API = {
+        version = 1,
+        GetPrice = function(item)
+          if item == 3108 then return 13662 end
+          return nil
+        end,
+      }
+      WoWFDB.vendorCache = {
+        ["查瑞迪·米普斯"] = {
+          zone = "尘泥沼泽",
+          at = 1795581000,
+          [3108] = { id = 3108, price = 7593, stock = -1, stack = 1, zone = "尘泥沼泽", at = 1795581000 },
+        },
+      }
+      WoWF_CraftArb.Reset()
+    `, 'BtSharedUiTest.lua');
+    btRt.runSlashCommand('/wowf arb');
+    const btSharedSnap = btRt.getSnapshot();
+    const btSharedText = summarizeCards(btSharedSnap).map((c) => `${c.title}\n${c.body}`).join('\n');
+    btChecks.push(['UI-共享价条目显示未知(共享价无件数)', btSharedText.includes('未知(共享价无件数)')]);
+    btRt.runSlashCommand('/wowf arbdebug 3108');
+    const dbgSnap = btRt.getSnapshot();
+    const dbgMsgJoined = dbgSnap.chatMessages.map((m) => m.text).join('\n');
+    btChecks.push(['诊断命令-/wowf arbdebug输出物品诊断行', dbgMsgJoined.includes('[WoWF 套利诊断]') && dbgMsgJoined.includes('item=3108')]);
+
+    // 场景 F：完整全量扫描（lastFullScanByRealm）存在时，不在 prices 里的共享价物品判定为 0 件；
+    // 仅有截断扫描（lastCappedScanByRealm）时仍保留未知(共享价无件数)
+    btRt.execLua(`
+      _G.BlackthornesTSDB.lastCappedScanByRealm = { ["CN1 Realm 2 PvE-Alliance"] = 1795590600 }
+      WoWF_CraftArb.Reset()
+      local sCapped, srcCapped = WoWF_CraftArb.ListedSupply(3108)
+
+      _G.BlackthornesTSDB.lastFullScanByRealm = { ["CN1 Realm 2 PvE-Alliance"] = 1795590711 }
+      WoWF_CraftArb.Reset()
+      local sFull, srcFull = WoWF_CraftArb.ListedSupply(3108)
+      local filteredRows = WoWF_CraftArb.VendorArbitrage({ minSupply = 100, onlyProfitable = false })
+      local has3108InFiltered = false
+      for _, r in ipairs(filteredRows) do
+        if r.outputID == 3108 then has3108InFiltered = true end
+      end
+
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(sCapped), tostring(srcCapped), tostring(sFull), tostring(srcFull), tostring(has3108InFiltered)
+      }, "|"))
+    `, 'BtFullScanZeroTest.lua');
+    const [fullZeroOut] = btRt.takeEmittedStrings();
+    const fzParts = String(fullZeroOut || '').split('|');
+    btChecks.push(['截断扫描不误判0件-返回nil/shared', fzParts[0] === 'nil' && fzParts[1] === 'shared']);
+    btChecks.push(['全量扫描缺失项判定0件-返回0/fullscan', fzParts[2] === '0' && fzParts[3] === 'fullscan']);
+    btChecks.push(['在售过滤>=100过滤掉fullscan 0件条目', fzParts[4] === 'false']);
+
+    // 关闭过滤刷新 /wowf arb 应显示「0 件(当前无挂单)」
+    btRt.execLua(`WoWFDB.uiState.craftMinSupply = false`, 'BtFullScanUiPrep.lua');
+    btRt.runSlashCommand('/wowf arb');
+    let fullZeroSnap = btRt.getSnapshot();
+    if (!summarizeCards(fullZeroSnap).some((c) => c.title.includes('重型飞刀') || c.body.includes('0 件(当前无挂单)'))) {
+      btRt.runSlashCommand('/wowf arb');
+      fullZeroSnap = btRt.getSnapshot();
+    }
+    const fullZeroText = summarizeCards(fullZeroSnap).map((c) => `${c.title}\n${c.body}`).join('\n');
+    btChecks.push(['UI-全量扫描0件显示0件(当前无挂单)', fullZeroText.includes('0 件(当前无挂单)')]);
+
+    // 场景 G：黑石交易技能购物清单写入（商人套利点击按钮两次复用清单 + 制造套利 + 无运行时回退写存档）
+    btRt.execLua(`
+      local slLists = {}
+      local slNextId = 1
+      local sl = { version = 0 }
+      function sl:All() return slLists end
+      function sl:Get(idx) return slLists[idx] end
+      function sl:Make(name)
+        slLists[#slLists + 1] = { id = slNextId, name = name, items = {} }
+        slNextId = slNextId + 1
+        sl.version = sl.version + 1
+        return #slLists
+      end
+      function sl:Add(idx, itemID, want)
+        local list = slLists[idx]
+        if not list then return nil, "missing" end
+        for _, it in ipairs(list.items) do
+          if it.id == itemID then
+            it.want = it.want + want
+            sl.version = sl.version + 1
+            return true
+          end
+        end
+        list.items[#list.items + 1] = { id = itemID, want = want }
+        sl.version = sl.version + 1
+        return true
+      end
+      function sl:SetMaxPay(idx, itemID, copper)
+        local list = slLists[idx]
+        if not list then return false end
+        for _, it in ipairs(list.items) do
+          if it.id == itemID then
+            if it.maxPay ~= copper then
+              it.maxPay = copper
+              sl.version = sl.version + 1
+            end
+            return true
+          end
+        end
+        return false
+      end
+      _G.BlackthornesTS = { ShoppingLists = sl }
+    `, 'BtShoppingListMock.lua');
+
+    const addVendorListBtn = Object.values(fullZeroSnap.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, fullZeroSnap.frames) && stripWoWFormatting(f.text).includes('加入购物清单')
+    );
+    btChecks.push(['UI-商人套利卡存在加入购物清单按钮', Boolean(addVendorListBtn)]);
+    if (addVendorListBtn) {
+      btRt.triggerFrameScript(addVendorListBtn.id, 'OnClick', 'LeftButton');
+      btRt.triggerFrameScript(addVendorListBtn.id, 'OnClick', 'LeftButton');
+    }
+    const afterVendorListSnap = btRt.getSnapshot();
+    const vendorListChat = afterVendorListSnap.chatMessages.map((m) => m.text).join('\n');
+    btChecks.push(['UI-商人加入购物清单无EasyAuction报错', !vendorListChat.includes('EasyAuction')]);
+    btChecks.push(['UI-商人加入购物清单提示写入成功', vendorListChat.includes('已写入黑石购物清单')]);
+
+    btRt.execLua(`
+      local sl = _G.BlackthornesTS.ShoppingLists
+      local all = sl:All()
+      local first = all[1]
+      local firstItem = first and first.items and first.items[1]
+      local craftOk, craftListId = WoWF_CraftArb.AddToShoppingList({
+        leaves = { { itemID = 2593, quantity = 3, unit = 160 } },
+      }, "测试成品")
+      local craftList = all[2]
+      local craftItem = craftList and craftList.items and craftList.items[1]
+
+      -- 无 ShoppingLists 运行时时回退写入 BlackthornesTSDB.shoppingLists
+      _G.BlackthornesTS = nil
+      _G.BlackthornesTSDB.shoppingLists = {}
+      _G.BlackthornesTSDB.shoppingListNextId = 10
+      local fbOk1, fbId1 = WoWF_CraftArb.AddVendorToShoppingList(4497, 2, 20000)
+      local fbOk2 = WoWF_CraftArb.AddVendorToShoppingList(4497, 3, 20000)
+      local fbList = _G.BlackthornesTSDB.shoppingLists[1]
+      local fbItem = fbList and fbList.items and fbList.items[1]
+
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(#all),
+        tostring(first and first.name),
+        tostring(firstItem and firstItem.id),
+        tostring(firstItem and firstItem.want),
+        tostring(firstItem and firstItem.maxPay),
+        tostring(sl.version),
+        tostring(craftOk),
+        tostring(craftListId),
+        tostring(craftItem and craftItem.id),
+        tostring(craftItem and craftItem.want),
+        tostring(craftItem and craftItem.maxPay),
+        tostring(fbOk1 and fbOk2),
+        tostring(#_G.BlackthornesTSDB.shoppingLists),
+        tostring(fbId1),
+        tostring(fbItem and fbItem.want),
+        tostring(fbItem and fbItem.maxPay),
+      }, "|"))
+    `, 'BtShoppingListVerify.lua');
+    const [slOut] = btRt.takeEmittedStrings();
+    const slParts = String(slOut || '').split('|');
+    btChecks.push(['购物清单-商人连点两次复用同一清单并累加(want=2,maxPay=7593)',
+      slParts[0] === '2' && slParts[1] === 'WoWF 商人套利' && slParts[2] === '3108' && slParts[3] === '2' && slParts[4] === '7593' && Number(slParts[5]) >= 3]);
+    btChecks.push(['购物清单-制造套利AddToShoppingList写入黑石清单',
+      slParts[6] === 'true' && slParts[7] === '2' && slParts[8] === '2593' && slParts[9] === '3' && slParts[10] === '168']);
+    btChecks.push(['购物清单-无运行时回退写BlackthornesTSDB并累加',
+      slParts[11] === 'true' && slParts[12] === '1' && slParts[13] === '10' && slParts[14] === '5' && slParts[15] === '20000']);
+
+    // 场景 H：拍卖→商人套利（低于 NPC 商人收购价的挂单，0% 手续费，充能/自己/过期过滤 + 梯子汇总 + 清单写入）
+    btRt.execLua(`
+      local slLists, slNextId = {}, 1
+      local sl = { version = 0 }
+      function sl:All() return slLists end
+      function sl:Get(idx) return slLists[idx] end
+      function sl:Make(name)
+        slLists[#slLists + 1] = { id = slNextId, name = name, items = {} }
+        slNextId = slNextId + 1
+        sl.version = sl.version + 1
+        return #slLists
+      end
+      function sl:Add(idx, itemID, want)
+        local list = slLists[idx]
+        if not list then return nil, "missing" end
+        for _, it in ipairs(list.items) do
+          if it.id == itemID then
+            it.want = it.want + want
+            sl.version = sl.version + 1
+            return true
+          end
+        end
+        list.items[#list.items + 1] = { id = itemID, want = want }
+        sl.version = sl.version + 1
+        return true
+      end
+      function sl:SetMaxPay(idx, itemID, copper)
+        local list = slLists[idx]
+        if not list then return false end
+        for _, it in ipairs(list.items) do
+          if it.id == itemID then
+            it.maxPay = copper
+            sl.version = sl.version + 1
+            return true
+          end
+        end
+        return false
+      end
+      _G.BlackthornesTS = { ShoppingLists = sl }
+      _G.C_TooltipInfo = {
+        GetItemByID = function(id)
+          if id == 2970 then
+            return { lines = { { type = 0, leftText = "法师短裤" }, { type = 11, price = 333 } } }
+          elseif id == 95099 then
+            return { lines = { { type = 0, leftText = "无卖价假装备" }, { type = 0, leftText = "不可出售给商人" } } }
+          elseif id == 95005 then
+            return { lines = { { type = 0, leftText = "有卖价杂物" }, { type = 11, price = 250 } } }
+          end
+          return nil
+        end,
+      }
+      _G.BlackthornesTSDB = {
+        lastFullScanByRealm = { ["CN1 Realm 2 PvE-Alliance"] = 1795592401 },
+        prices = {
+          ["CN1 Realm 2 PvE-Alliance"] = {
+            [2970] = { rivalMin = 300, min = 300, market = 400, quantity = 15, seen = 1795592401, ladder = { 300, 2, 320, 3, 400, 10 } },
+            [5530] = { rivalMin = 99, min = 99, market = 120, quantity = 1000, seen = 1795592401 },
+            [9327] = { rivalMin = 600, min = 600, market = 620, quantity = 40, seen = 1795592401 },
+            [95099] = { rivalMin = 100, min = 100, market = 400, quantity = 2, seen = 1795592401 },
+            [95005] = { rivalMin = 100, min = 100, market = 200, quantity = 5, seen = 1795592401 },
+            [20745] = { rivalMin = 100, min = 100, market = 200, quantity = 2, seen = 1795592401 },
+            [20744] = { rivalMin = 80, min = 80, market = 120, quantity = 4, seen = 1795592401 },
+            [90001] = { ownMin = 100, min = 100, quantity = 1, seen = 1795592401 },
+            [90002] = { rivalMin = 100, min = 100, quantity = 3, seen = 1795500000 },
+            [90003] = { rivalMin = 350, min = 350, quantity = 5, seen = 1795592401 },
+          },
+        },
+        itemFacts = {
+          [2970] = { n = "法师短裤", q = 1, c = 4, v = 333 },
+          [5530] = { n = "致盲粉", q = 1, c = 15, v = 125 },
+          [9327] = { n = "秘密数据存取卡", q = 1, c = 12, v = 625 },
+          [95099] = { n = "无卖价假装备", q = 1, c = 4, v = 500 },
+          [95005] = { n = "有卖价杂物", q = 1, c = 15, v = 250 },
+          [20745] = { n = "充能油测试", q = 1, c = 0, v = 500, ch = 5 },
+          [20744] = { n = "初级巫师之油", q = 1, c = 0, v = 500, ch = 5 },
+          [90001] = { n = "自己挂单测试", q = 1, c = 4, v = 500 },
+          [90002] = { n = "过期挂单测试", q = 1, c = 4, v = 500 },
+          [90003] = { n = "无利可图测试", q = 1, c = 4, v = 300 },
+        },
+        vendorPaid = {
+          [20744] = { pay = 100, at = 1795592000 },
+        },
+      }
+      WoWF_CraftArb.Reset()
+      local flipRowsGear, flipMeta = WoWF_CraftArb.Analyse({ source = "flip", onlyProfitable = true, flipGearOnly = true })
+      local flipRowsAll = WoWF_CraftArb.Analyse({ source = "flip", onlyProfitable = true, flipGearOnly = false })
+      local bothRows = WoWF_CraftArb.Analyse({ source = "both", onlyProfitable = true, flipGearOnly = true })
+      local r1 = flipRowsGear[1] or {}
+      local r2 = flipRowsGear[2] or {}
+      local hasFlipInBoth, has5530, has9327, has95099 = false, false, false, false
+      for _, r in ipairs(bothRows) do
+        if r.kind == "flip" and r.outputID == 2970 then hasFlipInBoth = true end
+      end
+      for _, r in ipairs(flipRowsAll) do
+        if r.outputID == 5530 then has5530 = true end
+        if r.outputID == 9327 then has9327 = true end
+        if r.outputID == 95099 then has95099 = true end
+      end
+      local blacklisted95099 = type(WoWFDB.unsellableItems) == "table" and WoWFDB.unsellableItems[95099] == true
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(#flipRowsGear), tostring(#flipRowsAll),
+        tostring(r1.outputID), tostring(r1.profit), tostring(r1.cut), tostring(r1.buyableQty), tostring(r1.totalProfit), tostring(r1.vendorSellSource),
+        tostring(r2.outputID), tostring(r2.profit), tostring(r2.vendorSellSource),
+        tostring(hasFlipInBoth), tostring(flipMeta.flipChecked),
+        tostring(has5530), tostring(has9327), tostring(has95099), tostring(blacklisted95099),
+      }, "|"))
+    `, 'BtVendorFlipTest.lua');
+    const [flipOut] = btRt.takeEmittedStrings();
+    const flParts = String(flipOut || '').split('|');
+    btChecks.push(['拍卖→商人-仅扫装备命中2970(tooltip)与20744(sold)共2条，关闭仅扫装备含3条',
+      flParts[0] === '2' && flParts[1] === '3'
+      && flParts[2] === '2970' && flParts[3] === '33' && flParts[4] === '0'
+      && flParts[5] === '5' && flParts[6] === '105' && flParts[7] === 'tooltip']);
+    btChecks.push(['拍卖→商人-实测vendorPaid覆盖充能物品(20744,profit=20,sold)',
+      flParts[8] === '20744' && flParts[9] === '20' && flParts[10] === 'sold']);
+    btChecks.push(['拍卖→商人-排除致盲粉(5530)、任务品(9327)和Tooltip无卖价品(95099并拉黑)',
+      flParts[11] === 'true' && Number(flParts[12]) >= 4
+      && flParts[13] === 'false' && flParts[14] === 'false' && flParts[15] === 'false' && flParts[16] === 'true']);
+
+    btRt.runSlashCommand('/wowf arb');
+    let flipUiSnap = btRt.getSnapshot();
+    for (let clicks = 0; clicks < 4; clicks += 1) {
+      const srcBtn = Object.values(flipUiSnap.frames).find(
+        (f) => f.frameType === 'Button' && isFrameTreeShown(f, flipUiSnap.frames) && stripWoWFormatting(f.text).startsWith('来源:')
+      );
+      if (!srcBtn || stripWoWFormatting(srcBtn.text).includes('拍卖→商人')) break;
+      btRt.triggerFrameScript(srcBtn.id, 'OnClick', 'LeftButton');
+      flipUiSnap = btRt.getSnapshot();
+    }
+    const flipUiText = summarizeCards(flipUiSnap).map((c) => `${c.title}\n${c.body}`).join('\n');
+    btChecks.push(['UI-拍卖→商人卡片展示0%手续费与可扫件数',
+      flipUiText.includes('[拍卖→商人]') && flipUiText.includes('法师短裤')
+      && flipUiText.includes('0铜（卖给商人）') && flipUiText.includes('低于卖店价可扫')]);
+    const addFlipBtn = Object.values(flipUiSnap.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, flipUiSnap.frames) && stripWoWFormatting(f.text).includes('加入购物清单')
+    );
+    btChecks.push(['UI-拍卖→商人卡存在加入购物清单按钮', Boolean(addFlipBtn)]);
+    if (addFlipBtn) {
+      btRt.triggerFrameScript(addFlipBtn.id, 'OnClick', 'LeftButton');
+    }
+    btRt.execLua(`
+      local all = _G.BlackthornesTS.ShoppingLists:All()
+      local flipList = all[1]
+      local flipItem = flipList and flipList.items and flipList.items[1]
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(#all),
+        tostring(flipList and flipList.name),
+        tostring(flipItem and flipItem.id),
+        tostring(flipItem and flipItem.want),
+        tostring(flipItem and flipItem.maxPay),
+      }, "|"))
+    `, 'BtFlipShoppingVerify.lua');
+    const [flipSlOut] = btRt.takeEmittedStrings();
+    const flSlParts = String(flipSlOut || '').split('|');
+    btChecks.push(['购物清单-拍卖→商人写入WoWF拍卖→商人清单(id=2970,want=5,maxPay=332)',
+      flSlParts[0] === '1' && flSlParts[1] === 'WoWF 拍卖→商人' && flSlParts[2] === '2970' && flSlParts[3] === '5' && flSlParts[4] === '332']);
+
+    // 场景 I：拍卖→商人连续扫货 / 滚轮连买（含自己挂单过滤、单件连买、堆叠两段锁价、高价二次确认与涨价拦截）
+    btRt.execLua(`
+      local money = 500000
+      function GetMoney() return money end
+      local tClock = 100
+      function GetTime() return tClock end
+      local overrideCalls, clearCalls, calls = 0, 0, {}
+      function SetOverrideBindingClick(owner, isPriority, key, btn, mouseBtn)
+        overrideCalls = overrideCalls + 1
+        _G.__WOWF_TEST_BOUND = { key = key, btn = btn, mouseBtn = mouseBtn }
+      end
+      function ClearOverrideBindings()
+        clearCalls = clearCalls + 1
+        _G.__WOWF_TEST_BOUND = nil
+      end
+      _G.C_AuctionHouse = {
+        MakeItemKey = function(id) return { itemID = id } end,
+        SendSearchQuery = function(key) calls[#calls + 1] = "search:" .. tostring(key.itemID) return true end,
+        GetNumItemSearchResults = function(key)
+          if key.itemID == 2970 then return 4 end
+          if key.itemID == 95001 then return 1 end
+          return 0
+        end,
+        GetItemSearchResultInfo = function(key, i)
+          if key.itemID == 2970 then
+            local rows = {
+              { auctionID = 101, buyoutAmount = 200, quantity = 1, containsOwnerItem = true },
+              { auctionID = 102, buyoutAmount = 300, quantity = 1, containsOwnerItem = false },
+              { auctionID = 103, buyoutAmount = 310, quantity = 1, containsOwnerItem = false },
+              { auctionID = 104, buyoutAmount = 400, quantity = 1, containsOwnerItem = false },
+            }
+            return rows[i]
+          end
+          if key.itemID == 95001 then
+            return { auctionID = 201, buyoutAmount = 120000, quantity = 1, containsOwnerItem = false }
+          end
+          return nil
+        end,
+        PlaceBid = function(aid, copper) calls[#calls + 1] = "bid:" .. tostring(aid) .. ":" .. tostring(copper) return true end,
+        GetNumCommoditySearchResults = function(id) return (id == 20744 or id == 95002) and 2 or 0 end,
+        GetCommoditySearchResultInfo = function(id, i)
+          if id == 20744 then
+            local rows = {
+              { unitPrice = 80, quantity = 5, numOwnerItems = 1 },
+              { unitPrice = 120, quantity = 5, numOwnerItems = 0 },
+            }
+            return rows[i]
+          end
+          if id == 95002 then
+            local rows = {
+              { unitPrice = 90, quantity = 2, numOwnerItems = 0 },
+              { unitPrice = 150, quantity = 3, numOwnerItems = 0 },
+            }
+            return rows[i]
+          end
+          return nil
+        end,
+        StartCommoditiesPurchase = function(id, count) calls[#calls + 1] = "start:" .. tostring(id) .. ":" .. tostring(count) return true end,
+        ConfirmCommoditiesPurchase = function(id, count) calls[#calls + 1] = "confirm:" .. tostring(id) .. ":" .. tostring(count) return true end,
+        CancelCommoditiesPurchase = function() calls[#calls + 1] = "cancel" end,
+      }
+      _G.__WOWF_TEST_CALLS = calls
+      _G.__WOWF_TEST_GET_COUNTS = function() return overrideCalls, clearCalls end
+      _G.__WOWF_TEST_ADVANCE_TIME = function(sec) tClock = tClock + sec end
+      _G.__WOWF_TEST_SPEND = function(copper) money = math.max(0, money - (tonumber(copper) or 0)) end
+    `, 'BtFlipBuyerMock.lua');
+
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_SHOW');
+    const barSnap0 = btRt.getSnapshot();
+    const startFlipBtn = Object.values(barSnap0.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, barSnap0.frames) && stripWoWFormatting(f.text).includes('开始连续扫货')
+    );
+    const gearToggleBtn = Object.values(barSnap0.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, barSnap0.frames) && stripWoWFormatting(f.text).includes('仅扫装备')
+    );
+    const wheelToggleBtn = Object.values(barSnap0.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, barSnap0.frames) && stripWoWFormatting(f.text).includes('滚轮连买')
+    );
+    btChecks.push(['UI-拍卖→商人快速扫货栏含开始、仅扫装备与滚轮按钮',
+      Boolean(startFlipBtn) && Boolean(gearToggleBtn) && Boolean(wheelToggleBtn)]);
+
+    if (wheelToggleBtn) btRt.triggerFrameScript(wheelToggleBtn.id, 'OnClick', 'LeftButton');
+    if (startFlipBtn) btRt.triggerFrameScript(startFlipBtn.id, 'OnClick', 'LeftButton');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'ITEM_SEARCH_RESULTS_UPDATED', { itemID: 2970 });
+    const afterSearch1 = btRt.getSnapshot();
+    const buyNextBtn = Object.values(afterSearch1.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, afterSearch1.frames) && stripWoWFormatting(f.text).includes('买入下一件')
+    );
+    btRt.execLua(`__WOW_BRIDGE__:emitString(tostring(_G.__WOWF_TEST_BOUND and _G.__WOWF_TEST_BOUND.key or ""))`, 'BtFlipBoundCheck.lua');
+    const [boundKeyDuring] = btRt.takeEmittedStrings();
+    const wheelFrame = Object.values(afterSearch1.frames).find((f) => f.name === 'WoWFFlipBuyWheelBtn');
+    btChecks.push(['扫货UI-搜到实时一口价后按钮切为买入下一件且已绑滚轮',
+      Boolean(buyNextBtn) && Boolean(wheelFrame) && boundKeyDuring === 'MOUSEWHEELUP']);
+    if (buyNextBtn) btRt.triggerFrameScript(buyNextBtn.id, 'OnClick', 'LeftButton');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_PURCHASE_COMPLETED', 102);
+
+    btRt.execLua(`__WOWF_TEST_ADVANCE_TIME(1)`, 'BtFlipWheelStep.lua');
+    if (wheelFrame) btRt.triggerFrameScript(wheelFrame.id, 'OnClick', 'LeftButton');
+    // 无关金额掉落（实际扣减 >= 310 铜）与错误 auctionID 的回执不得提前结算当前买单
+    btRt.execLua(`
+      local beforeBad = WoWF_CraftArb.FlipBuyer.Status()
+      __WOWF_TEST_SPEND(350)
+      __WOW_DISPATCH_EVENT__("PLAYER_MONEY")
+      local afterMoney = WoWF_CraftArb.FlipBuyer.Status()
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED", 999999)
+      local afterBad = WoWF_CraftArb.FlipBuyer.Status()
+      _G.__WOWF_TEST_PREMATURE_SETTLE = (beforeBad.stats.boughtCount ~= afterMoney.stats.boughtCount)
+        or (afterMoney.phase ~= "buying")
+        or (beforeBad.stats.boughtCount ~= afterBad.stats.boughtCount)
+        or (afterBad.phase ~= "buying")
+    `, 'BtFlipMismatchedReceipt.lua');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_PURCHASE_COMPLETED', 103);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'COMMODITY_SEARCH_RESULTS_UPDATED', 20744);
+    btRt.execLua(`WoWF_CraftArb.FlipBuyer.Step()`, 'BtFlipCommodityQuote.lua');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'COMMODITY_PRICE_UPDATED', 80, 320);
+    btRt.execLua(`WoWF_CraftArb.FlipBuyer.Step()`, 'BtFlipCommodityConfirm.lua');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'COMMODITY_PURCHASE_SUCCEEDED');
+
+    btRt.execLua(`
+      _G.__WOWF_TEST_FB_SNAPSHOT = WoWF_CraftArb.FlipBuyer.Status()
+      -- 测试买前 Tooltip 二次核对：95098 无卖价必须被拦截并永久拉黑；同时测 10 金二次确认 + 堆叠涨价拦截
+      _G.C_TooltipInfo = {
+        GetItemByID = function(id)
+          if id == 95098 then
+            return { lines = { { type = 0, leftText = "未缓存不可卖粉" }, { type = 0, leftText = "无法出售给商人" } } }
+          elseif id == 95001 then
+            return { lines = { { type = 0, leftText = "高价测试甲" }, { type = 11, price = 150000 } } }
+          elseif id == 95002 then
+            return { lines = { { type = 0, leftText = "涨价测试油" }, { type = 11, price = 100 } } }
+          end
+          return nil
+        end,
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 95098, name = "假卖价粉", vendorSell = 200, profit = 100 },
+        { kind = "flip", outputID = 95001, name = "高价测试甲", vendorSell = 150000, profit = 30000 },
+        { kind = "flip", outputID = 95002, name = "涨价测试油", vendorSell = 100, profit = 10 },
+      })
+      __WOW_DISPATCH_EVENT__("COMMODITY_SEARCH_RESULTS_UPDATED", 95098)
+    `, 'BtFlipSafetyStep1.lua');
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'ITEM_SEARCH_RESULTS_UPDATED', { itemID: 95001 });
+    btRt.execLua(`
+      _G.__WOWF_TEST_CALLS_BEFORE_HIGH1 = #_G.__WOWF_TEST_CALLS
+      _G.__WOWF_TEST_RHIGH1 = WoWF_CraftArb.FlipBuyer.Step()
+      _G.__WOWF_TEST_CALLS_AFTER_HIGH1 = #_G.__WOWF_TEST_CALLS
+      _G.__WOWF_TEST_RHIGH2 = WoWF_CraftArb.FlipBuyer.Step()
+      _G.__WOWF_TEST_CALLS_AFTER_HIGH2 = #_G.__WOWF_TEST_CALLS
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED", 201)
+    `, 'BtFlipSafetyStep2.lua');
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'COMMODITY_SEARCH_RESULTS_UPDATED', 95002);
+    btRt.execLua(`
+      WoWF_CraftArb.FlipBuyer.Step()
+      _G.__WOWF_TEST_CALLS_BEFORE_JUMP = #_G.__WOWF_TEST_CALLS
+      -- 实时总价跳到 220 >= 100*2，必须拒绝并取消
+      __WOW_DISPATCH_EVENT__("COMMODITY_PRICE_UPDATED", 110, 220)
+      local st = _G.__WOWF_TEST_FB_SNAPSHOT
+      local stJump = WoWF_CraftArb.FlipBuyer.Status()
+      local unsellableBlacklisted = type(WoWFDB.unsellableItems) == "table" and WoWFDB.unsellableItems[95098] == true
+      local boundKey = _G.__WOWF_TEST_BOUND and _G.__WOWF_TEST_BOUND.key or ""
+      local high1Calls, high2Calls, jumpCalls = {}, {}, {}
+      for i = (_G.__WOWF_TEST_CALLS_BEFORE_HIGH1 or 0) + 1, (_G.__WOWF_TEST_CALLS_AFTER_HIGH1 or 0) do
+        high1Calls[#high1Calls + 1] = _G.__WOWF_TEST_CALLS[i]
+      end
+      for i = (_G.__WOWF_TEST_CALLS_AFTER_HIGH1 or 0) + 1, (_G.__WOWF_TEST_CALLS_AFTER_HIGH2 or 0) do
+        high2Calls[#high2Calls + 1] = _G.__WOWF_TEST_CALLS[i]
+      end
+      for i = (_G.__WOWF_TEST_CALLS_BEFORE_JUMP or 0) + 1, #_G.__WOWF_TEST_CALLS do
+        jumpCalls[#jumpCalls + 1] = _G.__WOWF_TEST_CALLS[i]
+      end
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(st.phase), tostring(st.stats.boughtCount), tostring(st.stats.boughtUnits), tostring(st.stats.estProfit),
+        tostring(_G.__WOWF_TEST_RHIGH1), table.concat(high1Calls, ","),
+        tostring(_G.__WOWF_TEST_RHIGH2), table.concat(high2Calls, ","),
+        tostring(stJump.phase), tostring(boundKey), tostring(unsellableBlacklisted),
+        table.concat(jumpCalls, ","), table.concat(_G.__WOWF_TEST_CALLS, ","),
+        tostring(_G.__WOWF_TEST_PREMATURE_SETTLE)
+      }, "|"))
+    `, 'BtFlipSafetyVerify.lua');
+    const [fbOut] = btRt.takeEmittedStrings();
+    const fbTestParts = String(fbOut || '').split('|');
+    btChecks.push(['连续扫货-单件连买与堆叠两段锁价全流程成交(3笔6件,预计净赚136铜)',
+      fbTestParts[0] === 'done' && Number(fbTestParts[1]) === 3 && Number(fbTestParts[2]) === 6 && Number(fbTestParts[3]) === 136 && fbTestParts[13] === 'false']);
+    btChecks.push(['连续扫货-买前Tooltip无卖价拦截95098并自动拉黑',
+      fbTestParts[10] === 'true' && !String(fbTestParts[12] || '').includes('start:95098')]);
+    btChecks.push(['连续扫货-超10金首点不PlaceBid仅返回confirm，二点恰提交bid:201:120000一次',
+      fbTestParts[4] === 'confirm' && fbTestParts[5] === '' && fbTestParts[6] === 'true' && fbTestParts[7] === 'bid:201:120000']);
+    btChecks.push(['连续扫货-堆叠锁价涨价事件触发cancel且无付款调用并解绑滚轮',
+      fbTestParts[8] === 'done' && fbTestParts[9] === ''
+      && String(fbTestParts[11] || '').split(',').includes('cancel') && !String(fbTestParts[11] || '').includes('confirm:')]);
+    // 队列仍在进行时关闭拍卖行，也必须立刻停止并解绑滚轮
+    btRt.execLua(`
+      WoWF_CraftArb.FlipBuyer.Start({ { kind = "flip", outputID = 2970, name = "法师短裤", vendorSell = 333, profit = 33 } })
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_CLOSED")
+      local stClosed = WoWF_CraftArb.FlipBuyer.Status()
+      __WOW_BRIDGE__:emitString(tostring(stClosed.active) .. "|" .. tostring(_G.__WOWF_TEST_BOUND))
+    `, 'BtFlipClosedVerify.lua');
+    const [closedOut] = btRt.takeEmittedStrings();
+    btChecks.push(['连续扫货-关闭拍卖行自动停止并解绑滚轮', closedOut === 'false|nil']);
+
+    // 场景 J：商人窗口「一键全卖」按钮（紧邻一键卖垃圾，二次点击确认 + 右键切换范围 + 保护致盲粉/任务/锁定）
+    btRt.execLua(`
+      local mf = CreateFrame("Frame", "MerchantFrame", UIParent)
+      mf:Show()
+      _G.MerchantFrame = mf
+      local junk = CreateFrame("Button", "MerchantSellAllJunkButton", mf)
+      junk:Show()
+      function junk:GetRight() return 100 end
+      _G.MerchantSellAllJunkButton = junk
+      local bb = CreateFrame("Button", "MerchantBuyBackItem", mf)
+      bb:Show()
+      function bb:GetLeft() return 200 end
+      _G.MerchantBuyBackItem = bb
+
+      local bags = {
+        [0] = {
+          [1] = { itemID = 96001, stackCount = 1, quality = 0, isBound = false, isLocked = false, hasNoValue = false },
+          [2] = { itemID = 96002, stackCount = 1, quality = 2, isBound = false, isLocked = false, hasNoValue = false },
+          [3] = { itemID = 96003, stackCount = 1, quality = 3, isBound = true,  isLocked = false, hasNoValue = false },
+          [4] = { itemID = 5530,  stackCount = 5, quality = 1, isBound = false, isLocked = false, hasNoValue = false },
+          [5] = { itemID = 9327,  stackCount = 1, quality = 1, isBound = false, isLocked = false, hasNoValue = false },
+          [6] = { itemID = 96004, stackCount = 1, quality = 1, isBound = false, isLocked = true,  hasNoValue = false },
+        },
+      }
+      local itemMeta = {
+        [96001] = { name = "破烂灰石", quality = 0, sellPrice = 50, classID = 7 },
+        [96002] = { name = "未绑定绿剑", quality = 2, sellPrice = 1200, classID = 2 },
+        [96003] = { name = "已绑定蓝甲", quality = 3, sellPrice = 5000, classID = 4 },
+        [5530]  = { name = "致盲粉", quality = 1, sellPrice = 125, classID = 15 },
+        [9327]  = { name = "任务测试卡", quality = 1, sellPrice = 300, classID = 12 },
+        [96004] = { name = "锁定白甲", quality = 1, sellPrice = 500, classID = 4 },
+      }
+      local origGetItemInfo = GetItemInfo
+      function GetItemInfo(id)
+        local m = itemMeta[tonumber(id)]
+        if m then
+          return m.name, "|Hitem:" .. id .. "|h[" .. m.name .. "]|h", m.quality, 20, 1, m.classID, 0, 1, "", 0, m.sellPrice
+        end
+        if origGetItemInfo then return origGetItemInfo(id) end
+      end
+      _G.C_Item = _G.C_Item or {}
+      _G.C_Item.GetItemInfo = GetItemInfo
+      _G.C_TooltipInfo = {
+        GetItemByID = function(id)
+          local m = itemMeta[tonumber(id)]
+          if not m or tonumber(id) == 5530 then return nil end
+          return { lines = { { type = 0, leftText = m.name }, { type = 11, price = m.sellPrice } } }
+        end,
+      }
+      local soldCalls = {}
+      _G.C_Container = {
+        GetContainerNumSlots = function(b) return b == 0 and 6 or 0 end,
+        GetContainerItemInfo = function(b, s) return bags[b] and bags[b][s] or nil end,
+        GetContainerItemID = function(b, s) return bags[b] and bags[b][s] and bags[b][s].itemID or nil end,
+        UseContainerItem = function(b, s)
+          local slot = bags[b] and bags[b][s]
+          if slot then
+            soldCalls[#soldCalls + 1] = tostring(b) .. ":" .. tostring(s) .. ":" .. tostring(slot.itemID)
+            bags[b][s] = nil
+          end
+        end,
+      }
+      _G.__WOWF_SOLD_CALLS = soldCalls
+    `, 'BtMerchantSellMock.lua');
+
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'MERCHANT_SHOW');
+    const mercSnap0 = btRt.getSnapshot();
+    const mercSellBtn = Object.values(mercSnap0.frames).find((f) => f.name === 'WoWFMercSellAllButton');
+    btChecks.push(['商人一键全卖-打开商人创建并展示WoWFMercSellAllButton',
+      Boolean(mercSellBtn) && mercSellBtn.shown && stripWoWFormatting(mercSellBtn.text) === '一键全卖']);
+    if (mercSellBtn) {
+      btRt.triggerFrameScript(mercSellBtn.id, 'OnClick', 'LeftButton');
+    }
+    const mercSnapArmed = btRt.getSnapshot();
+    const mercBtnArmed = Object.values(mercSnapArmed.frames).find((f) => f.name === 'WoWFMercSellAllButton');
+    btRt.execLua(`__WOW_BRIDGE__:emitString(tostring(#_G.__WOWF_SOLD_CALLS))`, 'BtMercArmCount.lua');
+    const [soldAfterArm] = btRt.takeEmittedStrings();
+    btChecks.push(['商人一键全卖-首次左键只预览确认不卖(确认卖,sold=0)',
+      soldAfterArm === '0' && Boolean(mercBtnArmed) && stripWoWFormatting(mercBtnArmed.text).includes('确认卖')]);
+    if (mercSellBtn) {
+      btRt.triggerFrameScript(mercSellBtn.id, 'OnClick', 'LeftButton');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    btRt.execLua(`__WOW_BRIDGE__:emitString(table.concat(_G.__WOWF_SOLD_CALLS, ","))`, 'BtMercSafeSold.lua');
+    const [safeSoldOut] = btRt.takeEmittedStrings();
+    btChecks.push(['商人一键全卖-安全模式仅售灰品与未绑绿装并保护蓝装/致盲粉/任务/锁定',
+      safeSoldOut === '0:1:96001,0:2:96002']);
+
+    // 右键切换两次 -> unbound -> all，两次左键后售出已绑定蓝甲 96003，仍保护 5530/9327/96004
+    if (mercSellBtn) {
+      btRt.triggerFrameScript(mercSellBtn.id, 'OnClick', 'RightButton');
+      btRt.triggerFrameScript(mercSellBtn.id, 'OnClick', 'RightButton');
+      btRt.triggerFrameScript(mercSellBtn.id, 'OnClick', 'LeftButton');
+      btRt.triggerFrameScript(mercSellBtn.id, 'OnClick', 'LeftButton');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    btRt.execLua(`if MerchantFrame then MerchantFrame:Hide() end`, 'BtMercHide.lua');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'MERCHANT_CLOSED');
+    const mercClosedSnap = btRt.getSnapshot();
+    const mercBtnClosed = Object.values(mercClosedSnap.frames).find((f) => f.name === 'WoWFMercSellAllButton');
+    btRt.execLua(`
+      __WOW_BRIDGE__:emitString(table.concat({
+        WoWF_CraftArb.MerchantSeller.GetMode(),
+        tostring(WoWF_CraftArb.MerchantSeller.IsMerchantOpen()),
+        table.concat(_G.__WOWF_SOLD_CALLS, ",")
+      }, "|"))
+    `, 'BtMercAllSold.lua');
+    const [allSoldOut] = btRt.takeEmittedStrings();
+    btChecks.push(['商人一键全卖-右键切全部模式卖出蓝装96003且关窗自动隐藏',
+      allSoldOut === 'all|false|0:1:96001,0:2:96002,0:3:96003'
+      && (!mercBtnClosed || !mercBtnClosed.shown)]);
+
+    // 紧邻空间不足时（gap=20 < 44），自动避让停靠到 MerchantFrame BOTTOMRIGHT
+    btRt.execLua(`
+      if MerchantFrame then MerchantFrame:Show() end
+      if MerchantBuyBackItem then
+        function MerchantBuyBackItem:GetLeft() return 120 end
+      end
+      __WOW_DISPATCH_EVENT__("MERCHANT_SHOW")
+    `, 'BtMercTightLayout.lua');
+    const tightSnap = btRt.getSnapshot();
+    const tightBtn = Object.values(tightSnap.frames).find((f) => f.name === 'WoWFMercSellAllButton');
+    const tightPt = tightBtn && tightBtn.points && tightBtn.points[0];
+    const tightRel = tightPt && tightPt.relativeToId != null ? tightSnap.frames[tightPt.relativeToId] : null;
+    btChecks.push(['商人一键全卖-默认按钮紧邻空间不足时自动避让到底部右侧',
+      Boolean(tightPt) && tightPt.point === 'TOPRIGHT'
+      && tightRel && tightRel.name === 'MerchantFrame' && tightPt.relativePoint === 'BOTTOMRIGHT']);
+
+    // 场景 K：CodeRabbit 审查边界回归（已绑灰品保护、确认后背包变动重预览、缺 Tooltip 禁买 facts、SetMaxPay 失败不报全成功）
+    btRt.execLua(`
+      local cBags = {
+        [0] = {
+          [1] = { itemID = 96001, stackCount = 1, quality = 0, isBound = true, isLocked = false, hasNoValue = false },
+        },
+      }
+      _G.C_Container.GetContainerNumSlots = function(b) return b == 0 and 2 or 0 end
+      _G.C_Container.GetContainerItemInfo = function(b, s) return cBags[b] and cBags[b][s] or nil end
+      _G.C_Container.GetContainerItemID = function(b, s) return cBags[b] and cBags[b][s] and cBags[b][s].itemID or nil end
+      local cSold = {}
+      _G.C_Container.UseContainerItem = function(b, s)
+        local slot = cBags[b] and cBags[b][s]
+        if slot then cSold[#cSold + 1] = slot.itemID; cBags[b][s] = nil end
+      end
+
+      WoWF_CraftArb.MerchantSeller.SetMode("safe")
+      local safeBoundItems = WoWF_CraftArb.MerchantSeller.Scan("safe")
+      WoWF_CraftArb.MerchantSeller.SetMode("unbound")
+      local unboundBoundItems = WoWF_CraftArb.MerchantSeller.Scan("unbound")
+
+      WoWF_CraftArb.MerchantSeller.SetMode("all")
+      local st1 = WoWF_CraftArb.MerchantSeller.Click()
+      cBags[0][2] = { itemID = 96002, stackCount = 1, quality = 2, isBound = false, isLocked = false, hasNoValue = false }
+      local st2 = WoWF_CraftArb.MerchantSeller.Click()
+      local soldAfterBagChange = #cSold
+
+      _G.C_TooltipInfo = nil
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_SHOW")
+      local okNoTip, errNoTip = WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 2970, name = "未核验装备", vendorSell = 333, vendorSellSource = "facts", profit = 33 },
+      })
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_CLOSED")
+
+      local origSetMaxPay = _G.BlackthornesTS.ShoppingLists.SetMaxPay
+      _G.BlackthornesTS.ShoppingLists.SetMaxPay = function() return false end
+      local okCapFail, reasonCapFail, metaCapFail = WoWF_CraftArb.AddFlipToShoppingList(2970, 2, 299)
+      _G.BlackthornesTS.ShoppingLists.SetMaxPay = origSetMaxPay
+      local failWant, failCap = 0, 0
+      if type(metaCapFail) == "table" and metaCapFail.listId then
+        local lFail = _G.BlackthornesTS.ShoppingLists:Get(metaCapFail.listId)
+        for _, it in ipairs((lFail and lFail.items) or {}) do
+          if it.id == 2970 then failWant, failCap = it.want, it.maxPay or 0 end
+        end
+      end
+      local okRetryCap = false
+      local retryWant, retryCap = 0, 0
+      if not okCapFail and type(metaCapFail) == "table" and metaCapFail.partial and metaCapFail.listId then
+        okRetryCap = WoWF_CraftArb.UpdateShoppingListMaxPay(metaCapFail.listId, 2970, 299)
+        local l = _G.BlackthornesTS.ShoppingLists:Get(metaCapFail.listId)
+        for _, it in ipairs((l and l.items) or {}) do
+          if it.id == 2970 then retryWant, retryCap = it.want, it.maxPay or 0 end
+        end
+      end
+
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(#safeBoundItems), tostring(#unboundBoundItems),
+        tostring(st1), tostring(st2), tostring(soldAfterBagChange),
+        tostring(okNoTip), tostring(errNoTip or ""),
+        tostring(okCapFail), tostring(metaCapFail and metaCapFail.partial == true),
+        tostring(failWant), tostring(failCap),
+        tostring(okRetryCap), tostring(retryWant), tostring(retryCap),
+      }, "|"))
+    `, 'BtEdgeRegressionVerify.lua');
+    const [edgeOut] = btRt.takeEmittedStrings();
+    const edgeParts = String(edgeOut || '').split('|');
+    btChecks.push(['边界回归-已绑灰品在safe/unbound模式下受保护不出售',
+      edgeParts[0] === '0' && edgeParts[1] === '0']);
+    btChecks.push(['边界回归-确认预览后背包变化强制重新确认且不误卖新增物品',
+      edgeParts[2] === 'confirm' && edgeParts[3] === 'confirm' && edgeParts[4] === '0']);
+    btChecks.push(['边界回归-缺少Tooltip接口时禁止基于facts缓存价启动扫货',
+      edgeParts[5] === 'false' && String(edgeParts[6] || '').includes('Tooltip')]);
+    btChecks.push(['边界回归-SetMaxPay失败保留旧限价且支持仅补写新限价不重复加数量',
+      edgeParts[7] === 'false' && edgeParts[8] === 'true'
+      && edgeParts[9] === '7' && edgeParts[10] === '332'
+      && edgeParts[11] === 'true' && edgeParts[12] === '7' && edgeParts[13] === '299']);
 
     const btFailed = btChecks.filter(([, ok]) => !ok);
     const btSnapFinal = btRt.getSnapshot();
