@@ -497,7 +497,15 @@ local function SyncPlayerCharacter(overrideLevel)
     faction = routeObj.faction
   end
 
-  state.zone = (GetRealZoneText and GetRealZoneText()) or state.zone or ""
+  local liveZone = (GetRealZoneText and GetRealZoneText()) or ""
+  if liveZone == "" and GetZoneText then
+    liveZone = GetZoneText() or ""
+  end
+  if liveZone ~= "" or GetRealZoneText or GetZoneText then
+    state.zone = liveZone
+  else
+    state.zone = state.zone or ""
+  end
 
   if state.autoFollow then
     local prevClass = state.classKey
@@ -2924,14 +2932,72 @@ local function GetCurrentSpecData()
   return cls.specs[state.specIndex] or cls.specs[1]
 end
 
-local function GetMatchedBand(route, level)
-  if not route or not route.bands then return nil end
-  for _, b in ipairs(route.bands) do
-    if level >= (b.from or 1) and level <= (b.to or 60) then
-      return b
+local ZoneUtil = {}
+
+function ZoneUtil.CleanName(zoneName)
+  local s = tostring(zoneName or "")
+  s = string.gsub(s, "%s*%([^)]*%)%s*$", "")
+  s = string.gsub(s, "^%s*(.-)%s*$", "%1")
+  return s
+end
+
+function ZoneUtil.IsCurrent(zoneName)
+  local cur = ZoneUtil.CleanName(state.zone)
+  local target = ZoneUtil.CleanName(zoneName)
+  if cur == "" or target == "" then return false end
+  if cur == target then return true end
+  local curId = ResolveUiMapID(cur)
+  local targetId = ResolveUiMapID(target)
+  return curId ~= nil and curId == targetId
+end
+
+function ZoneUtil.Prioritize(items, getZoneName)
+  if type(items) ~= "table" or #items <= 1 or not state.zone or state.zone == "" then
+    return items
+  end
+  local matched, rest = {}, {}
+  for _, item in ipairs(items) do
+    local z = getZoneName and getZoneName(item) or item
+    if ZoneUtil.IsCurrent(z) then
+      table.insert(matched, item)
+    else
+      table.insert(rest, item)
     end
   end
-  return route.bands[#route.bands]
+  if #matched == 0 then
+    return items
+  end
+  for _, item in ipairs(rest) do
+    table.insert(matched, item)
+  end
+  return matched
+end
+
+function ZoneUtil.BandContainsCurrent(band)
+  if not band or not state.zone or state.zone == "" then return false end
+  if ZoneUtil.IsCurrent(band.zone) then return true end
+  for _, az in ipairs(band.altZones or {}) do
+    if ZoneUtil.IsCurrent(az.zone) then
+      return true
+    end
+  end
+  return false
+end
+
+local function GetMatchedBand(route, level)
+  if not route or not route.bands then return nil end
+  local firstMatch = nil
+  for _, b in ipairs(route.bands) do
+    if level >= (b.from or 1) and level <= (b.to or 60) then
+      if ZoneUtil.BandContainsCurrent(b) then
+        return b
+      end
+      if not firstMatch then
+        firstMatch = b
+      end
+    end
+  end
+  return firstMatch or route.bands[#route.bands]
 end
 
 local function GetMatchedPhase(spec, level)
@@ -3112,21 +3178,21 @@ local function GetBandTimelineSteps(route, fromLvl, toLvl)
   return steps
 end
 
--- 汇总本阶段全部适龄区域（主区域 + altZones），统一去重，供区域块与概览行共用
+-- 汇总本阶段全部适龄区域（主区域 + altZones），统一去重并优先置顶玩家当前所在区域
 local function CollectBandZoneNames(band)
   if not band then return {} end
   local names, seen = {}, {}
-  if band.zone and band.zone ~= "" then
-    seen[band.zone] = true
-    table.insert(names, band.zone)
+  local function addName(rawZone)
+    local clean = ZoneUtil.CleanName(rawZone)
+    if clean == "" or seen[clean] then return end
+    seen[clean] = true
+    table.insert(names, rawZone)
   end
+  addName(band.zone)
   for _, az in ipairs(band.altZones or {}) do
-    if az.zone and az.zone ~= "" and not seen[az.zone] then
-      seen[az.zone] = true
-      table.insert(names, az.zone)
-    end
+    addName(az.zone)
   end
-  return names
+  return ZoneUtil.Prioritize(names)
 end
 
 -- 区域块：每行一个适龄区域（区域名 + 营地链接 + 等级区间 + 备注）
@@ -3135,7 +3201,7 @@ local function FormatBandZonesBlock(band, headerLabel)
   if not band.altZones or #band.altZones == 0 then
     return nil
   end
-  local function zoneLine(zoneName, hubName, hubX, hubY, from, to, note)
+  local function zoneLine(zoneName, hubName, hubX, hubY, from, to, note, isCurrentZone)
     local hasCoord = (hubX and hubY) and true or false
     local label = (hubName and hubName ~= "") and hubName or ""
     -- 营地名与区域名相同时不再重复输出营地名，但坐标仍然可用：把可点击链接挂到区域名本身，
@@ -3152,15 +3218,33 @@ local function FormatBandZonesBlock(band, headerLabel)
     end
     local noteAnchor = (label ~= "" and not sameAsZone) and label or (zoneName or "")
     local noteStr = (note and note ~= "") and (" — " .. LinkifyInlineCoords(note, zoneName or "", noteAnchor)) or ""
-    return string.format("  · %s (%sLv.%d-%d)%s", zoneLink, hubPart, from or 1, to or 60, noteStr)
+    local curTag = isCurrentZone and "|cff00ff00[当前]|r " or ""
+    return string.format("  · %s%s (%sLv.%d-%d)%s", curTag, zoneLink, hubPart, from or 1, to or 60, noteStr)
   end
-  local zoneLines = {
-    zoneLine(band.zone, (band.hub and band.hub.name) or "", band.hub and band.hub.x, band.hub and band.hub.y,
-      band.from, band.to, nil)
-  }
+  local entries, seen = {}, {}
+  local function addEntry(zName, hName, hX, hY, from, to, note)
+    local clean = ZoneUtil.CleanName(zName)
+    if clean == "" or seen[clean] then return end
+    seen[clean] = true
+    table.insert(entries, {
+      zone = zName,
+      hub = hName,
+      x = hX,
+      y = hY,
+      from = from,
+      to = to,
+      note = note,
+    })
+  end
+  addEntry(band.zone, (band.hub and band.hub.name) or "", band.hub and band.hub.x, band.hub and band.hub.y,
+    band.from, band.to, nil)
   for _, az in ipairs(band.altZones or {}) do
-    table.insert(zoneLines, zoneLine(az.zone, az.hub, az.x, az.y,
-      az.from or band.from, az.to or band.to, az.note))
+    addEntry(az.zone, az.hub, az.x, az.y, az.from or band.from, az.to or band.to, az.note)
+  end
+  entries = ZoneUtil.Prioritize(entries, function(e) return e.zone end)
+  local zoneLines = {}
+  for _, e in ipairs(entries) do
+    table.insert(zoneLines, zoneLine(e.zone, e.hub, e.x, e.y, e.from, e.to, e.note, ZoneUtil.IsCurrent(e.zone)))
   end
   return string.format("|cffffd100%s:|r\n%s", headerLabel or "适龄练级区域 (可自由切换/穿插)", table.concat(zoneLines, "\n"))
 end
@@ -3746,10 +3830,11 @@ local function GetZoneSuitableQuestChains(zoneName, lvl)
 end
 
 local function CollectBandZoneInfos(band, lvl)
+  if not band then return {} end
   local out = {}
   local seen = {}
   local function addZone(zName, hubName, hubZone, fromLv, toLv, x, y, note)
-    local clean = tostring(zName or ""):gsub("%s*%([^)]*%)%s*$", "")
+    local clean = ZoneUtil.CleanName(zName)
     if clean == "" or seen[clean] then return end
     seen[clean] = true
     table.insert(out, {
@@ -3773,7 +3858,11 @@ local function CollectBandZoneInfos(band, lvl)
       end
     end
   end
-  return out
+  return ZoneUtil.Prioritize(out, function(item) return item.zone end)
+end
+
+function ZoneUtil.GetPrimaryEntry(band)
+  return CollectBandZoneInfos(band)[1]
 end
 
 local function MatchesSearch(text)
@@ -4561,10 +4650,19 @@ local function RenderTabSmartMatch()
   -- 2. 当前等级推荐区域与营地导航摘要（完整阶段与区域任务链见「升级路线」页）
   if band then
     local bandLines = {}
-    local hubName = (band.hub and band.hub.name ~= "") and band.hub.name or band.zone
+    local primaryZone = ZoneUtil.GetPrimaryEntry(band)
+    local primaryZoneName = (primaryZone and primaryZone.hubZone ~= "" and primaryZone.hubZone) or band.zone
+    local hubName = (primaryZone and ((primaryZone.hub ~= "" and primaryZone.hub) or primaryZone.zone))
+      or ((band.hub and band.hub.name ~= "") and band.hub.name or band.zone)
     local hubText = (hubName and hubName ~= "") and hubName or "未知"
-    local hubLink = (band.hub and band.hub.x and band.hub.y)
-      and FormatNpcMapLink(band.zone, hubText, band.hub.x, band.hub.y, { omitZone = true })
+    local hubX, hubY
+    if primaryZone then
+      hubX, hubY = primaryZone.x, primaryZone.y
+    elseif band.hub then
+      hubX, hubY = band.hub.x, band.hub.y
+    end
+    local hubLink = (hubX and hubY)
+      and FormatNpcMapLink(primaryZoneName, hubText, hubX, hubY, { omitZone = true })
       or ("|cff00ffcc" .. hubText .. "|r")
     -- 仪表盘只给一行区域概览；完整营地/等级/备注在「升级路线」页展开，避免同一份区域清单在两页各铺一遍
     local zoneNames = CollectBandZoneNames(band)
@@ -5252,6 +5350,20 @@ local function RenderTabRoutes()
         table.insert(upcomingBands, { idx = idx, band = b })
       end
     end
+    if #currentBands > 1 and state.zone and state.zone ~= "" then
+      local matchedCurrent, otherCurrent = {}, {}
+      for _, item in ipairs(currentBands) do
+        if ZoneUtil.BandContainsCurrent(item.band) then
+          table.insert(matchedCurrent, item)
+        else
+          table.insert(otherCurrent, item)
+        end
+      end
+      if #matchedCurrent > 0 then
+        for _, item in ipairs(otherCurrent) do table.insert(matchedCurrent, item) end
+        currentBands = matchedCurrent
+      end
+    end
     for _, item in ipairs(currentBands) do table.insert(orderedBands, item) end
     for _, item in ipairs(upcomingBands) do table.insert(orderedBands, item) end
     if #orderedBands == 0 then
@@ -5380,6 +5492,16 @@ local function RenderTabRoutes()
       end
 
       local titlePrefix = isCurrent and "|cff00ff00▶ [当前角色所在阶段]|r " or string.format("|cff8899aa[第%d步]|r ", stepIdx)
+      local stageHubZone, stageHubName, stageHubX, stageHubY = b.zone, b.hub and b.hub.name, b.hub and b.hub.x, b.hub and b.hub.y
+      if isCurrent then
+        local primaryZone = ZoneUtil.GetPrimaryEntry(b)
+        if primaryZone and primaryZone.x and primaryZone.y then
+          stageHubZone = primaryZone.hubZone
+          stageHubName = (primaryZone.hub ~= "" and primaryZone.hub) or primaryZone.zone
+          stageHubX = primaryZone.x
+          stageHubY = primaryZone.y
+        end
+      end
       list:Add({
         -- 区域清单交给正文（当前阶段给详细营地，其余阶段给一行），标题只留阶段与等级区间
         title = string.format("%s|cffffd100Lv.%d – %d|r", titlePrefix, b.from, b.to),
@@ -5387,9 +5509,9 @@ local function RenderTabRoutes()
         theme = isCurrent and "routeCur" or "routeIdle",
         -- 等级区间已在标题里，角标改为区域数量，避免同一行信息重复两遍
         badge = string.format("%d 个适龄区域", #CollectBandZoneNames(b)),
-        action = (b.hub and b.hub.x) and {
+        action = (stageHubX and stageHubY) and {
           label = "标记营地到地图",
-          fn = function() SetWaypointOrPrint(b.zone, b.hub.name, b.hub.x, b.hub.y) end,
+          fn = function() SetWaypointOrPrint(stageHubZone, stageHubName, stageHubX, stageHubY) end,
         } or nil,
       })
     end
@@ -5427,10 +5549,12 @@ local function RenderTabRoutes()
                 singleChainWord = "任务链",
               })
               local hubPart = (zInfo.hub and zInfo.hub ~= "") and (" · " .. zInfo.hub) or ""
+              local isCurZone = ZoneUtil.IsCurrent(zInfo.zone)
+              local curZoneBadge = isCurZone and "  |cff00ff00[当前区域]|r" or ""
               list:Add({
-                title = string.format("|cff00ffcc▶ [区域任务链] %s|r%s  |cffffd100(Lv.%d-%d)|r", zInfo.zone, hubPart, zInfo.from, zInfo.to),
+                title = string.format("|cff00ffcc▶ [区域任务链] %s|r%s  |cffffd100(Lv.%d-%d)|r%s", zInfo.zone, hubPart, zInfo.from, zInfo.to, curZoneBadge),
                 body = table.concat(zLines, "\n"),
-                theme = "zone",
+                theme = isCurZone and "routeCur" or "zone",
                 badge = string.format("可接 %d 条任务链", #groups),
                 action = (zInfo.x and zInfo.y) and {
                   label = "标记营地到地图",
@@ -8580,26 +8704,18 @@ local function CreateMinimapButton()
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cff00ffcc巫妖王的无限百科|r |cffffd100(无限服百科)|r")
     local zoneList = {}
-    local seenZones = {}
-    if band and band.zone and band.zone ~= "" then
-      seenZones[band.zone] = true
-      table.insert(zoneList, band.zone)
-    end
-    if band and band.altZones then
-      local altAdded = 0
-      for _, az in ipairs(band.altZones) do
-        if az.zone and az.zone ~= "" and not seenZones[az.zone] then
-          seenZones[az.zone] = true
-          table.insert(zoneList, az.zone)
-          altAdded = altAdded + 1
-          if altAdded >= 3 then break end
-        end
-      end
+    for _, zName in ipairs(CollectBandZoneNames(band)) do
+      table.insert(zoneList, zName)
+      if #zoneList >= 4 then break end
     end
     local zoneText = (#zoneList > 0) and table.concat(zoneList, " / ") or "未知"
     GameTooltip:AddLine(string.format("当前角色: |cffffffffLv.%d|r  ·  适龄区域: |cff00ffcc%s|r", state.level, zoneText))
-    if band and band.hub and band.hub.name ~= "" then
-      GameTooltip:AddLine(string.format("参考据点: |cffffd100%s|r", band.hub.name))
+    local primaryZone = ZoneUtil.GetPrimaryEntry(band)
+    local refHub = (primaryZone and primaryZone.hub ~= "" and primaryZone.hub)
+      or (band and band.hub and band.hub.name)
+      or ""
+    if refHub ~= "" then
+      GameTooltip:AddLine(string.format("参考据点: |cffffd100%s|r", refHub))
     end
     if step then
       GameTooltip:AddLine(string.format("本级天赋: |cffffd100[%s] %s (%d/%d)|r", step.tree, step.name, step.rank, step.max))
