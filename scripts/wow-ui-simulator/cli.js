@@ -2966,6 +2966,273 @@ async function main() {
     btRt.destroy();
   }
 
+  // 升级路线多个平行区域时优先展示用户当前区域回归（含 7 区域截断保活、别名、非匹配/空区域、重叠阶段、切换区域自动刷新）
+  if (opts.assert && addonName.toLowerCase() === 'wowf') {
+    const coreOnlyFiles = files.filter((f) => !isDataLuaFile(f));
+    const zonePriorityMockLua = `
+      QuestDB = {
+        name = function(id)
+          local t = {
+            [9101] = "凄凉测试任务",
+            [9102] = "荆棘谷测试任务",
+            [9103] = "千针石林测试任务",
+            [9104] = "阿拉希测试任务",
+            [9105] = "河林测试任务",
+            [9106] = "尘泥沼泽测试任务",
+            [9107] = "悲伤沼泽测试任务",
+            [9108] = "黑海岸测试任务",
+            [9109] = "泽风岛测试任务",
+            [9110] = "西部荒野测试任务",
+          }
+          return t[id]
+        end,
+        questLevel = function() return 35 end,
+        requiredLevel = function() return 30 end,
+      }
+      WoWF_Data = {
+        meta = { version = "zone-priority-test" },
+        routes = {
+          human = {
+            name = "人类",
+            faction = "alliance",
+            classes = { "MAGE" },
+            bands = {
+              {
+                from = 32, to = 37, zone = "凄凉之地",
+                hub = { name = "尼耶尔前哨站", x = 66.2, y = 7.0 },
+                altZones = {
+                  { zone = "荆棘谷", hub = "反抗军营地", from = 30, to = 38, x = 38.2, y = 4.0 },
+                  { zone = "千针石林", hub = "乱风岗", from = 30, to = 37, x = 45.1, y = 50.3 },
+                  { zone = "阿拉希高地", hub = "避难谷地", from = 30, to = 39, x = 45.8, y = 47.6 },
+                  { zone = "河林", hub = "河林营地", from = 32, to = 45, x = 50.0, y = 50.0 },
+                  { zone = "尘泥沼泽", hub = "塞拉摩", from = 35, to = 42, x = 66.1, y = 51.5 },
+                  { zone = "悲伤沼泽", hub = "斯通纳德", from = 32, to = 43, x = 45.0, y = 55.0 },
+                },
+                quests = {},
+              },
+            },
+          },
+          ["skyborne-alliance"] = {
+            name = "天裔 (联盟)",
+            faction = "alliance",
+            classes = { "MAGE" },
+            bands = {
+              {
+                from = 1, to = 12, zone = "泽风岛 (Zephras Isle)",
+                hub = { name = "泽风庇护所", x = 48.0, y = 52.0 },
+                quests = {},
+              },
+              {
+                from = 12, to = 19, zone = "西部荒野",
+                hub = { name = "哨兵岭", x = 56.3, y = 47.5 },
+                altZones = {
+                  { zone = "黑海岸", hub = "奥伯丁", from = 11, to = 20, x = 37.5, y = 43.8 },
+                },
+                quests = {},
+              },
+            },
+          },
+          dwarf = {
+            name = "矮人",
+            faction = "alliance",
+            classes = { "MAGE" },
+            bands = {
+              {
+                from = 32, to = 37, zone = "凄凉之地",
+                hub = { name = "尼耶尔前哨站", x = 66.2, y = 7.0 },
+                altZones = {
+                  { zone = "荆棘谷", hub = "反抗军营地", from = 30, to = 38, x = 38.2, y = 4.0 },
+                  { zone = "千针石林", hub = "乱风岗", from = 30, to = 37, x = 45.1, y = 50.3 },
+                  { zone = "阿拉希高地", hub = "避难谷地", from = 30, to = 39, x = 45.8, y = 47.6 },
+                  { zone = "河林", hub = "河林营地", from = 32, to = 45, x = 50.0, y = 50.0 },
+                  { zone = "尘泥沼泽", hub = "塞拉摩", from = 35, to = 42, x = 66.1, y = 51.5 },
+                },
+                quests = {},
+              },
+              {
+                from = 34, to = 40, zone = "悲伤沼泽",
+                hub = { name = "斯通纳德", x = 45.0, y = 55.0 },
+                quests = {},
+              },
+            },
+          },
+          gnome = {
+            name = "侏儒",
+            faction = "alliance",
+            classes = { "MAGE" },
+            bands = {
+              {
+                from = 32, to = 37, zone = "凄凉之地",
+                hub = { name = "尼耶尔前哨站", x = 66.2, y = 7.0 },
+                altZones = {
+                  { zone = "湿地", hub = "米奈希尔港", from = 20, to = 36 },
+                },
+                quests = {},
+              },
+            },
+          },
+        },
+        classes = {
+          MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精", recommendedProfs = "", phases = {}, steps = {}, musts = {} } } },
+        },
+        dungeons = {},
+        macros = {},
+        professions = {},
+        zoneQuests = {
+          ["凄凉之地"] = { { id = 9101, f = "b", min = 30, lv = 35, maxLv = 37 } },
+          ["荆棘谷"] = { { id = 9102, f = "b", min = 30, lv = 35, maxLv = 38 } },
+          ["千针石林"] = { { id = 9103, f = "b", min = 30, lv = 35, maxLv = 37 } },
+          ["阿拉希高地"] = { { id = 9104, f = "b", min = 30, lv = 35, maxLv = 39 } },
+          ["河林"] = { { id = 9105, f = "b", min = 32, lv = 35, maxLv = 45 } },
+          ["尘泥沼泽"] = { { id = 9106, f = "b", min = 32, lv = 35, maxLv = 42 } },
+          ["悲伤沼泽"] = { { id = 9107, f = "b", min = 32, lv = 35, maxLv = 43 } },
+          ["黑海岸"] = { { id = 9108, f = "b", min = 10, lv = 12, maxLv = 20 } },
+          ["泽风岛"] = { { id = 9109, f = "b", min = 1, lv = 12, maxLv = 12 } },
+          ["西部荒野"] = { { id = 9110, f = "b", min = 10, lv = 12, maxLv = 19 } },
+        },
+      }
+    `;
+
+    const zpChecks = [];
+    const runZoneScenario = (charOpts, zone) => {
+      const rt = new WoWSimulatorRuntime({
+        level: charOpts.level ?? 35,
+        classKey: 'MAGE',
+        raceKey: charOpts.raceKey ?? '人类',
+        faction: 'Alliance',
+        zone,
+      });
+      rt.loadAddon(addonName, [{ filename: 'ZonePriorityMock.lua', content: zonePriorityMockLua }, ...coreOnlyFiles]);
+      rt.runSlashCommand('/wowf route');
+      const routeSnap = rt.getSnapshot();
+      const routeCards = summarizeCards(routeSnap);
+      rt.runSlashCommand('/wowf');
+      const smartSnap = rt.getSnapshot();
+      const smartCards = summarizeCards(smartSnap);
+      const tag = `Lv.${charOpts.level ?? 35}/${charOpts.raceKey ?? '人类'}/${zone || '空区域'}`;
+      zpChecks.push([`零Lua错误(${tag})`, routeSnap.luaErrors.length === 0 && smartSnap.luaErrors.length === 0]);
+      return { rt, routeSnap, routeCards, smartSnap, smartCards };
+    };
+
+    // 1. 当前区域位于第 7 个平行区域（悲伤沼泽）：必须置顶且不被 6 卡上限截断，剩余区域保持原相对顺序
+    const s1 = runZoneScenario({ level: 35 }, '悲伤沼泽');
+    const s1Stage = s1.routeCards.find((c) => c.title.includes('[当前角色所在阶段]'));
+    const s1ZoneCards = s1.routeCards.filter((c) => c.title.includes('[区域任务链]'));
+    const s1BlockLines = (s1Stage?.body || '').split('\n');
+    const s1SorrowIdx = s1BlockLines.findIndex((l) => l.includes('悲伤沼泽'));
+    const s1DesolaceIdx = s1BlockLines.findIndex((l) => l.includes('凄凉之地'));
+    const s1StvIdx = s1BlockLines.findIndex((l) => l.includes('荆棘谷'));
+    const s1NeedleIdx = s1BlockLines.findIndex((l) => l.includes('千针石林'));
+    const s1SmartNav = s1.smartCards.find((c) => c.title.includes('当前角色升级导航'));
+    const s1SmartZonesLine = (s1SmartNav?.body || '').split('\n').find((l) => l.includes('适龄练级区域:')) || '';
+    const s1SmartHubLine = (s1SmartNav?.body || '').split('\n').find((l) => l.includes('当前营地/据点:')) || '';
+    zpChecks.push(['7区域置顶-阶段区域清单悲伤沼泽排最前且带[当前]',
+      s1SorrowIdx > 0 && s1SorrowIdx < s1DesolaceIdx && s1BlockLines[s1SorrowIdx].includes('[当前]')]);
+    zpChecks.push(['7区域置顶-其余区域保持原相对顺序',
+      s1DesolaceIdx < s1StvIdx && s1StvIdx < s1NeedleIdx]);
+    zpChecks.push(['7区域置顶-第7区域任务链卡置顶且总数为6张',
+      s1ZoneCards.length === 6 && s1ZoneCards[0].title.includes('悲伤沼泽') && s1ZoneCards[0].title.includes('[当前区域]')]);
+    zpChecks.push(['7区域置顶-智能匹配页适龄区域首项为悲伤沼泽且营地为斯通纳德',
+      s1SmartZonesLine.indexOf('悲伤沼泽') < s1SmartZonesLine.indexOf('凄凉之地') && s1SmartHubLine.includes('斯通纳德')]);
+    s1.rt.destroy();
+
+    // 2. 区域别名命中（河林地 -> 河林）
+    const s2 = runZoneScenario({ level: 35 }, '河林地');
+    const s2Stage = s2.routeCards.find((c) => c.title.includes('[当前角色所在阶段]'));
+    const s2ZoneCards = s2.routeCards.filter((c) => c.title.includes('[区域任务链]'));
+    const s2BlockLines = (s2Stage?.body || '').split('\n');
+    const s2RiverIdx = s2BlockLines.findIndex((l) => l.includes('河林'));
+    const s2DesolaceIdx = s2BlockLines.findIndex((l) => l.includes('凄凉之地'));
+    zpChecks.push(['别名匹配-河林地置顶河林',
+      s2RiverIdx > 0 && s2RiverIdx < s2DesolaceIdx && s2ZoneCards[0]?.title.includes('河林')]);
+    s2.rt.destroy();
+
+    // 3. 非匹配区域（暴风城）与空区域（""）保持原序且无[当前]标注
+    for (const [label, z] of [['非匹配区域-暴风城', '暴风城'], ['空区域', '']]) {
+      const s3 = runZoneScenario({ level: 35 }, z);
+      const s3Stage = s3.routeCards.find((c) => c.title.includes('[当前角色所在阶段]'));
+      const s3ZoneCards = s3.routeCards.filter((c) => c.title.includes('[区域任务链]'));
+      const s3BlockLines = (s3Stage?.body || '').split('\n');
+      const dIdx = s3BlockLines.findIndex((l) => l.includes('凄凉之地'));
+      const stvIdx = s3BlockLines.findIndex((l) => l.includes('荆棘谷'));
+      zpChecks.push([`${label}-保持凄凉之地最前且无当前标记`,
+        dIdx > 0 && dIdx < stvIdx && !s3Stage.body.includes('[当前]') && s3ZoneCards[0]?.title.includes('凄凉之地') && !s3ZoneCards[0]?.title.includes('[当前区域]')]);
+      s3.rt.destroy();
+    }
+
+    // 4. 重叠阶段（Lv.12 天裔联盟在黑海岸）：Lv.12-19 阶段优先于 Lv.1-12 且黑海岸置顶
+    const s4 = runZoneScenario({ level: 12, raceKey: '天裔' }, '黑海岸');
+    const s4StageCards = s4.routeCards.filter((c) => c.title.includes('[当前角色所在阶段]'));
+    const s4BlockLines = (s4StageCards[0]?.body || '').split('\n');
+    const s4DarkshoreIdx = s4BlockLines.findIndex((l) => l.includes('黑海岸'));
+    const s4WestfallIdx = s4BlockLines.findIndex((l) => l.includes('西部荒野'));
+    zpChecks.push(['重叠阶段-Lv12-19含黑海岸排在Lv1-12前且黑海岸置顶',
+      s4StageCards.length === 2 && s4StageCards[0].title.includes('Lv.12') && s4DarkshoreIdx > 0 && s4DarkshoreIdx < s4WestfallIdx]);
+    s4.rt.destroy();
+
+    // 5. 切换区域事件自动刷新（悲伤沼泽 -> 尘泥沼泽）
+    const s5 = runZoneScenario({ level: 35 }, '悲伤沼泽');
+    s5.rt.runSlashCommand('/wowf route');
+    s5.rt.charState.zone = '尘泥沼泽';
+    s5.rt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'ZONE_CHANGED_NEW_AREA');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const s5AfterSnap = s5.rt.getSnapshot();
+    const s5AfterCards = summarizeCards(s5AfterSnap);
+    const s5AfterZoneCards = s5AfterCards.filter((c) => c.title.includes('[区域任务链]'));
+    const s5AfterStage = s5AfterCards.find((c) => c.title.includes('[当前角色所在阶段]'));
+    zpChecks.push(['切换区域刷新-ZONE_CHANGED_NEW_AREA后尘泥沼泽置顶',
+      s5AfterSnap.luaErrors.length === 0
+      && s5AfterZoneCards[0]?.title.includes('尘泥沼泽')
+      && (s5AfterStage?.body || '').split('\n').some((l) => l.includes('[当前]') && l.includes('尘泥沼泽'))]);
+    s5.rt.destroy();
+
+    // 6. ALL 模式（查看 1-60 全程）跨重叠阶段共享 6 张上限：保留阶段原序，同时先为后阶段中的当前区域保留名额
+    const s6 = runZoneScenario({ level: 35, raceKey: '矮人' }, '悲伤沼泽');
+    s6.rt.runSlashCommand('/wowf route');
+    const s6BeforeSnap = s6.rt.getSnapshot();
+    const allModeBtn = Object.values(s6BeforeSnap.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, s6BeforeSnap.frames) && stripWoWFormatting(f.text).includes('查看 1-60 全程')
+    );
+    let s6AllCards = [];
+    let s6AllSnap = s6BeforeSnap;
+    if (allModeBtn) {
+      s6.rt.triggerFrameScript(allModeBtn.id, 'OnClick', 'LeftButton');
+      s6AllSnap = s6.rt.getSnapshot();
+      s6AllCards = summarizeCards(s6AllSnap);
+    }
+    const s6StageCards = s6AllCards.filter((c) => c.title.includes('[当前角色所在阶段]'));
+    const s6ZoneCards = s6AllCards.filter((c) => c.title.includes('[区域任务链]'));
+    zpChecks.push(['ALL模式-保持阶段原序且后阶段当前区域保留名额不被前6张非当前区域挤掉',
+      Boolean(allModeBtn)
+      && s6AllSnap.luaErrors.length === 0
+      && s6StageCards.length === 2
+      && s6StageCards[0].title.includes('Lv.32')
+      && s6StageCards[1].title.includes('Lv.34')
+      && s6ZoneCards.length === 6
+      && s6ZoneCards.some((c) => c.title.includes('悲伤沼泽') && c.title.includes('[当前区域]'))]);
+    s6.rt.destroy();
+
+    // 7. 当前备用区域缺少坐标时，仪表盘保留主据点（尼耶尔前哨站）的可点击地图定位入口
+    const s7 = runZoneScenario({ level: 35, raceKey: '侏儒' }, '湿地');
+    const s7SmartNav = s7.smartCards.find((c) => c.title.includes('当前角色升级导航'));
+    const s7SmartZonesLine = (s7SmartNav?.body || '').split('\n').find((l) => l.includes('适龄练级区域:')) || '';
+    const s7SmartHubLine = (s7SmartNav?.body || '').split('\n').find((l) => l.includes('当前营地/据点:')) || '';
+    const s7RawText = Object.values(s7.smartSnap.fontStrings).map((fs) => fs.text || '').join('\n');
+    zpChecks.push(['无坐标备用区回退-湿地置顶且仪表盘保留主据点定位链接',
+      s7SmartZonesLine.indexOf('湿地') < s7SmartZonesLine.indexOf('凄凉之地')
+      && s7SmartHubLine.includes('尼耶尔前哨站')
+      && /\|Hwowfmap:[^|]*:尼耶尔前哨站\|h/.test(s7RawText)]);
+    s7.rt.destroy();
+
+    const zpFailed = zpChecks.filter(([, ok]) => !ok);
+    if (zpFailed.length > 0) {
+      assertionFailed = true;
+      console.error(`[Assert Failed] 升级路线平行区域置顶回归 failed=${zpFailed.map(([n]) => n).join('|')}`);
+    } else {
+      console.log(`[✓] 升级路线平行区域置顶回归通过（${zpChecks.length} 项断言全部通过）。`);
+    }
+  }
+
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
     process.exit(1);
   }
