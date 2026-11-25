@@ -5377,8 +5377,62 @@ local function RenderTabRoutes()
     end
   end
 
-  local shownZoneCards = 0
-  local shownZoneNames = {}
+  -- 页面级为当前等级阶段预分配最多 6 张区域任务链卡：在 MATCH / ALL / 搜索模式下均优先保留当前所在区域，
+  -- 避免 ALL 或搜索模式下较早阶段的大量非当前区域把名额占满而截断当前区域。
+  local MAX_ZONE_CARDS = 6
+  local selectedZoneCardsByBand = {}
+  do
+    local curCandidates, otherCandidates = {}, {}
+    local seenCandidateZones = {}
+    for _, entry in ipairs(orderedBands) do
+      local cb = entry.band
+      if lvl >= cb.from and lvl <= cb.to then
+        for _, zInfo in ipairs(CollectBandZoneInfos(cb, lvl)) do
+          if zInfo.from <= lvl and lvl <= zInfo.to and not seenCandidateZones[zInfo.zone] then
+            local isCur = ZoneUtil.IsCurrent(zInfo.zone)
+            if isCur or (#curCandidates + #otherCandidates < MAX_ZONE_CARDS) then
+              local groups = GetZoneSuitableQuestChains(zInfo.zone, lvl)
+              if #groups > 0 then
+                local zoneSearchBlob = (zInfo.zone or "") .. " " .. (zInfo.hub or "") .. " " .. (zInfo.note or "")
+                for _, grp in ipairs(groups) do
+                  for _, gq in ipairs(grp.quests or {}) do
+                    zoneSearchBlob = zoneSearchBlob .. " " .. (gq.name or "")
+                    if type(gq.steps) == "table" then
+                      for _, st in ipairs(gq.steps) do
+                        zoneSearchBlob = zoneSearchBlob .. " " .. (st.name or "")
+                      end
+                    end
+                  end
+                end
+                if MatchesSearch(zoneSearchBlob) then
+                  seenCandidateZones[zInfo.zone] = true
+                  local item = { bandIdx = entry.idx, zInfo = zInfo, groups = groups }
+                  if isCur then
+                    table.insert(curCandidates, item)
+                  else
+                    table.insert(otherCandidates, item)
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+    local remaining = MAX_ZONE_CARDS
+    local function acceptCandidates(cands)
+      for _, c in ipairs(cands) do
+        if remaining <= 0 then break end
+        remaining = remaining - 1
+        if not selectedZoneCardsByBand[c.bandIdx] then
+          selectedZoneCardsByBand[c.bandIdx] = {}
+        end
+        table.insert(selectedZoneCardsByBand[c.bandIdx], c)
+      end
+    end
+    acceptCandidates(curCandidates)
+    acceptCandidates(otherCandidates)
+  end
   -- 跨阶段去重：同一任务（如「尖啸者的灵魂」同时挂在多个副本名下）只在本页展示一次
   local shownQuestKeys = {}
   -- 这些集合提到循环外：同一航线/同一副本/同一主城备战跨阶段只出现一次，避免逐阶段复读
@@ -5517,55 +5571,36 @@ local function RenderTabRoutes()
     end
 
     -- 为当前等级所在阶段的多个适龄区域分别展示任务链形式的适合可接任务（已全部完成过滤，部分完成自动折叠前置）
-    if isCurrent and shownZoneCards < 6 then
-      for _, zInfo in ipairs(CollectBandZoneInfos(b, lvl)) do
-        if shownZoneCards >= 6 then break end
-        if zInfo.from <= lvl and lvl <= zInfo.to and not shownZoneNames[zInfo.zone] then
-          local groups = GetZoneSuitableQuestChains(zInfo.zone, lvl)
-          if #groups > 0 then
-            local zoneSearchBlob = (zInfo.zone or "") .. " " .. (zInfo.hub or "") .. " " .. (zInfo.note or "")
-            for _, grp in ipairs(groups) do
-              for _, gq in ipairs(grp.quests or {}) do
-                zoneSearchBlob = zoneSearchBlob .. " " .. (gq.name or "")
-                if type(gq.steps) == "table" then
-                  for _, st in ipairs(gq.steps) do
-                    zoneSearchBlob = zoneSearchBlob .. " " .. (st.name or "")
-                  end
-                end
-              end
-            end
-            if MatchesSearch(zoneSearchBlob) then
-              shownZoneNames[zInfo.zone] = true
-              shownZoneCards = shownZoneCards + 1
-              local zLines = {}
-              if zInfo.note and zInfo.note ~= "" then
-                table.insert(zLines, "|cff99e6ff区域指引:|r " .. LinkifyInlineCoords(zInfo.note, zInfo.zone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone)))
-              end
-              RenderQuestGroups(zLines, groups, {
-                useMatched = true,
-                fallbackLevel = zInfo.from,
-                fallbackZone = zInfo.zone,
-                foldZone = zInfo.zone,
-                singleChainWord = "任务链",
-              })
-              local hubPart = (zInfo.hub and zInfo.hub ~= "") and (" · " .. zInfo.hub) or ""
-              local isCurZone = ZoneUtil.IsCurrent(zInfo.zone)
-              local curZoneBadge = isCurZone and "  |cff00ff00[当前区域]|r" or ""
-              list:Add({
-                title = string.format("|cff00ffcc▶ [区域任务链] %s|r%s  |cffffd100(Lv.%d-%d)|r%s", zInfo.zone, hubPart, zInfo.from, zInfo.to, curZoneBadge),
-                body = table.concat(zLines, "\n"),
-                theme = isCurZone and "routeCur" or "zone",
-                badge = string.format("可接 %d 条任务链", #groups),
-                action = (zInfo.x and zInfo.y) and {
-                  label = "标记营地到地图",
-                  fn = function()
-                    SetWaypointOrPrint(zInfo.hubZone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone), zInfo.x, zInfo.y)
-                  end,
-                } or nil,
-              })
-            end
-          end
+    if isCurrent and selectedZoneCardsByBand[stepIdx] then
+      for _, zCard in ipairs(selectedZoneCardsByBand[stepIdx]) do
+        local zInfo = zCard.zInfo
+        local groups = zCard.groups
+        local zLines = {}
+        if zInfo.note and zInfo.note ~= "" then
+          table.insert(zLines, "|cff99e6ff区域指引:|r " .. LinkifyInlineCoords(zInfo.note, zInfo.zone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone)))
         end
+        RenderQuestGroups(zLines, groups, {
+          useMatched = true,
+          fallbackLevel = zInfo.from,
+          fallbackZone = zInfo.zone,
+          foldZone = zInfo.zone,
+          singleChainWord = "任务链",
+        })
+        local hubPart = (zInfo.hub and zInfo.hub ~= "") and (" · " .. zInfo.hub) or ""
+        local isCurZone = ZoneUtil.IsCurrent(zInfo.zone)
+        local curZoneBadge = isCurZone and "  |cff00ff00[当前区域]|r" or ""
+        list:Add({
+          title = string.format("|cff00ffcc▶ [区域任务链] %s|r%s  |cffffd100(Lv.%d-%d)|r%s", zInfo.zone, hubPart, zInfo.from, zInfo.to, curZoneBadge),
+          body = table.concat(zLines, "\n"),
+          theme = isCurZone and "routeCur" or "zone",
+          badge = string.format("可接 %d 条任务链", #groups),
+          action = (zInfo.x and zInfo.y) and {
+            label = "标记营地到地图",
+            fn = function()
+              SetWaypointOrPrint(zInfo.hubZone, (zInfo.hub ~= "" and zInfo.hub or zInfo.zone), zInfo.x, zInfo.y)
+            end,
+          } or nil,
+        })
       end
     end
   end

@@ -3032,6 +3032,30 @@ async function main() {
               },
             },
           },
+          dwarf = {
+            name = "矮人",
+            faction = "alliance",
+            classes = { "MAGE" },
+            bands = {
+              {
+                from = 32, to = 37, zone = "凄凉之地",
+                hub = { name = "尼耶尔前哨站", x = 66.2, y = 7.0 },
+                altZones = {
+                  { zone = "荆棘谷", hub = "反抗军营地", from = 30, to = 38, x = 38.2, y = 4.0 },
+                  { zone = "千针石林", hub = "乱风岗", from = 30, to = 37, x = 45.1, y = 50.3 },
+                  { zone = "阿拉希高地", hub = "避难谷地", from = 30, to = 39, x = 45.8, y = 47.6 },
+                  { zone = "河林", hub = "河林营地", from = 32, to = 45, x = 50.0, y = 50.0 },
+                  { zone = "尘泥沼泽", hub = "塞拉摩", from = 35, to = 42, x = 66.1, y = 51.5 },
+                },
+                quests = {},
+              },
+              {
+                from = 34, to = 40, zone = "悲伤沼泽",
+                hub = { name = "斯通纳德", x = 45.0, y = 55.0 },
+                quests = {},
+              },
+            },
+          },
         },
         classes = {
           MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精", recommendedProfs = "", phases = {}, steps = {}, musts = {} } } },
@@ -3144,6 +3168,32 @@ async function main() {
       && s5AfterZoneCards[0]?.title.includes('尘泥沼泽')
       && (s5AfterStage?.body || '').split('\n').some((l) => l.includes('[当前]') && l.includes('尘泥沼泽'))]);
     s5.rt.destroy();
+
+    // 6. ALL 模式（查看 1-60 全程）跨重叠阶段共享 6 张上限：保留阶段原序，同时先为后阶段中的当前区域保留名额
+    const s6 = runZoneScenario({ level: 35, raceKey: '矮人' }, '悲伤沼泽');
+    s6.rt.runSlashCommand('/wowf route');
+    const s6BeforeSnap = s6.rt.getSnapshot();
+    const allModeBtn = Object.values(s6BeforeSnap.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, s6BeforeSnap.frames) && stripWoWFormatting(f.text).includes('查看 1-60 全程')
+    );
+    let s6AllCards = [];
+    let s6AllSnap = s6BeforeSnap;
+    if (allModeBtn) {
+      s6.rt.triggerFrameScript(allModeBtn.id, 'OnClick', 'LeftButton');
+      s6AllSnap = s6.rt.getSnapshot();
+      s6AllCards = summarizeCards(s6AllSnap);
+    }
+    const s6StageCards = s6AllCards.filter((c) => c.title.includes('[当前角色所在阶段]'));
+    const s6ZoneCards = s6AllCards.filter((c) => c.title.includes('[区域任务链]'));
+    zpChecks.push(['ALL模式-保持阶段原序且后阶段当前区域保留名额不被前6张非当前区域挤掉',
+      Boolean(allModeBtn)
+      && s6AllSnap.luaErrors.length === 0
+      && s6StageCards.length === 2
+      && s6StageCards[0].title.includes('Lv.32')
+      && s6StageCards[1].title.includes('Lv.34')
+      && s6ZoneCards.length === 6
+      && s6ZoneCards.some((c) => c.title.includes('悲伤沼泽') && c.title.includes('[当前区域]'))]);
+    s6.rt.destroy();
 
     const zpFailed = zpChecks.filter(([, ok]) => !ok);
     if (zpFailed.length > 0) {
