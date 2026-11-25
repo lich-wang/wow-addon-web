@@ -2055,13 +2055,16 @@ async function main() {
       _G.BlackthornesTSDB = {
         prices = {
           ["Forever-Alliance"] = {
-            [4496] = { market = 26849, min = 25000, rivalMin = 25000, quantity = 13, seen = 1795581100 },
+            [4496] = { market = 26849, min = 29000, rivalMin = 29000, quantity = 77, seen = 1795580000 },
           },
           ["Forever-Horde"] = {
-            [4496] = { market = 99999, min = 99000, rivalMin = 99000, quantity = 99, seen = 1795581100 },
+            [4496] = { market = 99999, min = 99000, rivalMin = 99000, quantity = 99, seen = 1795580000 },
           },
         },
-        lastFullScanByRealm = { ["Forever-Alliance"] = 1795581100 },
+        lastFullScanByRealm = { ["Forever-Alliance"] = 1795580000 },
+      }
+      local runtimePrices = {
+        [4496] = { market = 26849, min = 25000, rivalMin = 25000, quantity = 13, seen = 1795581100 },
       }
       _G.BlackthornesTS = {
         Config = {
@@ -2069,7 +2072,7 @@ async function main() {
         },
         Prices = {
           changes = 1,
-          GetTable = function() return _G.BlackthornesTSDB.prices["Forever-Alliance"] end,
+          GetTable = function() return runtimePrices end,
           GetLastScan = function() return 1795581100 end,
         },
       }
