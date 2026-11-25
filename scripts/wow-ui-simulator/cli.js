@@ -3056,6 +3056,21 @@ async function main() {
               },
             },
           },
+          gnome = {
+            name = "侏儒",
+            faction = "alliance",
+            classes = { "MAGE" },
+            bands = {
+              {
+                from = 32, to = 37, zone = "凄凉之地",
+                hub = { name = "尼耶尔前哨站", x = 66.2, y = 7.0 },
+                altZones = {
+                  { zone = "湿地", hub = "米奈希尔港", from = 20, to = 36 },
+                },
+                quests = {},
+              },
+            },
+          },
         },
         classes = {
           MAGE = { name = "法师", specs = { { key = "frost", name = "冰霜专精", recommendedProfs = "", phases = {}, steps = {}, musts = {} } } },
@@ -3094,6 +3109,8 @@ async function main() {
       rt.runSlashCommand('/wowf');
       const smartSnap = rt.getSnapshot();
       const smartCards = summarizeCards(smartSnap);
+      const tag = `Lv.${charOpts.level ?? 35}/${charOpts.raceKey ?? '人类'}/${zone || '空区域'}`;
+      zpChecks.push([`零Lua错误(${tag})`, routeSnap.luaErrors.length === 0 && smartSnap.luaErrors.length === 0]);
       return { rt, routeSnap, routeCards, smartSnap, smartCards };
     };
 
@@ -3194,6 +3211,18 @@ async function main() {
       && s6ZoneCards.length === 6
       && s6ZoneCards.some((c) => c.title.includes('悲伤沼泽') && c.title.includes('[当前区域]'))]);
     s6.rt.destroy();
+
+    // 7. 当前备用区域缺少坐标时，仪表盘保留主据点（尼耶尔前哨站）的可点击地图定位入口
+    const s7 = runZoneScenario({ level: 35, raceKey: '侏儒' }, '湿地');
+    const s7SmartNav = s7.smartCards.find((c) => c.title.includes('当前角色升级导航'));
+    const s7SmartZonesLine = (s7SmartNav?.body || '').split('\n').find((l) => l.includes('适龄练级区域:')) || '';
+    const s7SmartHubLine = (s7SmartNav?.body || '').split('\n').find((l) => l.includes('当前营地/据点:')) || '';
+    const s7RawText = Object.values(s7.smartSnap.fontStrings).map((fs) => fs.text || '').join('\n');
+    zpChecks.push(['无坐标备用区回退-湿地置顶且仪表盘保留主据点定位链接',
+      s7SmartZonesLine.indexOf('湿地') < s7SmartZonesLine.indexOf('凄凉之地')
+      && s7SmartHubLine.includes('尼耶尔前哨站')
+      && /\|Hwowfmap:[^|]*:尼耶尔前哨站\|h/.test(s7RawText)]);
+    s7.rt.destroy();
 
     const zpFailed = zpChecks.filter(([, ok]) => !ok);
     if (zpFailed.length > 0) {

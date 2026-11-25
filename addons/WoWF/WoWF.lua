@@ -4651,16 +4651,17 @@ local function RenderTabSmartMatch()
   if band then
     local bandLines = {}
     local primaryZone = ZoneUtil.GetPrimaryEntry(band)
-    local primaryZoneName = (primaryZone and primaryZone.hubZone ~= "" and primaryZone.hubZone) or band.zone
-    local hubName = (primaryZone and ((primaryZone.hub ~= "" and primaryZone.hub) or primaryZone.zone))
-      or ((band.hub and band.hub.name ~= "") and band.hub.name or band.zone)
-    local hubText = (hubName and hubName ~= "") and hubName or "未知"
-    local hubX, hubY
-    if primaryZone then
-      hubX, hubY = primaryZone.x, primaryZone.y
-    elseif band.hub then
-      hubX, hubY = band.hub.x, band.hub.y
+    local primaryZoneName = (band.hub and band.hub.zone and band.hub.zone ~= "" and band.hub.zone) or band.zone
+    local hubName = (band.hub and band.hub.name ~= "" and band.hub.name) or band.zone
+    local hubX = band.hub and band.hub.x
+    local hubY = band.hub and band.hub.y
+    if primaryZone and primaryZone.hubZone and primaryZone.hubZone ~= "" and primaryZone.x and primaryZone.y then
+      primaryZoneName = primaryZone.hubZone
+      hubName = (primaryZone.hub ~= "" and primaryZone.hub) or primaryZone.zone
+      hubX = primaryZone.x
+      hubY = primaryZone.y
     end
+    local hubText = (hubName and hubName ~= "") and hubName or "未知"
     local hubLink = (hubX and hubY)
       and FormatNpcMapLink(primaryZoneName, hubText, hubX, hubY, { omitZone = true })
       or ("|cff00ffcc" .. hubText .. "|r")
