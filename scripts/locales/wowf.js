@@ -3316,10 +3316,9 @@ function generateWoWFToc(version, updatedAt, dataset) {
   return `## Interface: 16001
 ## Title: 巫妖王的无限百科
 ## Title-zhCN: |cff00ffcc[巫妖王的无限百科]|r 无限服动态指南
-## OptionalDeps: Questie, QuestieDB
+## OptionalDeps: Questie, QuestieDB, Blackthornes_TS
 ## Notes: Offline in-game companion for WoW Forever (16001). Bundles the full knowledge base matching leveling routes, new dungeons, class rotations, talent builds, and macros to your character's level and class.
-## Notes-zhCN: 《魔兽世界：无限服》专属离线百科（内置完整数据快照，无需联网）！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/传承天赋/物资箱攻略与最新热修公告，并用 EasyAuction / 黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
-## OptionalDeps: EasyAuction
+## Notes-zhCN: 《魔兽世界：无限服》专属离线百科（内置完整数据快照，无需联网）！根据当前角色等级、职业、专精、种族与阵营自动匹配：1-60升级路线与坐标导航、专精输出循环、10-60逐级天赋加点、一键创建职业宏、${totalDungeons}大副本（含${newDungeons}个无限服新本）必接任务与掉落、露营睡袋/传承天赋/物资箱攻略与最新热修公告，并用黑石交易技能行情筛选当前可制作且能盈利的配方（含中间产物自产与附魔分解套利）。(数据同步: ${updatedAt})
 ## Author: lich.tech
 ## Version: ${version}
 ## Dependencies: QuestieDB

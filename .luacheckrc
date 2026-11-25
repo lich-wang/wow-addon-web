@@ -29,8 +29,6 @@ read_globals = {
   "C_QuestLog",
   "Enum",
   "QuestieDB",
-  "EasyAuctionAPI",
-  "EasyAuctionDB12",
 }
 
 ignore = {
