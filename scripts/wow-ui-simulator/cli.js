@@ -2609,6 +2609,7 @@ async function main() {
       _G.__WOWF_TEST_CALLS = calls
       _G.__WOWF_TEST_GET_COUNTS = function() return overrideCalls, clearCalls end
       _G.__WOWF_TEST_ADVANCE_TIME = function(sec) tClock = tClock + sec end
+      _G.__WOWF_TEST_SPEND = function(copper) money = math.max(0, money - (tonumber(copper) or 0)) end
     `, 'BtFlipBuyerMock.lua');
 
     btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_SHOW');
@@ -2642,13 +2643,18 @@ async function main() {
 
     btRt.execLua(`__WOWF_TEST_ADVANCE_TIME(1)`, 'BtFlipWheelStep.lua');
     if (wheelFrame) btRt.triggerFrameScript(wheelFrame.id, 'OnClick', 'LeftButton');
-    // 无关金额掉落与错误 auctionID 的回执不得提前结算当前买单
+    // 无关金额掉落（实际扣减 >= 310 铜）与错误 auctionID 的回执不得提前结算当前买单
     btRt.execLua(`
       local beforeBad = WoWF_CraftArb.FlipBuyer.Status()
+      __WOWF_TEST_SPEND(350)
       __WOW_DISPATCH_EVENT__("PLAYER_MONEY")
+      local afterMoney = WoWF_CraftArb.FlipBuyer.Status()
       __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED", 999999)
       local afterBad = WoWF_CraftArb.FlipBuyer.Status()
-      _G.__WOWF_TEST_PREMATURE_SETTLE = (beforeBad.stats.boughtCount ~= afterBad.stats.boughtCount) or (afterBad.phase ~= "buying")
+      _G.__WOWF_TEST_PREMATURE_SETTLE = (beforeBad.stats.boughtCount ~= afterMoney.stats.boughtCount)
+        or (afterMoney.phase ~= "buying")
+        or (beforeBad.stats.boughtCount ~= afterBad.stats.boughtCount)
+        or (afterBad.phase ~= "buying")
     `, 'BtFlipMismatchedReceipt.lua');
     btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_PURCHASE_COMPLETED', 103);
     await new Promise((resolve) => setTimeout(resolve, 350));
@@ -2905,12 +2911,19 @@ async function main() {
 
       local origSetMaxPay = _G.BlackthornesTS.ShoppingLists.SetMaxPay
       _G.BlackthornesTS.ShoppingLists.SetMaxPay = function() return false end
-      local okCapFail, reasonCapFail, metaCapFail = WoWF_CraftArb.AddFlipToShoppingList(2970, 2, 332)
+      local okCapFail, reasonCapFail, metaCapFail = WoWF_CraftArb.AddFlipToShoppingList(2970, 2, 299)
       _G.BlackthornesTS.ShoppingLists.SetMaxPay = origSetMaxPay
+      local failWant, failCap = 0, 0
+      if type(metaCapFail) == "table" and metaCapFail.listId then
+        local lFail = _G.BlackthornesTS.ShoppingLists:Get(metaCapFail.listId)
+        for _, it in ipairs((lFail and lFail.items) or {}) do
+          if it.id == 2970 then failWant, failCap = it.want, it.maxPay or 0 end
+        end
+      end
       local okRetryCap = false
       local retryWant, retryCap = 0, 0
       if not okCapFail and type(metaCapFail) == "table" and metaCapFail.partial and metaCapFail.listId then
-        okRetryCap = WoWF_CraftArb.UpdateShoppingListMaxPay(metaCapFail.listId, 2970, 332)
+        okRetryCap = WoWF_CraftArb.UpdateShoppingListMaxPay(metaCapFail.listId, 2970, 299)
         local l = _G.BlackthornesTS.ShoppingLists:Get(metaCapFail.listId)
         for _, it in ipairs((l and l.items) or {}) do
           if it.id == 2970 then retryWant, retryCap = it.want, it.maxPay or 0 end
@@ -2922,6 +2935,7 @@ async function main() {
         tostring(st1), tostring(st2), tostring(soldAfterBagChange),
         tostring(okNoTip), tostring(errNoTip or ""),
         tostring(okCapFail), tostring(metaCapFail and metaCapFail.partial == true),
+        tostring(failWant), tostring(failCap),
         tostring(okRetryCap), tostring(retryWant), tostring(retryCap),
       }, "|"))
     `, 'BtEdgeRegressionVerify.lua');
@@ -2933,9 +2947,10 @@ async function main() {
       edgeParts[2] === 'confirm' && edgeParts[3] === 'confirm' && edgeParts[4] === '0']);
     btChecks.push(['边界回归-缺少Tooltip接口时禁止基于facts缓存价启动扫货',
       edgeParts[5] === 'false' && String(edgeParts[6] || '').includes('Tooltip')]);
-    btChecks.push(['边界回归-SetMaxPay失败报部分失败并支持仅补写限价不重复加数量',
-      edgeParts[7] === 'false' && edgeParts[8] === 'true' && edgeParts[9] === 'true'
-      && edgeParts[10] === '7' && edgeParts[11] === '332']);
+    btChecks.push(['边界回归-SetMaxPay失败保留旧限价且支持仅补写新限价不重复加数量',
+      edgeParts[7] === 'false' && edgeParts[8] === 'true'
+      && edgeParts[9] === '7' && edgeParts[10] === '332'
+      && edgeParts[11] === 'true' && edgeParts[12] === '7' && edgeParts[13] === '299']);
 
     const btFailed = btChecks.filter(([, ok]) => !ok);
     const btSnapFinal = btRt.getSnapshot();

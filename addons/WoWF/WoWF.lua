@@ -4125,6 +4125,34 @@ function flipBuy.UpdateWheel()
   end
 end
 
+function flipBuy.SubmitShoppingList(retryKey, chatPrefix, colorHex, itemID, maxPay, addFn, successDescFn)
+  local pendingRetry = flipBuy.pendingCapRetry[retryKey]
+  if pendingRetry and type(WoWF_CraftArb.UpdateShoppingListMaxPay) == "function" then
+    local cap = pendingRetry.maxPay or maxPay
+    local okCap, idOrReason, capNote = WoWF_CraftArb.UpdateShoppingListMaxPay(pendingRetry.listId, itemID, cap)
+    if okCap then
+      flipBuy.pendingCapRetry[retryKey] = nil
+      DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cff%s[%s]|r 已补写购物清单最高买价 %s（清单 ID: %s%s）。",
+        colorHex, chatPrefix, FormatMoney(cap),
+        tostring(idOrReason), capNote and ("，" .. tostring(capNote)) or ""))
+    else
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff5555[%s]|r 补写最高买价失败: %s。", chatPrefix, tostring(idOrReason)))
+    end
+    return
+  end
+  local ok, listIDOrReason, note = addFn()
+  if not ok then
+    if type(note) == "table" and note.partial and note.listId then
+      flipBuy.pendingCapRetry[retryKey] = { listId = note.listId, maxPay = maxPay }
+    end
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff5555[%s]|r 写入购物清单失败: %s。", chatPrefix, tostring(listIDOrReason)))
+    return
+  end
+  flipBuy.pendingCapRetry[retryKey] = nil
+  DEFAULT_CHAT_FRAME:AddMessage(successDescFn(listIDOrReason, note))
+end
+
 local function HideUnusedCards(fromIndex)
   for i = fromIndex, #cardPool do
     cardPool[i]:Hide()
@@ -6046,6 +6074,8 @@ function flipBuy.UpdateBar()
     primaryLabel = string.format("|cff44ff88买入下一件|r (%s)", FormatMoney(st.liveAuction and st.liveAuction.total or 0))
   elseif st.phase == "planned_commodity" then
     primaryLabel = string.format("|cffffd100锁价 (%d件)|r", st.commodity and st.commodity.count or 0)
+  elseif st.phase == "requote_commodity" then
+    primaryLabel = "|cffffd100重查锁价|r"
   elseif st.phase == "ready_commodity" then
     primaryLabel = string.format("|cff44ff88确认付款 (%s)|r", FormatMoney(st.commodity and st.commodity.quotedTotal or 0))
   elseif st.phase == "searching" then
@@ -6175,7 +6205,13 @@ function flipBuy.LayoutBar(yOffset, flipRows)
     stopBtn:SetText("停止扫货")
     stopBtn:SetScript("OnClick", function()
       local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
-      if fb and fb.IsActive() then fb.Stop() end
+      if fb and fb.IsActive and fb.IsActive() then
+        if type(fb.StopAfterPending) == "function" then
+          fb.StopAfterPending()
+        elseif type(fb.Stop) == "function" then
+          fb.Stop()
+        end
+      end
       flipBuy.UpdateBar()
     end)
     AttachTooltip(stopBtn, "停止扫货", "结束本轮扫货队列并清理滚轮绑定与未付款锁价。")
@@ -7528,16 +7564,23 @@ local function RenderTabCraftArb()
               return
             end
             local qty = sourceQty > 0 and sourceQty or 1
-            local ok, listIDOrReason, note = WoWF_CraftArb.AddVendorToShoppingList(row.outputID, qty, buySource.price)
-            if not ok then
-              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 商人套利]|r 写入购物清单失败: " .. tostring(listIDOrReason) .. "。")
-              return
-            end
-            DEFAULT_CHAT_FRAME:AddMessage(string.format(
-              "|cff00ffcc[WoWF 商人套利]|r 已把 %s ×%d 写入黑石购物清单（清单 ID: %s）%s，买入价 %s、到 %s 找 %s。",
-              FormatItemLink(row.outputID, row.name), qty, tostring(listIDOrReason),
-              note and ("，" .. note) or "", FormatMoney(buySource.price),
-              buySource.zone or "?", buySource.npc or "?"))
+            flipBuy.SubmitShoppingList(
+              "vendor:" .. tostring(row.outputID),
+              "WoWF 商人套利",
+              "00ffcc",
+              row.outputID,
+              buySource.price,
+              function()
+                return WoWF_CraftArb.AddVendorToShoppingList(row.outputID, qty, buySource.price)
+              end,
+              function(listID, note)
+                return string.format(
+                  "|cff00ffcc[WoWF 商人套利]|r 已把 %s ×%d 写入黑石购物清单（清单 ID: %s）%s，买入价 %s、到 %s 找 %s。",
+                  FormatItemLink(row.outputID, row.name), qty, tostring(listID),
+                  type(note) == "string" and ("，" .. note) or "", FormatMoney(buySource.price),
+                  buySource.zone or "?", buySource.npc or "?")
+              end
+            )
           end,
         }
       end
@@ -7584,33 +7627,22 @@ local function RenderTabCraftArb()
           end
           local qty = (row.buyableQty and row.buyableQty > 0) and row.buyableQty or 1
           local maxPay = math.max(1, math.floor((row.vendorSell or 1) - 1))
-          local pendingRetry = flipBuy.pendingCapRetry[row.outputID]
-          if pendingRetry and type(WoWF_CraftArb.UpdateShoppingListMaxPay) == "function" then
-            local okCap, idOrReason, capNote = WoWF_CraftArb.UpdateShoppingListMaxPay(pendingRetry.listId, row.outputID, maxPay)
-            if okCap then
-              flipBuy.pendingCapRetry[row.outputID] = nil
-              DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                "|cff44ff88[WoWF 拍卖→商人]|r 已补写 %s 购物清单最高扫货价 %s（清单 ID: %s%s）。",
-                FormatItemLink(row.outputID, row.name, row.quality), FormatMoney(maxPay),
-                tostring(idOrReason), capNote and ("，" .. tostring(capNote)) or ""))
-            else
-              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 拍卖→商人]|r 补写最高扫货价失败: " .. tostring(idOrReason) .. "。")
+          flipBuy.SubmitShoppingList(
+            "flip:" .. tostring(row.outputID),
+            "WoWF 拍卖→商人",
+            "44ff88",
+            row.outputID,
+            maxPay,
+            function()
+              return WoWF_CraftArb.AddFlipToShoppingList(row.outputID, qty, maxPay)
+            end,
+            function(listID, note)
+              return string.format(
+                "|cff44ff88[WoWF 拍卖→商人]|r 已把 %s ×%d 写入黑石购物清单（清单 ID: %s）%s，最高扫货价 %s（商人收 %s）。",
+                FormatItemLink(row.outputID, row.name, row.quality), qty, tostring(listID),
+                type(note) == "string" and ("，" .. note) or "", FormatMoney(maxPay), FormatMoney(row.vendorSell or 0))
             end
-            return
-          end
-          local ok, listIDOrReason, note = WoWF_CraftArb.AddFlipToShoppingList(row.outputID, qty, maxPay)
-          if not ok then
-            if type(note) == "table" and note.partial and note.listId then
-              flipBuy.pendingCapRetry[row.outputID] = { listId = note.listId }
-            end
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 拍卖→商人]|r 写入购物清单失败: " .. tostring(listIDOrReason) .. "。")
-            return
-          end
-          flipBuy.pendingCapRetry[row.outputID] = nil
-          DEFAULT_CHAT_FRAME:AddMessage(string.format(
-            "|cff44ff88[WoWF 拍卖→商人]|r 已把 %s ×%d 写入黑石购物清单（清单 ID: %s）%s，最高扫货价 %s（商人收 %s）。",
-            FormatItemLink(row.outputID, row.name, row.quality), qty, tostring(listIDOrReason),
-            type(note) == "string" and ("，" .. note) or "", FormatMoney(maxPay), FormatMoney(row.vendorSell or 0)))
+          )
         end,
       }
       list:Add({

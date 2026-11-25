@@ -3052,6 +3052,7 @@ local function advanceToNextItem(immediate)
   buyer.buying = nil
   buyer.armed = nil
   buyer.pendingSkip = nil
+  buyer.pendingStop = nil
   buyer.pendingStopReason = nil
   buyer.searchItemKey = nil
   buyer.searchItemID = nil
@@ -3248,6 +3249,7 @@ function FlipBuyer.Start(flipRows)
   buyer.commodityPlan = nil
   buyer.buying = nil
   buyer.pendingSkip = nil
+  buyer.pendingStop = nil
   buyer.pendingStopReason = nil
   searchCurrentItem()
   return true
@@ -3266,6 +3268,7 @@ function FlipBuyer.Stop(reason)
   buyer.buying = nil
   buyer.armed = nil
   buyer.pendingSkip = nil
+  buyer.pendingStop = nil
   buyer.pendingStopReason = nil
   buyer.searchItemKey = nil
   buyer.searchItemID = nil
@@ -3282,8 +3285,9 @@ end
 function FlipBuyer.StopAfterPending(reason)
   if not buyer.active then return end
   if buyer.phase == "buying" or buyer.buying ~= nil then
-    buyer.pendingStopReason = reason or "扫货队列范围已变更，已停止连续扫货"
-    buyer.lastMessage = buyer.pendingStopReason .. "（等待当前买单回执后自动停止）"
+    buyer.pendingStop = true
+    buyer.pendingStopReason = reason
+    buyer.lastMessage = (reason or "已请求停止扫货") .. "（等待当前买单回执后自动停止）"
     buyerNotify()
     return
   end
@@ -3312,7 +3316,7 @@ function FlipBuyer.Skip()
 end
 
 ---硬件点击/滚轮触发：执行当前阶段的下一步买单（买单件、堆叠锁价或确认付款）
----@return boolean|string result true | "confirm" | "quoting" | false
+---@return boolean|string result true | "confirm" | "quoting" | "searching" | false
 ---@return string|nil reason
 function FlipBuyer.Step()
   if not buyer.active or not FlipBuyer.IsAuctionHouseOpen() then
@@ -3322,6 +3326,10 @@ function FlipBuyer.Step()
   if not cur then
     advanceToNextItem(true)
     return false, "队列已结束"
+  end
+  if buyer.phase == "requote_commodity" then
+    searchCurrentItem()
+    return "searching"
   end
   if buyer.phase == "searching" or buyer.phase == "quoting_commodity" or buyer.phase == "buying" then
     return false, "等待拍卖行响应"
@@ -3414,7 +3422,7 @@ function FlipBuyer.Step()
     scheduleBuyerTimer(FLIP_BUY_TIMEOUT, function()
       if buyer.active and buyer.sessionId == sid and buyer.buyToken == btok and buyer.phase == "buying" then
         buyer.buying = nil
-        if buyer.pendingStopReason then
+        if buyer.pendingStop then
           FlipBuyer.Stop(buyer.pendingStopReason)
           return
         end
@@ -3508,10 +3516,10 @@ function FlipBuyer.Step()
     if money and money < plan.quotedTotal then
       local needTotal = plan.quotedTotal
       cancelPendingCommodityQuote()
-      plan.quotedTotal = nil
+      buyer.commodityPlan = nil
       buyer.armed = nil
-      buyer.phase = "planned_commodity"
-      buyer.lastMessage = format("金币不足（需要 %s），已取消本次锁价；补足金币后可再次点击重新锁价", formatFlipCopper(needTotal))
+      buyer.phase = "requote_commodity"
+      buyer.lastMessage = format("金币不足（需要 %s），已取消本次锁价；补足金币后再次点击将按当前余额重新检索", formatFlipCopper(needTotal))
       buyerNotify()
       return false, "金币不足"
     end
@@ -3548,7 +3556,7 @@ function FlipBuyer.Step()
     scheduleBuyerTimer(FLIP_BUY_TIMEOUT, function()
       if buyer.active and buyer.sessionId == sid and buyer.buyToken == btok and buyer.phase == "buying" then
         buyer.buying = nil
-        if buyer.pendingStopReason then
+        if buyer.pendingStop then
           FlipBuyer.Stop(buyer.pendingStopReason)
           return
         end
@@ -3575,7 +3583,7 @@ local function finishSuccessfulPurchase()
   buyer.stats.spent = buyer.stats.spent + floor((tonumber(buying.total) or 0) + 0.5)
   buyer.stats.estProfit = buyer.stats.estProfit + floor((tonumber(buying.profit) or 0) + 0.5)
 
-  if buyer.pendingStopReason then
+  if buyer.pendingStop then
     FlipBuyer.Stop(buyer.pendingStopReason)
     return
   end
@@ -3802,7 +3810,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     elseif event == "AUCTION_HOUSE_SHOW_ERROR" or event == "COMMODITY_PURCHASE_FAILED" then
       if buyer.buying.kind == "item" then
         buyer.buying = nil
-        if buyer.pendingStopReason then
+        if buyer.pendingStop then
           FlipBuyer.Stop(buyer.pendingStopReason)
           return
         end
@@ -3824,7 +3832,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
       else
         cancelPendingCommodityQuote()
         buyer.buying = nil
-        if buyer.pendingStopReason then
+        if buyer.pendingStop then
           FlipBuyer.Stop(buyer.pendingStopReason)
           return
         end
