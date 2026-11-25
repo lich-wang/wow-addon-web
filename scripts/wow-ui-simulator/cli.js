@@ -2638,11 +2638,19 @@ async function main() {
     btChecks.push(['扫货UI-搜到实时一口价后按钮切为买入下一件且已绑滚轮',
       Boolean(buyNextBtn) && Boolean(wheelFrame) && boundKeyDuring === 'MOUSEWHEELUP']);
     if (buyNextBtn) btRt.triggerFrameScript(buyNextBtn.id, 'OnClick', 'LeftButton');
-    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_PURCHASE_COMPLETED');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_PURCHASE_COMPLETED', 102);
 
     btRt.execLua(`__WOWF_TEST_ADVANCE_TIME(1)`, 'BtFlipWheelStep.lua');
     if (wheelFrame) btRt.triggerFrameScript(wheelFrame.id, 'OnClick', 'LeftButton');
-    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_PURCHASE_COMPLETED');
+    // 无关金额掉落与错误 auctionID 的回执不得提前结算当前买单
+    btRt.execLua(`
+      local beforeBad = WoWF_CraftArb.FlipBuyer.Status()
+      __WOW_DISPATCH_EVENT__("PLAYER_MONEY")
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED", 999999)
+      local afterBad = WoWF_CraftArb.FlipBuyer.Status()
+      _G.__WOWF_TEST_PREMATURE_SETTLE = (beforeBad.stats.boughtCount ~= afterBad.stats.boughtCount) or (afterBad.phase ~= "buying")
+    `, 'BtFlipMismatchedReceipt.lua');
+    btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'AUCTION_HOUSE_PURCHASE_COMPLETED', 103);
     await new Promise((resolve) => setTimeout(resolve, 350));
     btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'COMMODITY_SEARCH_RESULTS_UPDATED', 20744);
     btRt.execLua(`WoWF_CraftArb.FlipBuyer.Step()`, 'BtFlipCommodityQuote.lua');
@@ -2675,40 +2683,54 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 350));
     btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'ITEM_SEARCH_RESULTS_UPDATED', { itemID: 95001 });
     btRt.execLua(`
+      _G.__WOWF_TEST_CALLS_BEFORE_HIGH1 = #_G.__WOWF_TEST_CALLS
       _G.__WOWF_TEST_RHIGH1 = WoWF_CraftArb.FlipBuyer.Step()
-      _G.__WOWF_TEST_CALLS_BEFORE = #_G.__WOWF_TEST_CALLS
+      _G.__WOWF_TEST_CALLS_AFTER_HIGH1 = #_G.__WOWF_TEST_CALLS
       _G.__WOWF_TEST_RHIGH2 = WoWF_CraftArb.FlipBuyer.Step()
-      _G.__WOWF_TEST_CALLS_AFTER = #_G.__WOWF_TEST_CALLS
-      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED")
+      _G.__WOWF_TEST_CALLS_AFTER_HIGH2 = #_G.__WOWF_TEST_CALLS
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED", 201)
     `, 'BtFlipSafetyStep2.lua');
     await new Promise((resolve) => setTimeout(resolve, 350));
     btRt.callLuaGlobal('__WOW_DISPATCH_EVENT__', 'COMMODITY_SEARCH_RESULTS_UPDATED', 95002);
     btRt.execLua(`
       WoWF_CraftArb.FlipBuyer.Step()
+      _G.__WOWF_TEST_CALLS_BEFORE_JUMP = #_G.__WOWF_TEST_CALLS
       -- 实时总价跳到 220 >= 100*2，必须拒绝并取消
       __WOW_DISPATCH_EVENT__("COMMODITY_PRICE_UPDATED", 110, 220)
       local st = _G.__WOWF_TEST_FB_SNAPSHOT
       local stJump = WoWF_CraftArb.FlipBuyer.Status()
       local unsellableBlacklisted = type(WoWFDB.unsellableItems) == "table" and WoWFDB.unsellableItems[95098] == true
       local boundKey = _G.__WOWF_TEST_BOUND and _G.__WOWF_TEST_BOUND.key or ""
+      local high1Calls, high2Calls, jumpCalls = {}, {}, {}
+      for i = (_G.__WOWF_TEST_CALLS_BEFORE_HIGH1 or 0) + 1, (_G.__WOWF_TEST_CALLS_AFTER_HIGH1 or 0) do
+        high1Calls[#high1Calls + 1] = _G.__WOWF_TEST_CALLS[i]
+      end
+      for i = (_G.__WOWF_TEST_CALLS_AFTER_HIGH1 or 0) + 1, (_G.__WOWF_TEST_CALLS_AFTER_HIGH2 or 0) do
+        high2Calls[#high2Calls + 1] = _G.__WOWF_TEST_CALLS[i]
+      end
+      for i = (_G.__WOWF_TEST_CALLS_BEFORE_JUMP or 0) + 1, #_G.__WOWF_TEST_CALLS do
+        jumpCalls[#jumpCalls + 1] = _G.__WOWF_TEST_CALLS[i]
+      end
       __WOW_BRIDGE__:emitString(table.concat({
         tostring(st.phase), tostring(st.stats.boughtCount), tostring(st.stats.boughtUnits), tostring(st.stats.estProfit),
-        tostring(_G.__WOWF_TEST_RHIGH1), tostring(_G.__WOWF_TEST_CALLS_BEFORE),
-        tostring(_G.__WOWF_TEST_RHIGH2), tostring((_G.__WOWF_TEST_CALLS_AFTER or 0) > (_G.__WOWF_TEST_CALLS_BEFORE or 0)),
+        tostring(_G.__WOWF_TEST_RHIGH1), table.concat(high1Calls, ","),
+        tostring(_G.__WOWF_TEST_RHIGH2), table.concat(high2Calls, ","),
         tostring(stJump.phase), tostring(boundKey), tostring(unsellableBlacklisted),
-        table.concat(_G.__WOWF_TEST_CALLS, ",")
+        table.concat(jumpCalls, ","), table.concat(_G.__WOWF_TEST_CALLS, ","),
+        tostring(_G.__WOWF_TEST_PREMATURE_SETTLE)
       }, "|"))
     `, 'BtFlipSafetyVerify.lua');
     const [fbOut] = btRt.takeEmittedStrings();
     const fbTestParts = String(fbOut || '').split('|');
     btChecks.push(['连续扫货-单件连买与堆叠两段锁价全流程成交(3笔6件,预计净赚136铜)',
-      fbTestParts[0] === 'done' && Number(fbTestParts[1]) === 3 && Number(fbTestParts[2]) === 6 && Number(fbTestParts[3]) === 136]);
+      fbTestParts[0] === 'done' && Number(fbTestParts[1]) === 3 && Number(fbTestParts[2]) === 6 && Number(fbTestParts[3]) === 136 && fbTestParts[13] === 'false']);
     btChecks.push(['连续扫货-买前Tooltip无卖价拦截95098并自动拉黑',
-      fbTestParts[10] === 'true' && !String(fbTestParts[11] || '').includes('start:95098')]);
-    btChecks.push(['连续扫货-超10金首点返回confirm且二次点击才PlaceBid',
-      fbTestParts[4] === 'confirm' && fbTestParts[6] === 'true' && fbTestParts[7] === 'true']);
-    btChecks.push(['连续扫货-堆叠锁价涨价自动cancel并结束且解绑滚轮',
-      fbTestParts[8] === 'done' && fbTestParts[9] === '' && String(fbTestParts[11] || '').includes('cancel')]);
+      fbTestParts[10] === 'true' && !String(fbTestParts[12] || '').includes('start:95098')]);
+    btChecks.push(['连续扫货-超10金首点不PlaceBid仅返回confirm，二点恰提交bid:201:120000一次',
+      fbTestParts[4] === 'confirm' && fbTestParts[5] === '' && fbTestParts[6] === 'true' && fbTestParts[7] === 'bid:201:120000']);
+    btChecks.push(['连续扫货-堆叠锁价涨价事件触发cancel且无付款调用并解绑滚轮',
+      fbTestParts[8] === 'done' && fbTestParts[9] === ''
+      && String(fbTestParts[11] || '').split(',').includes('cancel') && !String(fbTestParts[11] || '').includes('confirm:')]);
     // 队列仍在进行时关闭拍卖行，也必须立刻停止并解绑滚轮
     btRt.execLua(`
       WoWF_CraftArb.FlipBuyer.Start({ { kind = "flip", outputID = 2970, name = "法师短裤", vendorSell = 333, profit = 33 } })
@@ -2846,6 +2868,74 @@ async function main() {
     btChecks.push(['商人一键全卖-默认按钮紧邻空间不足时自动避让到底部右侧',
       Boolean(tightPt) && tightPt.point === 'TOPRIGHT'
       && tightRel && tightRel.name === 'MerchantFrame' && tightPt.relativePoint === 'BOTTOMRIGHT']);
+
+    // 场景 K：CodeRabbit 审查边界回归（已绑灰品保护、确认后背包变动重预览、缺 Tooltip 禁买 facts、SetMaxPay 失败不报全成功）
+    btRt.execLua(`
+      local cBags = {
+        [0] = {
+          [1] = { itemID = 96001, stackCount = 1, quality = 0, isBound = true, isLocked = false, hasNoValue = false },
+        },
+      }
+      _G.C_Container.GetContainerNumSlots = function(b) return b == 0 and 2 or 0 end
+      _G.C_Container.GetContainerItemInfo = function(b, s) return cBags[b] and cBags[b][s] or nil end
+      _G.C_Container.GetContainerItemID = function(b, s) return cBags[b] and cBags[b][s] and cBags[b][s].itemID or nil end
+      local cSold = {}
+      _G.C_Container.UseContainerItem = function(b, s)
+        local slot = cBags[b] and cBags[b][s]
+        if slot then cSold[#cSold + 1] = slot.itemID; cBags[b][s] = nil end
+      end
+
+      WoWF_CraftArb.MerchantSeller.SetMode("safe")
+      local safeBoundItems = WoWF_CraftArb.MerchantSeller.Scan("safe")
+      WoWF_CraftArb.MerchantSeller.SetMode("unbound")
+      local unboundBoundItems = WoWF_CraftArb.MerchantSeller.Scan("unbound")
+
+      WoWF_CraftArb.MerchantSeller.SetMode("all")
+      local st1 = WoWF_CraftArb.MerchantSeller.Click()
+      cBags[0][2] = { itemID = 96002, stackCount = 1, quality = 2, isBound = false, isLocked = false, hasNoValue = false }
+      local st2 = WoWF_CraftArb.MerchantSeller.Click()
+      local soldAfterBagChange = #cSold
+
+      _G.C_TooltipInfo = nil
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_SHOW")
+      local okNoTip, errNoTip = WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 2970, name = "未核验装备", vendorSell = 333, vendorSellSource = "facts", profit = 33 },
+      })
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_CLOSED")
+
+      local origSetMaxPay = _G.BlackthornesTS.ShoppingLists.SetMaxPay
+      _G.BlackthornesTS.ShoppingLists.SetMaxPay = function() return false end
+      local okCapFail, reasonCapFail, metaCapFail = WoWF_CraftArb.AddFlipToShoppingList(2970, 2, 332)
+      _G.BlackthornesTS.ShoppingLists.SetMaxPay = origSetMaxPay
+      local okRetryCap = false
+      local retryWant, retryCap = 0, 0
+      if not okCapFail and type(metaCapFail) == "table" and metaCapFail.partial and metaCapFail.listId then
+        okRetryCap = WoWF_CraftArb.UpdateShoppingListMaxPay(metaCapFail.listId, 2970, 332)
+        local l = _G.BlackthornesTS.ShoppingLists:Get(metaCapFail.listId)
+        for _, it in ipairs((l and l.items) or {}) do
+          if it.id == 2970 then retryWant, retryCap = it.want, it.maxPay or 0 end
+        end
+      end
+
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(#safeBoundItems), tostring(#unboundBoundItems),
+        tostring(st1), tostring(st2), tostring(soldAfterBagChange),
+        tostring(okNoTip), tostring(errNoTip or ""),
+        tostring(okCapFail), tostring(metaCapFail and metaCapFail.partial == true),
+        tostring(okRetryCap), tostring(retryWant), tostring(retryCap),
+      }, "|"))
+    `, 'BtEdgeRegressionVerify.lua');
+    const [edgeOut] = btRt.takeEmittedStrings();
+    const edgeParts = String(edgeOut || '').split('|');
+    btChecks.push(['边界回归-已绑灰品在safe/unbound模式下受保护不出售',
+      edgeParts[0] === '0' && edgeParts[1] === '0']);
+    btChecks.push(['边界回归-确认预览后背包变化强制重新确认且不误卖新增物品',
+      edgeParts[2] === 'confirm' && edgeParts[3] === 'confirm' && edgeParts[4] === '0']);
+    btChecks.push(['边界回归-缺少Tooltip接口时禁止基于facts缓存价启动扫货',
+      edgeParts[5] === 'false' && String(edgeParts[6] || '').includes('Tooltip')]);
+    btChecks.push(['边界回归-SetMaxPay失败报部分失败并支持仅补写限价不重复加数量',
+      edgeParts[7] === 'false' && edgeParts[8] === 'true' && edgeParts[9] === 'true'
+      && edgeParts[10] === '7' && edgeParts[11] === '332']);
 
     const btFailed = btChecks.filter(([, ok]) => !ok);
     const btSnapFinal = btRt.getSnapshot();

@@ -4072,15 +4072,20 @@ local function AcquireCard(index)
   return c
 end
 
-local flipBuy = { wheelBound = false, wheelLastAt = 0 }
+local flipBuy = { wheelBound = false, wheelLastAt = 0, pendingCapRetry = {} }
 
-function flipBuy.UpdateWheel()
+function flipBuy.CanUseWheel()
   local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
-  local want = state.craftFlipWheel == true
+  return state.craftFlipWheel == true
     and state.activeTab == 8
     and mainFrame and mainFrame.IsShown and mainFrame:IsShown() == true
     and fb and fb.IsActive and fb.IsActive() == true
     and fb.IsAuctionHouseOpen and fb.IsAuctionHouseOpen() == true
+    and not (InCombatLockdown and InCombatLockdown() == true)
+end
+
+function flipBuy.UpdateWheel()
+  local want = flipBuy.CanUseWheel()
 
   if InCombatLockdown and InCombatLockdown() == true then return end
 
@@ -4096,6 +4101,7 @@ function flipBuy.UpdateWheel()
       if wheelButton.RegisterForClicks then wheelButton:RegisterForClicks("AnyUp", "AnyDown") end
       wheelButton:SetScript("OnClick", function(_, _, down)
         if down == false then return end
+        if not flipBuy.CanUseWheel() then return end
         local nowAt = (type(GetTime) == "function" and GetTime()) or 0
         if flipBuy.wheelLastAt > 0 and nowAt > 0 and nowAt - flipBuy.wheelLastAt < 0.35 then return end
         flipBuy.wheelLastAt = nowAt
@@ -6133,6 +6139,17 @@ function flipBuy.LayoutBar(yOffset, flipRows)
     gearBtn:SetHeight(22)
     gearBtn:SetScript("OnClick", function()
       state.craftFlipGearOnly = (state.craftFlipGearOnly == false)
+      local fb = WoWF_CraftArb and WoWF_CraftArb.FlipBuyer
+      if fb and fb.IsActive and fb.IsActive() then
+        local reason = state.craftFlipGearOnly
+          and "已开启「仅扫装备」，本轮扫货已停止，请重新点击「开始连续扫货」以按新范围扫描"
+          or "已关闭「仅扫装备」，本轮扫货已停止，请重新点击「开始连续扫货」以按新范围扫描"
+        if type(fb.StopAfterPending) == "function" then
+          fb.StopAfterPending(reason)
+        elseif type(fb.Stop) == "function" then
+          fb.Stop(reason)
+        end
+      end
       RefreshUI()
     end)
     AttachTooltip(gearBtn, "仅扫装备防护（防买到致盲粉等假卖价杂物）",
@@ -7567,15 +7584,33 @@ local function RenderTabCraftArb()
           end
           local qty = (row.buyableQty and row.buyableQty > 0) and row.buyableQty or 1
           local maxPay = math.max(1, math.floor((row.vendorSell or 1) - 1))
+          local pendingRetry = flipBuy.pendingCapRetry[row.outputID]
+          if pendingRetry and type(WoWF_CraftArb.UpdateShoppingListMaxPay) == "function" then
+            local okCap, idOrReason, capNote = WoWF_CraftArb.UpdateShoppingListMaxPay(pendingRetry.listId, row.outputID, maxPay)
+            if okCap then
+              flipBuy.pendingCapRetry[row.outputID] = nil
+              DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cff44ff88[WoWF 拍卖→商人]|r 已补写 %s 购物清单最高扫货价 %s（清单 ID: %s%s）。",
+                FormatItemLink(row.outputID, row.name, row.quality), FormatMoney(maxPay),
+                tostring(idOrReason), capNote and ("，" .. tostring(capNote)) or ""))
+            else
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 拍卖→商人]|r 补写最高扫货价失败: " .. tostring(idOrReason) .. "。")
+            end
+            return
+          end
           local ok, listIDOrReason, note = WoWF_CraftArb.AddFlipToShoppingList(row.outputID, qty, maxPay)
           if not ok then
+            if type(note) == "table" and note.partial and note.listId then
+              flipBuy.pendingCapRetry[row.outputID] = { listId = note.listId }
+            end
             DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[WoWF 拍卖→商人]|r 写入购物清单失败: " .. tostring(listIDOrReason) .. "。")
             return
           end
+          flipBuy.pendingCapRetry[row.outputID] = nil
           DEFAULT_CHAT_FRAME:AddMessage(string.format(
             "|cff44ff88[WoWF 拍卖→商人]|r 已把 %s ×%d 写入黑石购物清单（清单 ID: %s）%s，最高扫货价 %s（商人收 %s）。",
             FormatItemLink(row.outputID, row.name, row.quality), qty, tostring(listIDOrReason),
-            note and ("，" .. note) or "", FormatMoney(maxPay), FormatMoney(row.vendorSell or 0)))
+            type(note) == "string" and ("，" .. note) or "", FormatMoney(maxPay), FormatMoney(row.vendorSell or 0)))
         end,
       }
       list:Add({
@@ -7714,15 +7749,25 @@ local function RenderTabCraftArb()
       table.insert(emptyLines, "1. 走到任意 NPC 商人（杂货商、专业供应商等）面前，打开商人窗口，本插件会自动记录其出售物品的买入价与库存；")
       table.insert(emptyLines, "2. 记录后切回「制造套利」页，把来源切到「商人→拍卖」即可查看可直接倒买倒卖的商品；")
       table.insert(emptyLines, "3. 若拍卖行插件尚未扫描，将只显示商人买入价、无法计算利润，并不会把无报价当作 0 成本。")
-    elseif source == "flip" and meta.state == "ready" then
-      table.insert(emptyLines, string.format(
-        "|cffffd100最近一次拍卖行扫描中，暂未发现「挂单价低于 NPC 商人收购价」的物品。|r已核对 %d 件在售商品%s。",
-        meta.flipChecked or 0,
-        (meta.flipPending and meta.flipPending > 0) and string.format("（另有 %d 件商人卖价待黑石在脱开拍卖行后读取）", meta.flipPending) or ""))
-      if state.craftMinSupply == true then
-        table.insert(emptyLines, "提示：当前开启了「在售过滤: ≥100」，大多数低价清仓单件装会被隐藏；建议关闭在售过滤后查看。")
+    elseif source == "flip" then
+      if meta.state ~= "ready" then
+        table.insert(emptyLines, "|cffffd100黑石交易技能行情尚未就绪，暂时无法扫描「拍卖→商人」捡漏。|r")
+        table.insert(emptyLines, "1. 请安装并启用黑石交易技能（Blackthornes_TS）；")
+        table.insert(emptyLines, "2. 在游戏内打开一次拍卖行并让黑石完成一次全量扫描；")
+        table.insert(emptyLines, "3. 扫描完成后切回本页即可自动按最新挂单计算可卖给商人的低价物品。")
       else
-        table.insert(emptyLines, "可在黑石交易技能完成一次全量扫描后自动更新。")
+        table.insert(emptyLines, string.format(
+          "|cffffd100最近一次拍卖行扫描中，暂未发现「挂单价低于 NPC 商人收购价」的物品。|r已核对 %d 件在售商品%s。",
+          meta.flipChecked or 0,
+          (meta.flipPending and meta.flipPending > 0) and string.format("（另有 %d 件商人卖价待黑石在脱开拍卖行后读取）", meta.flipPending) or ""))
+        if state.craftFlipGearOnly ~= false then
+          table.insert(emptyLines, "提示：当前默认开启了「仅扫装备」防护，材料/药水等非装备暂被过滤；可在上方扫货条关闭「仅扫装备」后查看全部品类。")
+        end
+        if state.craftMinSupply == true then
+          table.insert(emptyLines, "提示：当前开启了「在售过滤: ≥100」，大多数低价清仓单件装会被隐藏；建议关闭在售过滤后查看。")
+        elseif state.craftFlipGearOnly == false then
+          table.insert(emptyLines, "可在黑石交易技能完成一次全量扫描后自动更新。")
+        end
       end
     elseif meta.total == 0 then
       table.insert(emptyLines, "|cffffd100还没有可用于分析的配方数据。|r")

@@ -349,9 +349,17 @@ local function tableEntryCount(tbl)
   return count
 end
 
+local function hasFullScanForKey(db, key)
+  if type(db) ~= "table" or type(key) ~= "string" or key == "" then return false end
+  if type(db.lastFullScanByRealm) == "table" then
+    return (tonumber(db.lastFullScanByRealm[key]) or 0) > 0
+  end
+  return false
+end
+
 ---黑石交易技能当前角色的存档键（realm-faction，与它自己的价格表同键）
 ---无限服 1.60.1 上 GetRealmName() 可能返回空串或异常服名（命中空桶）：
----优先询问已加载的黑石运行时（且仅当其指向非空表或价格表为空时直接采用），
+---优先询问已加载的黑石运行时（且仅当其指向非空表、存在完整全量扫描快照或价格表为空时直接采用），
 ---否则依次按当前服名、BlackthornesTSCharDB.realmName、同阵营非空价格表及 UnknownRealm 回退。
 ---@return string|nil
 local function blackthornesScopeKey()
@@ -364,7 +372,7 @@ local function blackthornesScopeKey()
   if type(cfg) == "table" and type(cfg.GetRealmKey) == "function" then
     local ok, key = pcall(cfg.GetRealmKey, cfg)
     if ok and type(key) == "string" and key ~= "" then
-      if not prices or hasEntries(prices[key]) then return key end
+      if not prices or hasEntries(prices[key]) or hasFullScanForKey(db, key) then return key end
       preferredKey = key
     end
   end
@@ -372,16 +380,20 @@ local function blackthornesScopeKey()
   local faction = playerFaction()
   if not faction then return preferredKey end
   local realm = realmName()
-  if not preferredKey and realm ~= "" then
+  if realm ~= "" then
     local key = realm .. "-" .. faction
-    if not prices or hasEntries(prices[key]) then return key end
-    preferredKey = key
+    if not preferredKey then
+      if not prices or hasEntries(prices[key]) or hasFullScanForKey(db, key) then return key end
+      preferredKey = key
+    elseif key ~= preferredKey and (not prices or hasEntries(prices[key]) or hasFullScanForKey(db, key)) then
+      return key
+    end
   end
 
   local charDb = _G.BlackthornesTSCharDB
   local remembered = type(charDb) == "table" and isSavedRealm(charDb.realmName) and charDb.realmName or nil
   local rememberedKey = remembered and (remembered .. "-" .. faction) or nil
-  if rememberedKey and (not prices or hasEntries(prices[rememberedKey])) then
+  if rememberedKey and (not prices or hasEntries(prices[rememberedKey]) or hasFullScanForKey(db, rememberedKey)) then
     return rememberedKey
   end
 
@@ -406,7 +418,7 @@ local function blackthornesScopeKey()
       end
       if bestKey then return bestKey end
     end
-    if hasEntries(prices[unknownKey]) then
+    if hasEntries(prices[unknownKey]) or hasFullScanForKey(db, unknownKey) then
       return unknownKey
     end
   end
@@ -416,20 +428,53 @@ local function blackthornesScopeKey()
   return "UnknownRealm-" .. faction
 end
 
-local function blackthornesPriceTable()
+local function blackthornesPriceSnapshot()
   local ns = _G.BlackthornesTS
+  local db = _G.BlackthornesTSDB
   local pricesMod = type(ns) == "table" and ns.Prices
   if type(pricesMod) == "table" and type(pricesMod.GetTable) == "function" then
     local ok, t = pcall(pricesMod.GetTable, pricesMod)
-    if ok and hasEntries(t) then return t end
+    if ok and type(t) == "table" then
+      local rtFullScan = false
+      if type(pricesMod.GetLastFullScan) == "function" then
+        local okF, at = pcall(pricesMod.GetLastFullScan, pricesMod)
+        rtFullScan = okF and (tonumber(at) or 0) > 0
+      else
+        local cfg = ns.Config
+        local rtKey
+        if type(cfg) == "table" and type(cfg.GetRealmKey) == "function" then
+          local okK, k = pcall(cfg.GetRealmKey, cfg)
+          if okK and type(k) == "string" and k ~= "" then rtKey = k end
+        end
+        if rtKey and hasFullScanForKey(db, rtKey) then
+          rtFullScan = true
+        elseif type(db) == "table" and type(db.lastFullScanByRealm) ~= "table" then
+          rtFullScan = (tonumber(db.lastFullScan) or 0) > 0
+        end
+      end
+      if hasEntries(t) or rtFullScan then
+        return t, rtFullScan
+      end
+    end
   end
-  local db = _G.BlackthornesTSDB
-  if type(db) ~= "table" or type(db.prices) ~= "table" then return nil end
+  if type(db) ~= "table" or type(db.prices) ~= "table" then return nil, false end
   local key = blackthornesScopeKey()
-  if not key then return nil end
+  if not key then return nil, false end
+  local dbFullScan = hasFullScanForKey(db, key)
+    or (type(db.lastFullScanByRealm) ~= "table" and (tonumber(db.lastFullScan) or 0) > 0)
   local t = db.prices[key]
-  if hasEntries(t) then return t end
-  return nil
+  if type(t) == "table" and (hasEntries(t) or dbFullScan) then
+    return t, dbFullScan
+  end
+  if t == nil and dbFullScan then
+    return {}, true
+  end
+  return nil, false
+end
+
+local function blackthornesPriceTable()
+  local t = blackthornesPriceSnapshot()
+  return t
 end
 
 local function blackthornesRealmPriceTable()
@@ -673,7 +718,7 @@ end
 function Arb.ListedSupply(itemID)
   local id = tonumber(itemID)
   if not id then return nil end
-  local prices = blackthornesPriceTable()
+  local prices, hasFullScan = blackthornesPriceSnapshot()
   local record = prices and prices[id]
   -- record.quantity 是黑石最近一次扫描该物品时数到的挂单总件数（record.seen 是扫描时间），
   -- 与物品提示的「现在在售」同源；兼容旧版/别名存档的 bookQuantity 字段。
@@ -693,7 +738,7 @@ function Arb.ListedSupply(itemID)
       if qty and qty >= 0 then return qty, "depth" end
     end
   end
-  if hasEntries(prices) and record == nil and blackthornesLastFullScan() > 0 then
+  if type(prices) == "table" and record == nil and hasFullScan then
     return 0, "fullscan"
   end
   local realmPrices = blackthornesRealmPriceTable()
@@ -2507,28 +2552,50 @@ local function writeBlackthornesShoppingList(title, items, reuseByName)
       end
     end
 
-    local accepted, failed = 0, {}
+    local accepted, failed, capFailed = 0, {}, {}
     for _, item in ipairs(items) do
       local id = floor(tonumber(item.id) or 0)
       local want = max(1, ceil(tonumber(item.want) or 1))
       if id > 0 then
-        local okAdd, addRes, addErr = pcall(sl.Add, sl, index, id, want)
-        if okAdd and addRes == true then
-          accepted = accepted + 1
-          local cap = tonumber(item.maxPay)
-          if cap and cap > 0 and type(sl.SetMaxPay) == "function" then
-            pcall(sl.SetMaxPay, sl, index, id, ceil(cap))
+        local itemReady = item.maxPayOnly == true
+        if not itemReady then
+          local okAdd, addRes, addErr = pcall(sl.Add, sl, index, id, want)
+          if okAdd and addRes == true then
+            itemReady = true
+            accepted = accepted + 1
+          else
+            tinsert(failed, tostring(addErr or addRes or "未知错误"))
           end
-        else
-          tinsert(failed, tostring(addErr or addRes or "未知错误"))
+        end
+        if itemReady then
+          local cap = tonumber(item.maxPay)
+          if cap and cap > 0 then
+            if type(sl.SetMaxPay) ~= "function" then
+              tinsert(capFailed, "黑石 ShoppingLists 缺少 SetMaxPay 接口")
+            else
+              local okCap, capRes, capErr = pcall(sl.SetMaxPay, sl, index, id, ceil(cap))
+              if not okCap or capRes ~= true then
+                tinsert(capFailed, tostring(capErr or (not okCap and capRes) or "设置最高买价失败"))
+              end
+            end
+          end
         end
       end
+    end
+    local actualName = (type(listObj) == "table" and listObj.name) or cleanTitle
+    local listId = (type(listObj) == "table" and tonumber(listObj.id)) or index
+    if #capFailed > 0 then
+      if accepted > 0 then
+        return false, format(
+          "已写入 %d 件到黑石清单「%s」（ID: %s），但最高买价保存失败：%s（可再次点击仅补写限价）",
+          accepted, actualName, tostring(listId), capFailed[1]),
+          { partial = true, listId = listId, listName = actualName, added = accepted, capFailed = #capFailed }
+      end
+      return false, format("黑石清单「%s」最高买价保存失败：%s", actualName, capFailed[1])
     end
     if accepted == 0 then
       return false, (failed[1] and ("写入购物清单失败: " .. failed[1])) or "写入购物清单失败"
     end
-    local actualName = (type(listObj) == "table" and listObj.name) or cleanTitle
-    local listId = (type(listObj) == "table" and tonumber(listObj.id)) or index
     if #failed > 0 then
       return true, listId, format("%d/%d 条写入成功（黑石清单「%s」）", accepted, #items, actualName)
     end
@@ -2637,6 +2704,62 @@ function Arb.AddFlipToShoppingList(itemID, quantity, maxPay)
   local want = max(1, ceil(tonumber(quantity) or 1))
   local cap = (tonumber(maxPay) and tonumber(maxPay) > 0) and ceil(tonumber(maxPay)) or nil
   return writeBlackthornesShoppingList("WoWF 拍卖→商人", { { id = id, want = want, maxPay = cap } }, true)
+end
+
+---仅补写已存在购物清单条目的最高扫货价（不重复累加需求数量）
+---@param listIDOrIndex number|string
+---@param itemID number
+---@param maxPay number
+---@return boolean ok
+---@return string|number listIDOrReason
+---@return string|nil note
+function Arb.UpdateShoppingListMaxPay(listIDOrIndex, itemID, maxPay)
+  local id = tonumber(itemID)
+  local cap = tonumber(maxPay)
+  if not id or id <= 0 or not cap or cap <= 0 then
+    return false, "无效的物品或最高买价"
+  end
+  local cleanCap = ceil(cap)
+  local ns = _G.BlackthornesTS
+  local sl = type(ns) == "table" and ns.ShoppingLists
+  if type(sl) == "table" and type(sl.Get) == "function" then
+    if type(sl.SetMaxPay) ~= "function" then
+      return false, "黑石 ShoppingLists 缺少 SetMaxPay 接口"
+    end
+    local targetIndex = tonumber(listIDOrIndex)
+    if (not targetIndex or not sl:Get(targetIndex)) and type(sl.All) == "function" then
+      local okAll, all = pcall(sl.All, sl)
+      if okAll and type(all) == "table" then
+        for i, l in ipairs(all) do
+          if type(l) == "table" and (l.id == listIDOrIndex or i == targetIndex) then
+            targetIndex = i
+            break
+          end
+        end
+      end
+    end
+    if not targetIndex then return false, "未找到目标购物清单" end
+    local okCap, capRes, capErr = pcall(sl.SetMaxPay, sl, targetIndex, id, cleanCap)
+    if okCap and capRes == true then
+      return true, targetIndex, "仅补写最高买价（未重复增加数量）"
+    end
+    return false, tostring(capErr or (not okCap and capRes) or "设置最高买价失败")
+  end
+  local bt = _G.BlackthornesTSDB
+  if type(bt) == "table" and type(bt.shoppingLists) == "table" then
+    for _, listObj in ipairs(bt.shoppingLists) do
+      if type(listObj) == "table" and (listObj.id == listIDOrIndex or listIDOrIndex == nil) and type(listObj.items) == "table" then
+        for _, entry in ipairs(listObj.items) do
+          if type(entry) == "table" and tonumber(entry.id) == id then
+            entry.maxPay = cleanCap
+            return true, listObj.id or "WoWF 拍卖→商人", "仅补写最高买价（未重复增加数量）"
+          end
+        end
+      end
+    end
+    return false, "清单中未找到该物品"
+  end
+  return false, "未检测到黑石交易技能（Blackthornes_TS），请确认已启用"
 end
 
 -- ============================================================================
@@ -2878,8 +3001,14 @@ end
 
 local searchCurrentItem
 
+local function canAuthorizeFlipPurchase(cur)
+  if type(cur) ~= "table" then return false end
+  return cur.vendorSellSource == "sold" or cur.vendorSellSource == "tooltip"
+end
+
 ---在拉取搜索结果和下单前强制核对当前物品是否真能卖给 NPC 商人，
----防止客户端旧 GetItemInfo 残留假卖价导致买入不可卖店物品（如致盲粉）
+---防止客户端旧 GetItemInfo 残留假卖价导致买入不可卖店物品（如致盲粉）；
+---当客户端缺少 Tooltip 核验接口时，严禁凭未核验的缓存卖价（facts/reported）下单。
 local function verifyQueueItemSellable(cur)
   if type(cur) ~= "table" then return false, "无效队列条目" end
   if isUnsellableItem(cur.itemID) then
@@ -2908,8 +3037,12 @@ local function verifyQueueItemSellable(cur)
     tooltipSellCache[cur.itemID] = { price = tipPrice }
     cur.vendorSell = tipPrice
     cur.vendorSellSource = "tooltip"
+    return true
   end
-  return true
+  if canAuthorizeFlipPurchase(cur) then
+    return true
+  end
+  return false, format("%s 缺少客户端 Tooltip 卖价核验接口且无实测卖店价，禁止自动买入", cur.name or tostring(cur.itemID))
 end
 
 local function advanceToNextItem(immediate)
@@ -2918,6 +3051,8 @@ local function advanceToNextItem(immediate)
   buyer.commodityPlan = nil
   buyer.buying = nil
   buyer.armed = nil
+  buyer.pendingSkip = nil
+  buyer.pendingStopReason = nil
   buyer.searchItemKey = nil
   buyer.searchItemID = nil
   buyer.index = (buyer.index or 0) + 1
@@ -2938,6 +3073,7 @@ local function advanceToNextItem(immediate)
   else
     local sid = buyer.sessionId
     local targetIndex = buyer.index
+    buyer.searchToken = buyer.searchToken + 1
     buyer.phase = "searching"
     local cur = buyer.queue[targetIndex]
     buyer.lastMessage = format("准备检索 [%d/%d] %s ...", targetIndex, #buyer.queue, cur and cur.name or "")
@@ -3069,24 +3205,34 @@ function FlipBuyer.Start(flipRows)
     buyerNotify()
     return false, buyer.lastMessage
   end
-  local queue = {}
+  local cTip = _G.C_TooltipInfo
+  local hasTipApi = type(cTip) == "table" and type(cTip.GetItemByID) == "function"
+  local queue, skippedUnverified = {}, 0
   for _, row in ipairs(type(flipRows) == "table" and flipRows or {}) do
     local id = tonumber(row.outputID or row.itemID)
     local vendorSell = tonumber(row.vendorSell)
     if (row.kind == nil or row.kind == "flip") and id and id > 0 and vendorSell and vendorSell > 1
       and not isUnsellableItem(id) then
-      queue[#queue + 1] = {
-        itemID = id,
-        name = row.name or format("物品 #%d", id),
-        vendorSell = vendorSell,
-        vendorSellSource = row.vendorSellSource,
-        isGear = row.isGear == true,
-        estProfit = tonumber(row.profit) or 0,
-      }
+      if not hasTipApi and row.vendorSellSource ~= "sold" and row.vendorSellSource ~= "tooltip" then
+        skippedUnverified = skippedUnverified + 1
+      else
+        queue[#queue + 1] = {
+          itemID = id,
+          name = row.name or format("物品 #%d", id),
+          vendorSell = vendorSell,
+          vendorSellSource = row.vendorSellSource,
+          isGear = row.isGear == true,
+          estProfit = tonumber(row.profit) or 0,
+        }
+      end
     end
   end
   if #queue == 0 then
-    buyer.lastMessage = "当前列表没有可扫货的「拍卖→商人」物品"
+    if skippedUnverified > 0 then
+      buyer.lastMessage = "客户端缺少 Tooltip 卖价核验接口，且当前候选物品无实测卖店价，禁止自动买入"
+    else
+      buyer.lastMessage = "当前列表没有可扫货的「拍卖→商人」物品"
+    end
     buyerNotify()
     return false, buyer.lastMessage
   end
@@ -3101,6 +3247,8 @@ function FlipBuyer.Start(flipRows)
   buyer.liveAuctions = nil
   buyer.commodityPlan = nil
   buyer.buying = nil
+  buyer.pendingSkip = nil
+  buyer.pendingStopReason = nil
   searchCurrentItem()
   return true
 end
@@ -3117,6 +3265,8 @@ function FlipBuyer.Stop(reason)
   buyer.commodityPlan = nil
   buyer.buying = nil
   buyer.armed = nil
+  buyer.pendingSkip = nil
+  buyer.pendingStopReason = nil
   buyer.searchItemKey = nil
   buyer.searchItemID = nil
   buyer.lastMessage = reason or format(
@@ -3127,14 +3277,34 @@ function FlipBuyer.Stop(reason)
   buyerNotify()
 end
 
----跳过当前物品并检索队列里的下一件
+---在等待中的买单回执结算后安全停止扫货（若当前无在途买单则立即停止）
+---@param reason string|nil
+function FlipBuyer.StopAfterPending(reason)
+  if not buyer.active then return end
+  if buyer.phase == "buying" or buyer.buying ~= nil then
+    buyer.pendingStopReason = reason or "扫货队列范围已变更，已停止连续扫货"
+    buyer.lastMessage = buyer.pendingStopReason .. "（等待当前买单回执后自动停止）"
+    buyerNotify()
+    return
+  end
+  FlipBuyer.Stop(reason)
+end
+
+---跳过当前物品并检索队列里的下一件（若当前订单仍在等待成交回执，则暂存跳过，等回执结算后再切换）
 ---@return boolean
 function FlipBuyer.Skip()
   if not buyer.active then return false end
+  local cur = buyer.queue[buyer.index]
+  if buyer.phase == "buying" or buyer.buying ~= nil then
+    buyer.pendingSkip = true
+    buyer.lastMessage = format("%s 当前买单正在等待成交回执，将在结算后自动跳过其余挂单",
+      cur and cur.name or "当前物品")
+    buyerNotify()
+    return false
+  end
   if buyer.phase == "quoting_commodity" or buyer.phase == "ready_commodity" then
     cancelPendingCommodityQuote()
   end
-  local cur = buyer.queue[buyer.index]
   buyer.stats.skipped = buyer.stats.skipped + 1
   buyer.lastMessage = format("已跳过 %s，切换下一件...", cur and cur.name or "当前物品")
   advanceToNextItem(true)
@@ -3244,8 +3414,17 @@ function FlipBuyer.Step()
     scheduleBuyerTimer(FLIP_BUY_TIMEOUT, function()
       if buyer.active and buyer.sessionId == sid and buyer.buyToken == btok and buyer.phase == "buying" then
         buyer.buying = nil
+        if buyer.pendingStopReason then
+          FlipBuyer.Stop(buyer.pendingStopReason)
+          return
+        end
         if buyer.liveAuctions and #buyer.liveAuctions > 0 then table.remove(buyer.liveAuctions, 1) end
-        if buyer.liveAuctions and #buyer.liveAuctions > 0 then
+        if buyer.pendingSkip then
+          buyer.pendingSkip = nil
+          buyer.stats.skipped = buyer.stats.skipped + 1
+          buyer.lastMessage = format("%s 买单超时，按跳过请求切下一件", cur.name)
+          advanceToNextItem(true)
+        elseif buyer.liveAuctions and #buyer.liveAuctions > 0 then
           buyer.phase = "ready_item"
           buyer.lastMessage = format("%s 购买超时未回报，可点击继续或跳过", cur.name)
           buyerNotify()
@@ -3327,8 +3506,12 @@ function FlipBuyer.Step()
     end
     local money = flipMoney()
     if money and money < plan.quotedTotal then
+      local needTotal = plan.quotedTotal
       cancelPendingCommodityQuote()
-      buyer.lastMessage = format("金币不足（需要 %s），已取消", formatFlipCopper(plan.quotedTotal))
+      plan.quotedTotal = nil
+      buyer.armed = nil
+      buyer.phase = "planned_commodity"
+      buyer.lastMessage = format("金币不足（需要 %s），已取消本次锁价；补足金币后可再次点击重新锁价", formatFlipCopper(needTotal))
       buyerNotify()
       return false, "金币不足"
     end
@@ -3365,6 +3548,11 @@ function FlipBuyer.Step()
     scheduleBuyerTimer(FLIP_BUY_TIMEOUT, function()
       if buyer.active and buyer.sessionId == sid and buyer.buyToken == btok and buyer.phase == "buying" then
         buyer.buying = nil
+        if buyer.pendingStopReason then
+          FlipBuyer.Stop(buyer.pendingStopReason)
+          return
+        end
+        buyer.pendingSkip = nil
         buyer.stats.skipped = buyer.stats.skipped + 1
         buyer.lastMessage = format("%s 堆叠购买确认超时，自动切换下一件", cur.name)
         advanceToNextItem(true)
@@ -3386,6 +3574,17 @@ local function finishSuccessfulPurchase()
   buyer.stats.boughtUnits = buyer.stats.boughtUnits + floor(tonumber(buying.count) or 1)
   buyer.stats.spent = buyer.stats.spent + floor((tonumber(buying.total) or 0) + 0.5)
   buyer.stats.estProfit = buyer.stats.estProfit + floor((tonumber(buying.profit) or 0) + 0.5)
+
+  if buyer.pendingStopReason then
+    FlipBuyer.Stop(buyer.pendingStopReason)
+    return
+  end
+  if buyer.pendingSkip then
+    buyer.pendingSkip = nil
+    buyer.lastMessage = format("已买入 %s ×%d，按跳过请求切下一件...", cur.name, floor(tonumber(buying.count) or 1))
+    advanceToNextItem(false)
+    return
+  end
 
   if buying.kind == "item" then
     if buyer.liveAuctions and buyer.liveAuctions[1] and buyer.liveAuctions[1].auctionID == buying.auctionID then
@@ -3586,12 +3785,15 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
 
   if buyer.phase == "buying" and buyer.buying then
     if event == "AUCTION_HOUSE_PURCHASE_COMPLETED" and buyer.buying.kind == "item" then
-      finishSuccessfulPurchase()
+      local completedID = type(arg1) == "table" and tonumber(arg1.auctionID) or tonumber(arg1)
+      if completedID and completedID == buyer.buying.auctionID then
+        finishSuccessfulPurchase()
+      end
       return
     elseif event == "PLAYER_MONEY" and buyer.buying.kind == "item" and buyer.buying.moneyBefore then
       local m = flipMoney()
       if m and (buyer.buying.moneyBefore - m) >= buyer.buying.total then
-        finishSuccessfulPurchase()
+        buyer.buying.moneyDropSeen = true
       end
       return
     elseif event == "COMMODITY_PURCHASE_SUCCEEDED" and buyer.buying.kind == "commodity" then
@@ -3600,8 +3802,17 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     elseif event == "AUCTION_HOUSE_SHOW_ERROR" or event == "COMMODITY_PURCHASE_FAILED" then
       if buyer.buying.kind == "item" then
         buyer.buying = nil
+        if buyer.pendingStopReason then
+          FlipBuyer.Stop(buyer.pendingStopReason)
+          return
+        end
         if buyer.liveAuctions and #buyer.liveAuctions > 0 then table.remove(buyer.liveAuctions, 1) end
-        if buyer.liveAuctions and #buyer.liveAuctions > 0 then
+        if buyer.pendingSkip then
+          buyer.pendingSkip = nil
+          buyer.stats.skipped = buyer.stats.skipped + 1
+          buyer.lastMessage = format("%s 购买失败，按跳过请求切下一件", cur and cur.name or "")
+          advanceToNextItem(true)
+        elseif buyer.liveAuctions and #buyer.liveAuctions > 0 then
           buyer.phase = "ready_item"
           buyer.lastMessage = format("%s 该挂单购买失败，已切到下一口挂单（可继续买入）", cur and cur.name or "")
           buyerNotify()
@@ -3613,6 +3824,11 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
       else
         cancelPendingCommodityQuote()
         buyer.buying = nil
+        if buyer.pendingStopReason then
+          FlipBuyer.Stop(buyer.pendingStopReason)
+          return
+        end
+        buyer.pendingSkip = nil
         buyer.stats.skipped = buyer.stats.skipped + 1
         buyer.lastMessage = format("%s 堆叠购买失败，切下一件", cur and cur.name or "")
         advanceToNextItem(true)
@@ -3824,6 +4040,22 @@ function MerchantSeller.IsSelling()
   return seller.selling == true
 end
 
+local function merchantPlanSignature(items)
+  if type(items) ~= "table" or #items == 0 then return "" end
+  local parts = {}
+  for _, entry in ipairs(items) do
+    parts[#parts + 1] = format("%d:%d:%d:%d:%d:%d:%s",
+      tonumber(entry.bag) or -1,
+      tonumber(entry.slot) or -1,
+      tonumber(entry.itemID) or 0,
+      tonumber(entry.count) or 0,
+      entry.isBound and 1 or 0,
+      tonumber(entry.quality) or 1,
+      tostring(entry.hyperlink or ""))
+  end
+  return tconcat(parts, ";")
+end
+
 function MerchantSeller.IsArmed()
   if not seller.armed then return false end
   if seller.armed.mode ~= seller.mode then
@@ -3879,9 +4111,9 @@ function MerchantSeller.Scan(mode)
         if activeMode == "all" then
           matches = true
         elseif activeMode == "unbound" then
-          matches = (q == 0) or (not isBound)
+          matches = not isBound
         else
-          matches = (q == 0) or (not isBound and q <= 2)
+          matches = (not isBound) and q <= 2
         end
         if matches and sellPrice and sellPrice > 0 then
           local stack = max(1, floor(tonumber(info.stackCount) or 1))
@@ -3890,6 +4122,7 @@ function MerchantSeller.Scan(mode)
             bag = bag,
             slot = slot,
             itemID = id,
+            hyperlink = info.hyperlink,
             name = resolvedName or format("物品 #%d", id),
             count = stack,
             quality = q,
@@ -3932,21 +4165,25 @@ function MerchantSeller.Click(onDone)
     return "empty", format("当前「%s」模式下背包没有可出售的物品。", MerchantSeller.ModeLabel(seller.mode)), summary
   end
 
-  if not MerchantSeller.IsArmed() then
+  local sig = merchantPlanSignature(items)
+  local wasArmed = MerchantSeller.IsArmed()
+  if not wasArmed or seller.armed.signature ~= sig then
     seller.armed = {
       at = flipNowSeconds(),
       count = #items,
       totalValue = summary.totalValue,
       mode = seller.mode,
+      signature = sig,
     }
     sellerNotify()
     local warnParts = {}
     if summary.boundCount > 0 then warnParts[#warnParts + 1] = format("含 %d 格已绑定", summary.boundCount) end
     if summary.highQualityCount > 0 then warnParts[#warnParts + 1] = format("含 %d 格蓝/紫以上", summary.highQualityCount) end
     local warnText = #warnParts > 0 and (" |cffff5555（" .. tconcat(warnParts, "，") .. "！）|r") or ""
+    local prefix = wasArmed and "背包待售清单已变化，请重新核对预览：" or ""
     local msg = format(
-      "「%s」预览：共 %d 格（%d 件），预计收入 %s%s；5 秒内再次点击开始出售！",
-      MerchantSeller.ModeLabel(seller.mode), #items, summary.totalUnits,
+      "%s「%s」预览：共 %d 格（%d 件），预计收入 %s%s；5 秒内再次点击开始出售！",
+      prefix, MerchantSeller.ModeLabel(seller.mode), #items, summary.totalUnits,
       formatFlipCopper(summary.totalValue), warnText
     )
     return "confirm", msg, summary
@@ -3961,6 +4198,7 @@ function MerchantSeller.Click(onDone)
   sellerNotify()
 
   local function finish(blockedMsg)
+    if seller.sessionId ~= sid then return end
     seller.selling = false
     sellerNotify()
     if type(onDone) == "function" then
@@ -3969,7 +4207,14 @@ function MerchantSeller.Click(onDone)
   end
 
   local function sellOne(entry)
-    if containerItemID(entry.bag, entry.slot) ~= entry.itemID then
+    local curInfo = containerItemInfo(entry.bag, entry.slot)
+    if type(curInfo) ~= "table"
+      or tonumber(curInfo.itemID) ~= entry.itemID
+      or curInfo.isLocked == true
+      or curInfo.hasNoValue == true
+      or max(1, floor(tonumber(curInfo.stackCount) or 1)) ~= entry.count
+      or (curInfo.isBound == true) ~= (entry.isBound == true)
+      or (type(entry.hyperlink) == "string" and entry.hyperlink ~= "" and curInfo.hyperlink ~= entry.hyperlink) then
       return true, false
     end
     local okCall, errCall = containerUseItem(entry.bag, entry.slot)
@@ -4008,9 +4253,10 @@ function MerchantSeller.Click(onDone)
   end
 
   local function stepNext()
+    if seller.sessionId ~= sid then return end
     idx = idx + 1
     local entry = items[idx]
-    if not entry or not seller.selling or seller.sessionId ~= sid or not MerchantSeller.IsMerchantOpen() then
+    if not entry or not seller.selling or not MerchantSeller.IsMerchantOpen() then
       finish(nil)
       return
     end
