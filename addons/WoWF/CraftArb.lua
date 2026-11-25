@@ -334,21 +334,85 @@ function Arb.Market()
   return api
 end
 
+local function playerFaction()
+  if type(UnitFactionGroup) ~= "function" then return nil end
+  local ok, value = pcall(UnitFactionGroup, "player")
+  if ok and type(value) == "string" and value ~= "" then return value end
+  return nil
+end
+
+local function isSavedRealm(value)
+  return type(value) == "string" and value ~= "" and value ~= "?" and value ~= "UnknownRealm"
+end
+
+local function tableEntryCount(tbl)
+  local count = 0
+  for _ in pairs(tbl) do count = count + 1 end
+  return count
+end
+
 ---黑石交易技能当前角色的存档键（realm-faction，与它自己的价格表同键）
+---无限服 1.60.1 上 GetRealmName() 可能返回空串：优先询问已加载的黑石运行时，
+---其次读 BlackthornesTSCharDB.realmName，再按当前阵营扫描非空价格表，最后回退 UnknownRealm。
 ---@return string|nil
 local function blackthornesScopeKey()
-  local realm = realmName()
-  if realm == "" then return nil end
-  local faction
-  if type(UnitFactionGroup) == "function" then
-    local ok, value = pcall(UnitFactionGroup, "player")
-    if ok and type(value) == "string" and value ~= "" then faction = value end
+  local ns = _G.BlackthornesTS
+  local cfg = type(ns) == "table" and ns.Config
+  if type(cfg) == "table" and type(cfg.GetRealmKey) == "function" then
+    local ok, key = pcall(cfg.GetRealmKey, cfg)
+    if ok and type(key) == "string" and key ~= "" then return key end
   end
+  local faction = playerFaction()
   if not faction then return nil end
-  return realm .. "-" .. faction
+  local realm = realmName()
+  if realm ~= "" then return realm .. "-" .. faction end
+
+  local db = _G.BlackthornesTSDB
+  local prices = type(db) == "table" and type(db.prices) == "table" and db.prices or nil
+  local charDb = _G.BlackthornesTSCharDB
+  local remembered = type(charDb) == "table" and isSavedRealm(charDb.realmName) and charDb.realmName or nil
+  local rememberedKey = remembered and (remembered .. "-" .. faction) or nil
+  if rememberedKey and (not prices or (type(prices[rememberedKey]) == "table" and next(prices[rememberedKey]) ~= nil)) then
+    return rememberedKey
+  end
+
+  if prices then
+    local suffix = "-" .. faction
+    local unknownKey = "UnknownRealm" .. suffix
+    local candidates = {}
+    for k, t in pairs(prices) do
+      if type(k) == "string" and #k > #suffix and sub(k, -#suffix) == suffix and k ~= unknownKey
+        and type(t) == "table" and next(t) ~= nil then
+        candidates[#candidates + 1] = k
+      end
+    end
+    if #candidates == 1 then return candidates[1] end
+    if #candidates > 1 then
+      local bestKey, bestCount = nil, -1
+      for _, k in ipairs(candidates) do
+        local c = tableEntryCount(prices[k])
+        if c > bestCount or (c == bestCount and k < bestKey) then
+          bestKey, bestCount = k, c
+        end
+      end
+      if bestKey then return bestKey end
+    end
+    if type(prices[unknownKey]) == "table" and next(prices[unknownKey]) ~= nil then
+      return unknownKey
+    end
+  end
+
+  if rememberedKey then return rememberedKey end
+  return "UnknownRealm-" .. faction
 end
 
 local function blackthornesPriceTable()
+  local ns = _G.BlackthornesTS
+  local pricesMod = type(ns) == "table" and ns.Prices
+  if type(pricesMod) == "table" and type(pricesMod.GetTable) == "function" then
+    local ok, t = pcall(pricesMod.GetTable, pricesMod)
+    if ok and type(t) == "table" and next(t) ~= nil then return t end
+  end
   local db = _G.BlackthornesTSDB
   if type(db) ~= "table" or type(db.prices) ~= "table" then return nil end
   local key = blackthornesScopeKey()
@@ -364,26 +428,39 @@ local function blackthornesApi()
   return nil
 end
 
----黑石行情的修订键：优先用它的会话内变更计数 Prices.changes（扫描、单物品浏览、购买都会 +1，O(1)）；
----取不到时退回扫描时间戳（按 realm-faction 的全量/截断快照，兼容账号级旧字段）+ 物品条目数。
----@return string|nil
-local function blackthornesRevisionKey()
-  local db = _G.BlackthornesTSDB
-  if type(db) ~= "table" then return nil end
+---读取黑石交易技能最近一次扫描时间戳（优先询问黑石运行时，其次汇总存档字段）
+---@return number
+local function blackthornesLastScan()
   local ns = _G.BlackthornesTS
-  local prices = type(ns) == "table" and ns.Prices
-  local changes = type(prices) == "table" and tonumber(prices.changes)
-  if changes then return "c" .. floor(changes) end
-  local tbl = blackthornesPriceTable()
-  local count = 0
-  if tbl then for _ in pairs(tbl) do count = count + 1 end end
-  local stamp = floor(tonumber(db.lastFullScan) or 0)
+  local pricesMod = type(ns) == "table" and ns.Prices
+  if type(pricesMod) == "table" and type(pricesMod.GetLastScan) == "function" then
+    local ok, at = pcall(pricesMod.GetLastScan, pricesMod)
+    local num = ok and tonumber(at) or nil
+    if num and num > 0 then return floor(num) end
+  end
+  local db = _G.BlackthornesTSDB
+  if type(db) ~= "table" then return 0 end
+  local stamp = max(floor(tonumber(db.lastScan) or 0), floor(tonumber(db.lastFullScan) or 0))
   local key = blackthornesScopeKey()
   if key then
     local full, capped = db.lastFullScanByRealm, db.lastCappedScanByRealm
     if type(full) == "table" then stamp = max(stamp, floor(tonumber(full[key]) or 0)) end
     if type(capped) == "table" then stamp = max(stamp, floor(tonumber(capped[key]) or 0)) end
   end
+  return stamp
+end
+
+---黑石行情的修订键：优先用它的会话内变更计数 Prices.changes（扫描、单物品浏览、购买都会 +1，O(1)）；
+---取不到时退回扫描时间戳（按 realm-faction 的全量/截断快照，兼容账号级旧字段）+ 物品条目数。
+---@return string|nil
+local function blackthornesRevisionKey()
+  local ns = _G.BlackthornesTS
+  local prices = type(ns) == "table" and ns.Prices
+  local changes = type(prices) == "table" and tonumber(prices.changes)
+  if changes then return "c" .. floor(changes) end
+  local tbl = blackthornesPriceTable()
+  local count = tbl and tableEntryCount(tbl) or 0
+  local stamp = blackthornesLastScan()
   if stamp == 0 and count == 0 and not blackthornesApi() then return nil end
   return tconcat({ "bt", stamp, count }, ":")
 end
@@ -573,8 +650,8 @@ function Arb.SellQuote(itemID)
     local ok, record = pcall(api.GetRecord, id)
     if not ok or type(record) ~= "table" then return nil end
     local price, priceSource = tonumber(record.min), "min"
-    if not price then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
-    if not price then price, priceSource = tonumber(record.market), "market" end
+    if not price or price <= 0 then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
+    if not price or price <= 0 then price, priceSource = tonumber(record.market), "market" end
     sellCache[id] = { price = price, record = record, priceSource = priceSource }
     return price, record, priceSource
   end
@@ -582,8 +659,8 @@ function Arb.SellQuote(itemID)
   local record = btPrices and btPrices[id]
   if type(record) == "table" then
     local price, priceSource = tonumber(record.min), "min"
-    if not price then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
-    if not price then price, priceSource = tonumber(record.market), "market" end
+    if not price or price <= 0 then price, priceSource = tonumber(record.rivalMin), "rivalMin" end
+    if not price or price <= 0 then price, priceSource = tonumber(record.market), "market" end
     if price and price > 0 then
       sellCache[id] = { price = price, record = record, priceSource = priceSource }
       return price, record, priceSource
@@ -1936,9 +2013,8 @@ function Arb.Analyse(options)
   if api and type(api.GetMarketInfo) == "function" then
     local ok, value = pcall(api.GetMarketInfo)
     if ok then marketInfo = value end
-  elseif type(_G.BlackthornesTSDB) == "table" and Arb.MarketProvider() == "blackthornes" then
-    local bt = _G.BlackthornesTSDB
-    local updated = tonumber(bt.lastScan) or tonumber(bt.lastFullScan) or 0
+  elseif Arb.MarketProvider() == "blackthornes" then
+    local updated = blackthornesLastScan()
     if updated > 0 then marketInfo = { updatedAt = updated } end
   end
 

@@ -2045,6 +2045,167 @@ async function main() {
     mageRt.destroy();
     dupFallbackRt.destroy();
     shamanFallbackRt.destroy();
+
+    // 黑石交易技能在无限服 1.60.1（GetRealmName() 返回空串）下的行情与在售数量回归
+    const btChecks = [];
+    const btRt = new WoWSimulatorRuntime({ level: 40, classKey: 'MAGE', faction: 'Alliance' });
+    btRt.loadAddon(addonName, [...coreOnlyFiles]);
+    btRt.execLua(`
+      function GetRealmName() return "" end
+      _G.BlackthornesTSDB = {
+        prices = {
+          ["Forever-Alliance"] = {
+            [4496] = { market = 26849, min = 25000, rivalMin = 25000, quantity = 13, seen = 1795581100 },
+          },
+          ["Forever-Horde"] = {
+            [4496] = { market = 99999, min = 99000, rivalMin = 99000, quantity = 99, seen = 1795581100 },
+          },
+        },
+        lastFullScanByRealm = { ["Forever-Alliance"] = 1795581100 },
+      }
+      _G.BlackthornesTS = {
+        Config = {
+          GetRealmKey = function() return "Forever-Alliance" end,
+        },
+        Prices = {
+          changes = 1,
+          GetTable = function() return _G.BlackthornesTSDB.prices["Forever-Alliance"] end,
+          GetLastScan = function() return 1795581100 end,
+        },
+      }
+      _G.BlackthornesTS_API = {
+        version = 1,
+        GetPrice = function(item)
+          if item == 4496 then return 26849 end
+          return nil
+        end,
+      }
+      WoWFDB = WoWFDB or {}
+      WoWFDB.vendorCache = {
+        ["查瑞迪·米普斯"] = {
+          zone = "尘泥沼泽",
+          at = 1795581000,
+          [4496] = { id = 4496, price = 20000, stock = -1, stack = 1, zone = "尘泥沼泽", at = 1795581000 },
+        },
+      }
+      WoWF_CraftArb.Reset()
+
+      local supply, supplySource = WoWF_CraftArb.ListedSupply(4496)
+      local quote, _, quoteSource = WoWF_CraftArb.SellQuote(4496)
+      local rows, meta = WoWF_CraftArb.Analyse({ source = "vendor", onlyProfitable = false })
+      local row4496
+      for _, r in ipairs(rows) do
+        if r.outputID == 4496 then row4496 = r; break end
+      end
+      __WOW_BRIDGE__:emitString(table.concat({
+        "runtime",
+        tostring(supply),
+        tostring(supplySource),
+        tostring(quote),
+        tostring(quoteSource),
+        tostring(meta and meta.market and meta.market.updatedAt),
+        tostring(row4496 and row4496.listedSupply),
+        tostring(row4496 and row4496.price),
+      }, "|"))
+    `, 'BtRuntimeTest.lua');
+
+    const [runtimeOut] = btRt.takeEmittedStrings();
+    const rtParts = String(runtimeOut || '').split('|');
+    btChecks.push(['运行时-ListedSupply返回13/quantity', rtParts[1] === '13' && rtParts[2] === 'quantity']);
+    btChecks.push(['运行时-SellQuote优先min而非API均值', rtParts[3] === '25000' && rtParts[4] === 'min']);
+    btChecks.push(['运行时-Analyse返回updatedAt/supply/price', rtParts[5] === '1795581100' && rtParts[6] === '13' && rtParts[7] === '25000']);
+
+    btRt.runSlashCommand('/wowf arb');
+    let btArbSnap = btRt.getSnapshot();
+    const switchSourceBtn = Object.values(btArbSnap.frames).find(
+      (f) => f.frameType === 'Button' && isFrameTreeShown(f, btArbSnap.frames) && stripWoWFormatting(f.text).includes('来源: 制作')
+    );
+    btChecks.push(['UI-套利页存在来源切换按钮', Boolean(switchSourceBtn)]);
+    if (switchSourceBtn) {
+      btRt.triggerFrameScript(switchSourceBtn.id, 'OnClick', 'LeftButton');
+      btArbSnap = btRt.getSnapshot();
+    }
+    const btVendorText = summarizeCards(btArbSnap).map((c) => `${c.title}\n${c.body}`).join('\n');
+    btChecks.push(['UI-商人套利卡显示13件(偏少)', btVendorText.includes('13 件(偏少)')]);
+    btChecks.push(['UI-商人套利卡不再显示未知(行情未扫描)', !btVendorText.includes('未知(行情未扫描)')]);
+    btChecks.push(['UI-商人套利卡不再退回行情接口报价', !btVendorText.includes('行情接口报价')]);
+
+    // 仅存档回退（无 _G.BlackthornesTS，GetRealmName() == ""）与标准服名校验
+    btRt.execLua(`
+      _G.BlackthornesTS = nil
+      _G.BlackthornesTS_API = nil
+      function GetRealmName() return "" end
+
+      -- 场景 A：BlackthornesTSCharDB 记住服名，在 Forever-Alliance / Forever-Horde 并存时命中联盟表
+      _G.BlackthornesTSCharDB = { realmName = "Forever" }
+      _G.BlackthornesTSDB = {
+        prices = {
+          ["Forever-Alliance"] = { [4496] = { market = 26849, min = 25000, quantity = 13, seen = 1795581100 } },
+          ["Forever-Horde"] = { [4496] = { market = 99999, min = 99000, quantity = 99, seen = 1795581100 } },
+        },
+      }
+      WoWF_CraftArb.Reset()
+      local sA = WoWF_CraftArb.ListedSupply(4496)
+
+      -- 场景 B：无 BlackthornesTSCharDB，仅存在 UnknownRealm-Alliance / UnknownRealm-Horde
+      _G.BlackthornesTSCharDB = nil
+      _G.BlackthornesTSDB = {
+        prices = {
+          ["UnknownRealm-Alliance"] = { [4496] = { market = 26849, min = 25000, quantity = 13, seen = 1795581100 } },
+          ["UnknownRealm-Horde"] = { [4496] = { market = 99999, min = 99000, quantity = 99, seen = 1795581100 } },
+        },
+      }
+      WoWF_CraftArb.Reset()
+      local sB = WoWF_CraftArb.ListedSupply(4496)
+
+      -- 场景 C：跨阵营隔离（部落角色在只有 Forever-Alliance 时不得串读）
+      local origFaction = UnitFactionGroup
+      function UnitFactionGroup() return "Horde", "部落" end
+      _G.BlackthornesTSDB = {
+        prices = {
+          ["Forever-Alliance"] = { [4496] = { market = 26849, min = 25000, quantity = 13, seen = 1795581100 } },
+        },
+      }
+      WoWF_CraftArb.Reset()
+      local sC = WoWF_CraftArb.ListedSupply(4496)
+      UnitFactionGroup = origFaction
+
+      -- 标准服名：SomeRealm-Alliance 命中且 min=0 时回退 rivalMin
+      function GetRealmName() return "SomeRealm" end
+      _G.BlackthornesTSDB = {
+        prices = {
+          ["SomeRealm-Alliance"] = { [4496] = { market = 26849, min = 0, rivalMin = 24000, quantity = 13, seen = 1795581100 } },
+        },
+      }
+      WoWF_CraftArb.Reset()
+      local sD = WoWF_CraftArb.ListedSupply(4496)
+      local qD, _, qSrcD = WoWF_CraftArb.SellQuote(4496)
+
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(sA), tostring(sB), tostring(sC), tostring(sD), tostring(qD), tostring(qSrcD)
+      }, "|"))
+    `, 'BtFallbackTest.lua');
+
+    const [fallbackOut] = btRt.takeEmittedStrings();
+    const fbParts = String(fallbackOut || '').split('|');
+    btChecks.push(['存档回退A-CharDB记住服名命中Forever-Alliance(13)', fbParts[0] === '13']);
+    btChecks.push(['存档回退B-UnknownRealm-Alliance命中(13)', fbParts[1] === '13']);
+    btChecks.push(['存档回退C-部落不串读Forever-Alliance(nil)', fbParts[2] === 'nil']);
+    btChecks.push(['标准服名-SomeRealm-Alliance命中(13)', fbParts[3] === '13']);
+    btChecks.push(['标准服名-min=0时SellQuote回退rivalMin(24000)', fbParts[4] === '24000' && fbParts[5] === 'rivalMin']);
+
+    const btFailed = btChecks.filter(([, ok]) => !ok);
+    const btSnapFinal = btRt.getSnapshot();
+    if (btSnapFinal.luaErrors.length > 0 || btFailed.length > 0) {
+      assertionFailed = true;
+      console.error(
+        `[Assert Failed] 黑石空服名在售数量回归 errors=${btSnapFinal.luaErrors.length}, failed=${btFailed.map(([n]) => n).join('|')}`
+      );
+      if (btSnapFinal.luaErrors.length > 0) console.error(btSnapFinal.luaErrors);
+    } else {
+      console.log('[✓] 黑石交易技能空服名（无限服 1.60.1）在售数量与报价回归通过。');
+    }
+    btRt.destroy();
   }
 
   if (opts.assert && (finalSnap.luaErrors.length > 0 || assertionFailed)) {
