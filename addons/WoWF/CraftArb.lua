@@ -573,6 +573,14 @@ local costPrefersVendor = false
 -- 每次成功采集商人商品都会 +1，纳入缓存签名（同一秒内改价也能让制造行/报价缓存失效）
 local vendorVersion = 0
 local unsellableVersion = 0
+local FLIP_SINGLE_ITEM_MIN_PROFIT = 100 -- 单件物品（非堆叠/单笔拍卖）最低单件利润（1银 = 100铜）
+local observedCommodity = {}
+local observedCommodityVersion = 0
+
+local function resolveFlipMinSingleProfit(val)
+  if val == nil then return FLIP_SINGLE_ITEM_MIN_PROFIT end
+  return max(0, floor(tonumber(val) or 0))
+end
 
 ---清空全部缓存（行情修订号变化、物品数据加载完成、拍卖行开关时调用）
 function Arb.Reset()
@@ -582,6 +590,8 @@ function Arb.Reset()
   vendorRowsCache = { stamp = nil }
   flipRowsCache = { stamp = nil }
   tooltipSellCache = {}
+  observedCommodity = {}
+  observedCommodityVersion = observedCommodityVersion + 1
 end
 Arb.Reset()
 
@@ -1416,6 +1426,56 @@ local function isFlipGearClass(classID)
   return classID == 2 or classID == 4 -- 武器(2) / 护甲(4)
 end
 
+local function recordObservedCommodity(itemID, isCommodity)
+  local id = tonumber(itemID)
+  if not id or type(isCommodity) ~= "boolean" then return end
+  if observedCommodity[id] ~= isCommodity then
+    observedCommodity[id] = isCommodity
+    observedCommodityVersion = observedCommodityVersion + 1
+  end
+end
+
+---判断物品是否属于不可堆叠的单件/单笔拍卖物品（严格避免对未缓存物品调用 GetItemInfo）
+local function isFlipSingleItem(itemID, classID)
+  local id = tonumber(itemID)
+  if id and observedCommodity[id] ~= nil then
+    return observedCommodity[id] == false
+  end
+  local db = _G.BlackthornesTSDB
+  if id and type(db) == "table" and type(db.commodity) == "table" then
+    local comm = db.commodity[id]
+    if comm ~= nil then
+      return comm == false
+    end
+  end
+  local cid = tonumber(classID) or (id and flipItemClass(id))
+  if cid == 1 or cid == 2 or cid == 4 or cid == 9 or cid == 11 then
+    return true
+  end
+  if id and type(C_Item) == "table" and type(C_Item.IsItemDataCachedByID) == "function" then
+    local okCached, cached = pcall(C_Item.IsItemDataCachedByID, id)
+    if okCached and cached == true then
+      local maxStack
+      if type(C_Item.GetItemMaxStackSizeByID) == "function" then
+        local okMax, stackVal = pcall(C_Item.GetItemMaxStackSizeByID, id)
+        if okMax then maxStack = tonumber(stackVal) end
+      end
+      if not maxStack then
+        local getInfo = (type(C_Item.GetItemInfo) == "function" and C_Item.GetItemInfo)
+          or (type(_G.GetItemInfo) == "function" and _G.GetItemInfo)
+        if getInfo then
+          local okInfo, _, _, _, _, _, _, _, stackCount = pcall(getInfo, id)
+          if okInfo then maxStack = tonumber(stackCount) end
+        end
+      end
+      if maxStack and maxStack > 0 then
+        return maxStack == 1
+      end
+    end
+  end
+  return false
+end
+
 local function parseTooltipSellData(data)
   if type(data) ~= "table" or type(data.lines) ~= "table" or #data.lines == 0 then
     return nil, false, false, false
@@ -1527,7 +1587,8 @@ local function flipFactsSignature()
   local db = _G.BlackthornesTSDB
   local factsCount = (type(db) == "table" and type(db.itemFacts) == "table") and tableEntryCount(db.itemFacts) or 0
   local paidCount = (type(db) == "table" and type(db.vendorPaid) == "table") and tableEntryCount(db.vendorPaid) or 0
-  return tconcat({ tostring(revision()), floor(deVer), factsCount, paidCount, tostring(itemDataVersion), unsellableVersion }, "|")
+  local commodityCount = (type(db) == "table" and type(db.commodity) == "table") and tableEntryCount(db.commodity) or 0
+  return tconcat({ tostring(revision()), floor(deVer), factsCount, paidCount, commodityCount, tostring(itemDataVersion), unsellableVersion, observedCommodityVersion }, "|")
 end
 
 local function flipBuyPrice(record)
@@ -1638,25 +1699,29 @@ local function flipItemDisplay(itemID)
   return name or format("物品 #%s", tostring(itemID)), quality
 end
 
-local function flipLadderSummary(record, buyPrice, vendorSell, loneLow)
+local function flipLadderSummary(record, buyPrice, vendorSell, loneLow, maxBuyPrice)
+  local cap = tonumber(maxBuyPrice)
+  if cap == nil then cap = (vendorSell or 0) - 1 end
+  cap = floor(cap)
+  if cap < 1 then return nil, nil end
   local ladder = record.ladder
   if type(ladder) == "table" and #ladder >= 2 and #ladder % 2 == 0 then
     local qty, profitTotal = 0, 0
     for i = 1, #ladder, 2 do
       local p, q = tonumber(ladder[i]) or 0, tonumber(ladder[i + 1]) or 0
-      if p > 0 and q > 0 and p < vendorSell then
+      if p > 0 and q > 0 and p <= cap then
         qty = qty + q
         profitTotal = profitTotal + (vendorSell - p) * q
       end
     end
     if qty > 0 then return qty, profitTotal end
-    if loneLow then return 1, vendorSell - buyPrice end
+    if loneLow and buyPrice <= cap then return 1, vendorSell - buyPrice end
     return nil, nil
   end
   local ns = _G.BlackthornesTS
   local pricesMod = type(ns) == "table" and ns.Prices
-  if type(pricesMod) == "table" and type(pricesMod.CountAtOrBelow) == "function" and vendorSell > 1 then
-    local ok, cnt = pcall(pricesMod.CountAtOrBelow, record, vendorSell - 1)
+  if type(pricesMod) == "table" and type(pricesMod.CountAtOrBelow) == "function" then
+    local ok, cnt = pcall(pricesMod.CountAtOrBelow, record, cap)
     if ok and tonumber(cnt) and tonumber(cnt) > 0 then
       return floor(tonumber(cnt)), nil
     end
@@ -1667,12 +1732,14 @@ end
 ---扫描拍卖行当前在售中「买入价低于 NPC 商人收购价」的套利商品
 ---严格避免全量扫描期间调用 GetItemInfo 驱逐背包缓存，仅依赖黑石已保存的物品事实与实测卖店价；
 ---只检视最近一次扫描见到过的在售记录，卖出给 NPC 商人无 5% 拍卖手续费。
----@param options table|nil { onlyProfitable = bool, minSupply = number|nil, query = string|nil }
+---@param options table|nil { onlyProfitable = bool, minSupply = number|nil, query = string|nil, gearOnly = bool, minSingleItemProfit = number|nil }
 ---@return table[] rows
 ---@return table meta
 function Arb.VendorFlipArbitrage(options)
   options = type(options) == "table" and options or {}
-  local stamp = flipFactsSignature()
+  local minSingleProfit = resolveFlipMinSingleProfit(options.minSingleItemProfit)
+  local singleRequiredProfit = max(1, minSingleProfit)
+  local stamp = flipFactsSignature() .. "|" .. tostring(minSingleProfit)
   if flipRowsCache.stamp ~= stamp then
     local built = {}
     local prices = blackthornesPriceTable() or {}
@@ -1743,7 +1810,9 @@ function Arb.VendorFlipArbitrage(options)
           end
           if vendorSell and vendorSell > buyPrice then
             local profit = vendorSell - buyPrice
-            local buyableQty, totalProfit = flipLadderSummary(record, buyPrice, vendorSell, loneLow)
+            local singleItem = isFlipSingleItem(id, classID)
+            local maxBuyPrice = singleItem and max(0, vendorSell - singleRequiredProfit) or max(0, vendorSell - 1)
+            local buyableQty, totalProfit = flipLadderSummary(record, buyPrice, vendorSell, loneLow, maxBuyPrice)
             local supply, supplySource = Arb.ListedSupply(id)
             local itemName, quality = flipItemDisplay(id)
             built[#built + 1] = {
@@ -1753,6 +1822,8 @@ function Arb.VendorFlipArbitrage(options)
               quality = quality,
               classID = classID,
               isGear = isFlipGearClass(classID),
+              isSingleItem = singleItem,
+              maxBuyPrice = maxBuyPrice,
               buyPrice = buyPrice,
               loneLow = loneLow == true,
               vendorSell = vendorSell,
@@ -1796,6 +1867,9 @@ function Arb.VendorFlipArbitrage(options)
     if keep and options.gearOnly == true and not row.isGear and row.vendorSellSource ~= "sold" then
       keep = false
     end
+    if keep and row.isSingleItem and minSingleProfit > 0 and not (row.profit and row.profit >= minSingleProfit) then
+      keep = false
+    end
     if keep and options.onlyProfitable and not (row.profit and row.profit > 0) then keep = false end
     if keep and options.query and options.query ~= "" then
       local hay = lower((row.name or "") .. " " .. tostring(row.outputID or ""))
@@ -1817,6 +1891,7 @@ function Arb.VendorFlipArbitrage(options)
     shown = #rows,
     hidden = hidden,
     profitable = profitable,
+    minSingleItemProfit = minSingleProfit,
     state = Arb.ApiState(),
     provider = Arb.MarketProvider(),
   }
@@ -2428,6 +2503,7 @@ function Arb.Analyse(options)
     flipRows, flipMeta = Arb.VendorFlipArbitrage({
       onlyProfitable = options.onlyProfitable, query = options.query, minSupply = options.minSupply,
       gearOnly = options.flipGearOnly == true,
+      minSingleItemProfit = options.flipMinSingleProfit,
     })
     for _, row in ipairs(flipRows) do
       tinsert(rows, row)
@@ -2518,6 +2594,7 @@ function Arb.Analyse(options)
     flipScanned = flipMeta and flipMeta.scanned or 0,
     flipChecked = flipMeta and flipMeta.checked or 0,
     flipPending = flipMeta and flipMeta.pending or 0,
+    flipMinSingleProfit = flipMeta and flipMeta.minSingleItemProfit or nil,
   }
 end
 
@@ -3018,6 +3095,7 @@ local buyer = {
   itemGroupResearches = 0,
   itemGroupNeedsResearch = false,
   stats = { boughtCount = 0, boughtUnits = 0, spent = 0, estProfit = 0, skipped = 0 },
+  minSingleItemProfit = FLIP_SINGLE_ITEM_MIN_PROFIT,
   lastMessage = "待命中：在拍卖行打开本页后点击「开始连续扫货」",
   onChanged = nil,
 }
@@ -3267,15 +3345,17 @@ function FlipBuyer.Status()
       estProfit = buyer.stats.estProfit,
       skipped = buyer.stats.skipped,
     },
+    minSingleItemProfit = buyer.minSingleItemProfit,
     message = buyer.lastMessage,
   }
 end
 
 ---启动「拍卖→商人」连续扫货队列
 ---@param flipRows table[] 过滤后的 flip 套利行列表
+---@param options table|nil { minSingleItemProfit = number|nil }
 ---@return boolean ok
 ---@return string|nil message
-function FlipBuyer.Start(flipRows)
+function FlipBuyer.Start(flipRows, options)
   if not FlipBuyer.IsAuctionHouseOpen() then
     buyer.lastMessage = "请先打开拍卖行窗口后再开始扫货"
     buyerNotify()
@@ -3289,13 +3369,23 @@ function FlipBuyer.Start(flipRows)
   end
   local cTip = _G.C_TooltipInfo
   local hasTipApi = type(cTip) == "table" and type(cTip.GetItemByID) == "function"
-  local queue, skippedUnverified = {}, 0
+  local minSingleProfit = resolveFlipMinSingleProfit(type(options) == "table" and options.minSingleItemProfit or nil)
+  local requiredSingleProfit = max(1, minSingleProfit)
+  local queue, skippedUnverified, skippedLowProfit = {}, 0, 0
   for _, row in ipairs(type(flipRows) == "table" and flipRows or {}) do
     local id = tonumber(row.outputID or row.itemID)
     local vendorSell = tonumber(row.vendorSell)
     if (row.kind == nil or row.kind == "flip") and id and id > 0 and vendorSell and vendorSell > 1
       and not isUnsellableItem(id) then
-      if not hasTipApi and row.vendorSellSource ~= "sold" and row.vendorSellSource ~= "tooltip" then
+      local singleItem = (row.isSingleItem == true) or (row.isGear == true) or isFlipSingleItem(id, row.classID)
+      local estProfit = tonumber(row.profit)
+      if estProfit == nil and tonumber(row.buyPrice) then
+        estProfit = vendorSell - tonumber(row.buyPrice)
+      end
+      if singleItem and minSingleProfit > 0
+        and (vendorSell <= requiredSingleProfit or (estProfit ~= nil and estProfit < requiredSingleProfit)) then
+        skippedLowProfit = skippedLowProfit + 1
+      elseif not hasTipApi and row.vendorSellSource ~= "sold" and row.vendorSellSource ~= "tooltip" then
         skippedUnverified = skippedUnverified + 1
       else
         queue[#queue + 1] = {
@@ -3305,7 +3395,8 @@ function FlipBuyer.Start(flipRows)
           vendorSellSource = row.vendorSellSource,
           reportedSell = (row.vendorSellSource == "reported" and vendorSell) or FOREVER_VENDOR_PAYOUTS[id] or nil,
           isGear = row.isGear == true,
-          estProfit = tonumber(row.profit) or 0,
+          isSingleItem = singleItem,
+          estProfit = estProfit or 0,
         }
       end
     end
@@ -3313,6 +3404,8 @@ function FlipBuyer.Start(flipRows)
   if #queue == 0 then
     if skippedUnverified > 0 then
       buyer.lastMessage = "客户端缺少 Tooltip 卖价核验接口，且当前候选物品无实测卖店价，禁止自动买入"
+    elseif skippedLowProfit > 0 then
+      buyer.lastMessage = format("当前列表单件物品利润均低于 %s，已全部过滤", formatFlipCopper(requiredSingleProfit))
     else
       buyer.lastMessage = "当前列表没有可扫货的「拍卖→商人」物品"
     end
@@ -3321,6 +3414,7 @@ function FlipBuyer.Start(flipRows)
   end
 
   cancelPendingCommodityQuote()
+  buyer.minSingleItemProfit = minSingleProfit
   buyer.queue = queue
   buyer.index = 1
   buyer.active = true
@@ -3458,7 +3552,8 @@ function FlipBuyer.Step()
       return false, "当前物品无可用一口价"
     end
     local effectiveSell = min(cur.vendorSell, tonumber(target.vendorSell) or cur.vendorSell)
-    if not target.total or target.total <= 0 or target.total >= effectiveSell then
+    local requiredProfit = max(1, tonumber(buyer.minSingleItemProfit) or FLIP_SINGLE_ITEM_MIN_PROFIT)
+    if not target.total or target.total <= 0 or (effectiveSell - target.total) < requiredProfit then
       table.remove(buyer.liveAuctions, 1)
       if #buyer.liveAuctions > 0 then
         buyerNotify()
@@ -3468,6 +3563,11 @@ function FlipBuyer.Step()
         return "searching"
       end
       buyer.stats.skipped = buyer.stats.skipped + 1
+      if requiredProfit > 1 then
+        buyer.lastMessage = format("%s 实时一口价单件利润已不足 %s，跳过", cur.name, formatFlipCopper(requiredProfit))
+        advanceToNextItem(true)
+        return false, "单件利润不足阈值"
+      end
       buyer.lastMessage = format("%s 实时一口价已不再低于商人收购价，跳过", cur.name)
       advanceToNextItem(true)
       return false, "不再低于商人收购价"
@@ -3779,6 +3879,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     if type(ah.GetNumItemSearchResults) ~= "function" or type(ah.GetItemSearchResultInfo) ~= "function" then return end
     local okN, count = pcall(ah.GetNumItemSearchResults, queryKey)
     if not okN or type(count) ~= "number" then return end
+    recordObservedCommodity(cur.itemID, false)
     local sellable, reason = verifyQueueItemSellable(cur)
     if not sellable then
       buyer.stats.skipped = buyer.stats.skipped + 1
@@ -3786,6 +3887,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
       advanceToNextItem(false)
       return
     end
+    local requiredProfit = max(1, tonumber(buyer.minSingleItemProfit) or FLIP_SINGLE_ITEM_MIN_PROFIT)
     local deals = {}
     local boughtMap = buyer.boughtAuctionIDs or {}
     for i = 1, count do
@@ -3810,7 +3912,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
             local listedQty = max(1, floor(tonumber(info.quantity) or 1))
             -- 无限服 1.60.1 的 ItemSearchResultInfo.buyoutAmount 是单笔(单件)拍卖的一口价，
             -- quantity 可能代表同价分组数量或全服在售总量，严禁乘以 quantity 放大收购价。
-            if buyout and buyout > 0 and buyout < effectiveSell then
+            if buyout and buyout > 0 and (effectiveSell - buyout) >= requiredProfit then
               deals[#deals + 1] = {
                 auctionID = info.auctionID,
                 total = buyout,
@@ -3826,7 +3928,11 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     end
     if #deals == 0 then
       buyer.stats.skipped = buyer.stats.skipped + 1
-      buyer.lastMessage = format("%s 当前拍卖行无低于 %s 的一口价（已过滤自己挂单）", cur.name, formatFlipCopper(cur.vendorSell))
+      if requiredProfit > 1 then
+        buyer.lastMessage = format("%s 当前拍卖行无单件利润 ≥ %s 的一口价（已过滤自己挂单）", cur.name, formatFlipCopper(requiredProfit))
+      else
+        buyer.lastMessage = format("%s 当前拍卖行无低于 %s 的一口价（已过滤自己挂单）", cur.name, formatFlipCopper(cur.vendorSell))
+      end
       advanceToNextItem(false)
       return
     end
@@ -3853,6 +3959,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     if type(ah.GetNumCommoditySearchResults) ~= "function" or type(ah.GetCommoditySearchResultInfo) ~= "function" then return end
     local okN, count = pcall(ah.GetNumCommoditySearchResults, cur.itemID)
     if not okN or type(count) ~= "number" then return end
+    recordObservedCommodity(cur.itemID, true)
     local sellable, reason = verifyQueueItemSellable(cur)
     if not sellable then
       buyer.stats.skipped = buyer.stats.skipped + 1

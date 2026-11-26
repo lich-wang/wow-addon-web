@@ -6310,7 +6310,7 @@ function flipBuy.LayoutBar(yOffset, flipRows)
     AttachTooltip(primaryBtn, "连续扫货（硬件点击合规）",
       "暴雪客户端要求每次拍卖行下单都由真实点击或滚轮触发。\n"
       .. "1. 点击「开始连续扫货」后会后台按利润高→低逐个实时查询当前拍卖行最新挂单；\n"
-      .. "2. 装备/武器查到便宜一口价后点此按钮（或向上滚滚轮）直接买下 1 件；有多个便宜挂单会原地连买；\n"
+      .. "2. 装备/武器查到便宜一口价后点此按钮（或向上滚滚轮）直接买下 1 件；有多个便宜挂单会原地连买（单件物品自动过滤利润低于 1 银的挂单）；\n"
       .. "3. 可堆叠商品分两步：点一下锁价，再点一下付款（每次最多 50 件，自动剔除自己挂单与涨价商品）。")
     bar.primaryBtn = primaryBtn
 
@@ -7512,7 +7512,7 @@ local function RenderTabCraftArb()
         tipTitle = "套利来源（制作 / 商人→拍卖 / 拍卖→商人 / 全部）",
         tipBody = "制作：买材料做成成品卖拍卖行（可递归折算中间产物 / 分解套利）；"
           .. "商人→拍卖：把打开 NPC 商人窗口时采集到的「买入价」与拍卖行最低价对比，直接倒买倒卖；"
-          .. "拍卖→商人：在拍卖行最近一次扫描的在售物品中找出挂单价低于 NPC 商人收购价的商品（买来直接卖商店，0%% 手续费）；"
+          .. "拍卖→商人：在拍卖行最近一次扫描的在售物品中找出挂单价低于 NPC 商人收购价的商品（买来直接卖商店，0%% 手续费；已自动过滤单件利润少于 1 银的物品）；"
           .. "全部：三类结果合并排序。",
       },
       {
@@ -7786,7 +7786,7 @@ local function RenderTabCraftArb()
             return
           end
           local qty = (row.buyableQty and row.buyableQty > 0) and row.buyableQty or 1
-          local maxPay = math.max(1, math.floor((row.vendorSell or 1) - 1))
+          local maxPay = math.max(1, math.floor(tonumber(row.maxBuyPrice) or ((row.vendorSell or 1) - 1)))
           flipBuy.SubmitShoppingList(
             "flip:" .. tostring(row.outputID),
             "WoWF 拍卖→商人",
@@ -7949,7 +7949,7 @@ local function RenderTabCraftArb()
         table.insert(emptyLines, "3. 扫描完成后切回本页即可自动按最新挂单计算可卖给商人的低价物品。")
       else
         table.insert(emptyLines, string.format(
-          "|cffffd100最近一次拍卖行扫描中，暂未发现「挂单价低于 NPC 商人收购价」的物品。|r已核对 %d 件在售商品%s。",
+          "|cffffd100最近一次拍卖行扫描中，暂未发现「挂单价低于 NPC 商人收购价」的物品。|r已核对 %d 件在售商品%s（已自动过滤单件利润少于 1 银的物品）。",
           meta.flipChecked or 0,
           (meta.flipPending and meta.flipPending > 0) and string.format("（另有 %d 件商人卖价待黑石在脱开拍卖行后读取）", meta.flipPending) or ""))
         if state.craftFlipGearOnly ~= false then
