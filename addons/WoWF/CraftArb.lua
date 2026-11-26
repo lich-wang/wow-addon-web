@@ -1416,13 +1416,8 @@ local function isFlipGearClass(classID)
   return classID == 2 or classID == 4 -- 武器(2) / 护甲(4)
 end
 
-local function inspectTooltipSellPrice(itemID)
-  local cTip = _G.C_TooltipInfo
-  if type(cTip) ~= "table" or type(cTip.GetItemByID) ~= "function" then
-    return nil, false, false, false
-  end
-  local ok, data = pcall(cTip.GetItemByID, itemID)
-  if not ok or type(data) ~= "table" or type(data.lines) ~= "table" or #data.lines == 0 then
+local function parseTooltipSellData(data)
+  if type(data) ~= "table" or type(data.lines) ~= "table" or #data.lines == 0 then
     return nil, false, false, false
   end
   if #data.lines == 1 and type(data.lines[1]) == "table" and type(data.lines[1].leftText) == "string" then
@@ -1438,15 +1433,19 @@ local function inspectTooltipSellPrice(itemID)
   local sellType = (type(enum) == "table" and enum.SellPrice) or 11
   local unsellableText = _G.ITEM_UNSELLABLE
   local chargeFmt = _G.ITEM_SPELL_CHARGES
-  local chargePattern
+  local chargePatterns = {}
   if type(chargeFmt) == "string" and find(chargeFmt, "%d", 1, true) then
-    local okPat, pat = pcall(function()
-      local t = gsub(chargeFmt, "|4([^:;]*):([^;]*);", "%1")
-      t = gsub(t, "%%d", "\1")
-      t = gsub(t, "([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
-      return "^" .. gsub(t, "\1", "(%%d+)") .. "$"
-    end)
-    if okPat and type(pat) == "string" then chargePattern = pat end
+    for _, pick in ipairs({ "%1", "%2" }) do
+      local okPat, pat = pcall(function()
+        local t = gsub(chargeFmt, "|4([^:;]*):([^;]*);", pick)
+        t = gsub(t, "%%d", "\1")
+        t = gsub(t, "([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+        return "^" .. gsub(t, "\1", "(%%d+)") .. "$"
+      end)
+      if okPat and type(pat) == "string" then
+        chargePatterns[#chargePatterns + 1] = pat
+      end
+    end
   end
 
   local foundPrice, hasCharges, explicitUnsellable = nil, false, false
@@ -1471,9 +1470,15 @@ local function inspectTooltipSellPrice(itemID)
           or find(lower(text), "no sell price", 1, true) then
           explicitUnsellable = true
         end
-        if text:match("^(%d+)%s*[Cc]harges?$") or text:match("^(%d+)次使用")
-          or (chargePattern and text:match(chargePattern)) then
+        if text:match("^(%d+)%s*[Cc]harges?$") or text:match("^(%d+)%s*次使用") or text:match("^(%d+)%s*次充能") then
           hasCharges = true
+        else
+          for _, pat in ipairs(chargePatterns) do
+            if text:match(pat) then
+              hasCharges = true
+              break
+            end
+          end
         end
       end
     end
@@ -1486,6 +1491,33 @@ local function inspectTooltipSellPrice(itemID)
     return 0, true, true, false
   end
   return foundPrice, true, false, false
+end
+
+local function inspectTooltipSellPrice(itemID)
+  local cTip = _G.C_TooltipInfo
+  if type(cTip) ~= "table" or type(cTip.GetItemByID) ~= "function" then
+    return nil, false, false, false
+  end
+  local ok, data = pcall(cTip.GetItemByID, itemID)
+  if not ok then
+    return nil, false, false, false
+  end
+  return parseTooltipSellData(data)
+end
+
+local function inspectTooltipLinkSellPrice(itemLink)
+  if type(itemLink) ~= "string" or itemLink == "" then
+    return nil, false, false, false
+  end
+  local cTip = _G.C_TooltipInfo
+  if type(cTip) ~= "table" or type(cTip.GetHyperlink) ~= "function" then
+    return nil, false, false, false
+  end
+  local ok, data = pcall(cTip.GetHyperlink, itemLink)
+  if not ok then
+    return nil, false, false, false
+  end
+  return parseTooltipSellData(data)
 end
 
 local function flipFactsSignature()
@@ -1693,7 +1725,11 @@ function Arb.VendorFlipArbitrage(options)
               elseif tipCached.unsure then
                 vendorSell, unsure = nil, true
               elseif tipCached.price and tipCached.price > 0 then
-                vendorSell, sellSource = tipCached.price, "tooltip"
+                if sellSource == "reported" then
+                  vendorSell = min(vendorSell, tipCached.price)
+                else
+                  vendorSell, sellSource = tipCached.price, "tooltip"
+                end
               end
             end
           end
@@ -2925,6 +2961,8 @@ local FLIP_CONFIRM_WINDOW = 5 -- 二次确认有效窗口（秒）
 local FLIP_SEARCH_TIMEOUT = 10 -- 单次实时检索/锁价超时（秒）
 local FLIP_BUY_TIMEOUT = 12 -- 下单后等待客户端回执超时（秒）
 local FLIP_NEXT_DELAY = 0.25 -- 自动切换下一件时的检索间隔（秒）
+local FLIP_QUOTE_TTL = 15 -- 堆叠计划/锁价有效期（秒），过期强制重查
+local MAX_ITEM_GROUP_RESEARCHES = 20 -- 同价分组单件连买时的最大重检次数上限
 
 local function formatFlipCopper(copper)
   local value = floor(tonumber(copper) or 0)
@@ -2974,7 +3012,10 @@ local buyer = {
   armed = nil,
   searchItemKey = nil,
   searchItemID = nil,
+  searchSent = false,
   searchRetried = false,
+  boughtAuctionIDs = {},
+  itemGroupResearches = 0,
   stats = { boughtCount = 0, boughtUnits = 0, spent = 0, estProfit = 0, skipped = 0 },
   lastMessage = "待命中：在拍卖行打开本页后点击「开始连续扫货」",
   onChanged = nil,
@@ -3006,6 +3047,18 @@ local function canAuthorizeFlipPurchase(cur)
   return cur.vendorSellSource == "sold" or cur.vendorSellSource == "tooltip"
 end
 
+local function isCommodityQuoteAcceptable(plan, cur, unitP, totalPrice)
+  if type(plan) ~= "table" or type(cur) ~= "table" then return false end
+  local count = floor(tonumber(plan.count) or 0)
+  local sell = tonumber(cur.vendorSell) or 0
+  if count < 1 or sell <= 1 then return false end
+  if type(totalPrice) ~= "number" or totalPrice <= 0 then return false end
+  if type(plan.expectedTotal) == "number" and totalPrice > plan.expectedTotal then return false end
+  if totalPrice >= sell * count then return false end
+  if type(unitP) == "number" and unitP > 0 and unitP >= sell then return false end
+  return true
+end
+
 ---在拉取搜索结果和下单前强制核对当前物品是否真能卖给 NPC 商人，
 ---防止客户端旧 GetItemInfo 残留假卖价导致买入不可卖店物品（如致盲粉）；
 ---当客户端缺少 Tooltip 核验接口时，严禁凭未核验的缓存卖价（facts/reported）下单。
@@ -3015,7 +3068,11 @@ local function verifyQueueItemSellable(cur)
     return false, format("%s 已在不可卖店黑名单中，跳过", cur.name or tostring(cur.itemID))
   end
   if cur.vendorSellSource == "sold" then
-    return true
+    local soldPrice = tonumber(cur.vendorSell)
+    if soldPrice and soldPrice > 1 then
+      return true
+    end
+    return false, format("%s 实测卖店价无效，跳过", cur.name or tostring(cur.itemID))
   end
   local cTip = _G.C_TooltipInfo
   if type(cTip) == "table" and type(cTip.GetItemByID) == "function" then
@@ -3035,7 +3092,12 @@ local function verifyQueueItemSellable(cur)
       return false, format("%s 提示无卖价（商人拒收），已自动拉黑并跳过", cur.name or tostring(cur.itemID))
     end
     tooltipSellCache[cur.itemID] = { price = tipPrice }
-    cur.vendorSell = tipPrice
+    local capped = tipPrice
+    local knownReported = tonumber(cur.reportedSell) or FOREVER_VENDOR_PAYOUTS[cur.itemID]
+    if knownReported and knownReported > 0 and knownReported < capped then
+      capped = knownReported
+    end
+    cur.vendorSell = capped
     cur.vendorSellSource = "tooltip"
     return true
   end
@@ -3056,6 +3118,9 @@ local function advanceToNextItem(immediate)
   buyer.pendingStopReason = nil
   buyer.searchItemKey = nil
   buyer.searchItemID = nil
+  buyer.searchSent = false
+  buyer.boughtAuctionIDs = {}
+  buyer.itemGroupResearches = 0
   buyer.index = (buyer.index or 0) + 1
   if buyer.index > #buyer.queue then
     buyer.active = false
@@ -3112,6 +3177,7 @@ searchCurrentItem = function()
   buyer.armed = nil
   buyer.searchItemKey = itemKey
   buyer.searchItemID = cur.itemID
+  buyer.searchSent = true
   buyer.searchRetried = false
   buyer.searchToken = buyer.searchToken + 1
   buyer.phase = "searching"
@@ -3123,6 +3189,7 @@ searchCurrentItem = function()
   local sid = buyer.sessionId
   local okSend, res = pcall(ah.SendSearchQuery, itemKey, flipPriceSort(), true)
   if not okSend or res == false then
+    buyer.searchSent = false
     buyer.stats.skipped = buyer.stats.skipped + 1
     buyer.lastMessage = format("检索 %s 被限流或拒绝，已跳过", cur.name)
     advanceToNextItem(false)
@@ -3222,6 +3289,7 @@ function FlipBuyer.Start(flipRows)
           name = row.name or format("物品 #%d", id),
           vendorSell = vendorSell,
           vendorSellSource = row.vendorSellSource,
+          reportedSell = (row.vendorSellSource == "reported" and vendorSell) or FOREVER_VENDOR_PAYOUTS[id] or nil,
           isGear = row.isGear == true,
           estProfit = tonumber(row.profit) or 0,
         }
@@ -3251,6 +3319,9 @@ function FlipBuyer.Start(flipRows)
   buyer.pendingSkip = nil
   buyer.pendingStop = nil
   buyer.pendingStopReason = nil
+  buyer.searchSent = false
+  buyer.boughtAuctionIDs = {}
+  buyer.itemGroupResearches = 0
   searchCurrentItem()
   return true
 end
@@ -3272,6 +3343,9 @@ function FlipBuyer.Stop(reason)
   buyer.pendingStopReason = nil
   buyer.searchItemKey = nil
   buyer.searchItemID = nil
+  buyer.searchSent = false
+  buyer.boughtAuctionIDs = {}
+  buyer.itemGroupResearches = 0
   buyer.lastMessage = reason or format(
     "已停止扫货（本轮买入 %d 笔 / %d 件，花费 %s，预计净赚 %s）",
     buyer.stats.boughtCount, buyer.stats.boughtUnits,
@@ -3367,7 +3441,8 @@ function FlipBuyer.Step()
       advanceToNextItem(true)
       return false, "当前物品无可用一口价"
     end
-    if target.total >= cur.vendorSell * target.count then
+    local effectiveSell = min(cur.vendorSell, tonumber(target.vendorSell) or cur.vendorSell)
+    if not target.total or target.total <= 0 or target.total >= effectiveSell then
       table.remove(buyer.liveAuctions, 1)
       if #buyer.liveAuctions > 0 then
         buyerNotify()
@@ -3410,13 +3485,15 @@ function FlipBuyer.Step()
       kind = "item",
       itemID = cur.itemID,
       auctionID = target.auctionID,
-      count = target.count,
+      count = 1,
       total = target.total,
-      profit = cur.vendorSell * target.count - target.total,
+      profit = effectiveSell - target.total,
+      vendorSell = effectiveSell,
+      groupQty = target.groupQty or 1,
       moneyBefore = money,
     }
-    buyer.lastMessage = format("正在买入 %s ×%d（%s，赚 %s）...",
-      cur.name, target.count, formatFlipCopper(target.total), formatFlipCopper(buyer.buying.profit))
+    buyer.lastMessage = format("正在买入 %s ×1（%s，赚 %s）...",
+      cur.name, formatFlipCopper(target.total), formatFlipCopper(buyer.buying.profit))
     buyerNotify()
     local sid, btok = buyer.sessionId, buyer.buyToken
     scheduleBuyerTimer(FLIP_BUY_TIMEOUT, function()
@@ -3460,6 +3537,10 @@ function FlipBuyer.Step()
       buyer.lastMessage = format("%s 堆叠商品不再低于商人收购价，跳过", cur.name)
       advanceToNextItem(true)
       return false, "价格不满足"
+    end
+    if plan.plannedAt and (flipNowSeconds() - plan.plannedAt) > FLIP_QUOTE_TTL then
+      searchCurrentItem()
+      return "searching"
     end
     local money = flipMoney()
     if money and money < plan.expectedTotal then
@@ -3505,12 +3586,21 @@ function FlipBuyer.Step()
       return false, reason
     end
     local plan = buyer.commodityPlan
-    if not plan or not plan.quotedTotal or plan.quotedTotal <= 0 or plan.quotedTotal >= cur.vendorSell * plan.count then
+    if not isCommodityQuoteAcceptable(plan, cur, plan and plan.quotedUnit, plan and plan.quotedTotal) then
       cancelPendingCommodityQuote()
+      buyer.commodityPlan = nil
+      buyer.armed = nil
       buyer.stats.skipped = buyer.stats.skipped + 1
-      buyer.lastMessage = format("%s 锁价总价不再划算，已取消", cur.name)
+      buyer.lastMessage = format("%s 锁价不再划算，已取消", cur.name)
       advanceToNextItem(true)
       return false, "锁价失效"
+    end
+    if plan.quotedAt and (flipNowSeconds() - plan.quotedAt) > FLIP_QUOTE_TTL then
+      cancelPendingCommodityQuote()
+      buyer.commodityPlan = nil
+      buyer.armed = nil
+      searchCurrentItem()
+      return "searching"
     end
     local money = flipMoney()
     if money and money < plan.quotedTotal then
@@ -3555,6 +3645,7 @@ function FlipBuyer.Step()
     local sid, btok = buyer.sessionId, buyer.buyToken
     scheduleBuyerTimer(FLIP_BUY_TIMEOUT, function()
       if buyer.active and buyer.sessionId == sid and buyer.buyToken == btok and buyer.phase == "buying" then
+        cancelPendingCommodityQuote()
         buyer.buying = nil
         if buyer.pendingStop then
           FlipBuyer.Stop(buyer.pendingStopReason)
@@ -3595,6 +3686,10 @@ local function finishSuccessfulPurchase()
   end
 
   if buying.kind == "item" then
+    if buying.auctionID then
+      buyer.boughtAuctionIDs = buyer.boughtAuctionIDs or {}
+      buyer.boughtAuctionIDs[buying.auctionID] = true
+    end
     if buyer.liveAuctions and buyer.liveAuctions[1] and buyer.liveAuctions[1].auctionID == buying.auctionID then
       table.remove(buyer.liveAuctions, 1)
     elseif buyer.liveAuctions and #buyer.liveAuctions > 0 then
@@ -3603,10 +3698,17 @@ local function finishSuccessfulPurchase()
     if buyer.liveAuctions and #buyer.liveAuctions > 0 then
       buyer.phase = "ready_item"
       local nextAuction = buyer.liveAuctions[1]
-      local nextProfit = cur.vendorSell * nextAuction.count - nextAuction.total
+      local nextSell = min(cur.vendorSell, tonumber(nextAuction.vendorSell) or cur.vendorSell)
+      local nextProfit = nextSell - nextAuction.total
       buyer.lastMessage = format("已买 %s！下口 %s（再赚 %s，余 %d 口）",
         cur.name, formatFlipCopper(nextAuction.total), formatFlipCopper(nextProfit), #buyer.liveAuctions)
       buyerNotify()
+      return
+    end
+    if (buying.groupQty or 1) > 1 and (buyer.itemGroupResearches or 0) < MAX_ITEM_GROUP_RESEARCHES then
+      buyer.itemGroupResearches = (buyer.itemGroupResearches or 0) + 1
+      buyer.lastMessage = format("已买 %s，复查同价剩余挂单...", cur.name)
+      searchCurrentItem()
       return
     end
     buyer.lastMessage = format("已扫完 %s，切下一件...", cur.name)
@@ -3650,11 +3752,13 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
   local cur = buyer.queue[buyer.index]
   local ah = _G.C_AuctionHouse
 
-  if event == "ITEM_SEARCH_RESULTS_UPDATED" and buyer.phase == "searching" and cur and type(ah) == "table" then
+  if event == "ITEM_SEARCH_RESULTS_UPDATED" and buyer.phase == "searching"
+    and buyer.searchSent == true and buyer.searchItemKey ~= nil and cur and type(ah) == "table" then
     local named = type(arg1) == "table" and tonumber(arg1.itemID) or nil
     if named and named ~= cur.itemID then return end
+    local queryKey = (type(arg1) == "table" and named == cur.itemID and arg1) or buyer.searchItemKey
     if type(ah.GetNumItemSearchResults) ~= "function" or type(ah.GetItemSearchResultInfo) ~= "function" then return end
-    local okN, count = pcall(ah.GetNumItemSearchResults, buyer.searchItemKey)
+    local okN, count = pcall(ah.GetNumItemSearchResults, queryKey)
     if not okN or type(count) ~= "number" then return end
     local sellable, reason = verifyQueueItemSellable(cur)
     if not sellable then
@@ -3664,18 +3768,42 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
       return
     end
     local deals = {}
+    local boughtMap = buyer.boughtAuctionIDs or {}
     for i = 1, count do
-      local okInfo, info = pcall(ah.GetItemSearchResultInfo, buyer.searchItemKey, i)
-      if okInfo and type(info) == "table" and info.auctionID and not info.containsOwnerItem then
-        local buyout = tonumber(info.buyoutAmount)
-        local qty = max(1, floor(tonumber(info.quantity) or 1))
-        if buyout and buyout > 0 and buyout < cur.vendorSell * qty then
-          deals[#deals + 1] = {
-            auctionID = info.auctionID,
-            total = buyout,
-            count = qty,
-            each = buyout / qty,
-          }
+      local okInfo, info = pcall(ah.GetItemSearchResultInfo, queryKey, i)
+      if okInfo and type(info) == "table" and info.auctionID and not info.containsOwnerItem
+        and not boughtMap[info.auctionID] then
+        local infoItemID = type(info.itemKey) == "table" and tonumber(info.itemKey.itemID) or nil
+        local linkItemID = type(info.itemLink) == "string" and tonumber(info.itemLink:match("item:(%d+)")) or nil
+        if (not infoItemID or infoItemID == cur.itemID) and (not linkItemID or linkItemID == cur.itemID) then
+          local effectiveSell = cur.vendorSell
+          local linkBlocked = false
+          if type(info.itemLink) == "string" and info.itemLink ~= "" then
+            local linkPrice, linkRead, linkUnsellable, linkCharges = inspectTooltipLinkSellPrice(info.itemLink)
+            if linkRead then
+              if linkUnsellable or linkCharges or not linkPrice or linkPrice <= 0 then
+                linkBlocked = true
+              elseif linkPrice < effectiveSell then
+                effectiveSell = linkPrice
+              end
+            end
+          end
+          if not linkBlocked then
+            local buyout = tonumber(info.buyoutAmount)
+            local listedQty = max(1, floor(tonumber(info.quantity) or 1))
+            -- 无限服 1.60.1 的 ItemSearchResultInfo.buyoutAmount 是单笔(单件)拍卖的一口价，
+            -- quantity 可能代表同价分组数量或全服在售总量，严禁乘以 quantity 放大收购价。
+            if buyout and buyout > 0 and buyout < effectiveSell then
+              deals[#deals + 1] = {
+                auctionID = info.auctionID,
+                total = buyout,
+                count = 1,
+                each = buyout,
+                vendorSell = effectiveSell,
+                groupQty = listedQty,
+              }
+            end
+          end
         end
       end
     end
@@ -3692,15 +3820,17 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     buyer.liveAuctions = deals
     buyer.phase = "ready_item"
     local top = deals[1]
-    local profit = cur.vendorSell * top.count - top.total
+    local topSell = top.vendorSell or cur.vendorSell
+    local profit = topSell - top.total
     buyer.lastMessage = format("[%d/%d] %s 实时最低 %s/件（商人收 %s，赚 %s，共 %d 口低于卖店）",
       buyer.index, #buyer.queue, cur.name,
-      formatFlipCopper(floor(top.each + 0.5)), formatFlipCopper(cur.vendorSell), formatFlipCopper(profit), #deals)
+      formatFlipCopper(floor(top.each + 0.5)), formatFlipCopper(topSell), formatFlipCopper(profit), #deals)
     buyerNotify()
     return
   end
 
-  if event == "COMMODITY_SEARCH_RESULTS_UPDATED" and buyer.phase == "searching" and cur and type(ah) == "table" then
+  if event == "COMMODITY_SEARCH_RESULTS_UPDATED" and buyer.phase == "searching"
+    and buyer.searchSent == true and cur and type(ah) == "table" then
     local named = tonumber(arg1)
     if named and named ~= cur.itemID then return end
     if type(ah.GetNumCommoditySearchResults) ~= "function" or type(ah.GetCommoditySearchResultInfo) ~= "function" then return end
@@ -3718,7 +3848,11 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
       local okRow, row = pcall(ah.GetCommoditySearchResultInfo, cur.itemID, i)
       if okRow and type(row) == "table" then
         local up = tonumber(row.unitPrice)
-        local avail = max(0, (tonumber(row.quantity) or 0) - (tonumber(row.numOwnerItems) or 0))
+        local totalQty = tonumber(row.quantity) or 0
+        local ownerQty = tonumber(row.numOwnerItems) or 0
+        local avail = (row.containsOwnerItem == true and ownerQty <= 0)
+          and 0
+          or max(0, totalQty - ownerQty)
         if up and up > 0 and avail > 0 then
           rows[#rows + 1] = { unitPrice = up, quantity = avail }
         end
@@ -3750,6 +3884,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
       count = units,
       expectedTotal = expectedTotal,
       remainingDeals = max(0, totalDealUnits - units),
+      plannedAt = flipNowSeconds(),
     }
     buyer.phase = "planned_commodity"
     local estProfit = cur.vendorSell * units - expectedTotal
@@ -3759,22 +3894,31 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     return
   end
 
-  if event == "COMMODITY_PRICE_UPDATED" and buyer.phase == "quoting_commodity" and buyer.commodityPlan and cur then
+  if event == "COMMODITY_PRICE_UPDATED"
+    and (buyer.phase == "quoting_commodity" or buyer.phase == "ready_commodity")
+    and buyer.commodityPlan and cur then
     local plan = buyer.commodityPlan
+    local unitP = tonumber(arg1)
     local totalPrice = tonumber(arg2)
     if not totalPrice or totalPrice <= 0 then
-      local unitP = tonumber(arg1)
       if unitP and unitP > 0 then totalPrice = unitP * plan.count end
     end
-    if not totalPrice or totalPrice <= 0 or totalPrice > plan.expectedTotal or totalPrice >= cur.vendorSell * plan.count then
+    if not isCommodityQuoteAcceptable(plan, cur, unitP, totalPrice) then
       cancelPendingCommodityQuote()
+      buyer.commodityPlan = nil
+      buyer.armed = nil
       buyer.stats.skipped = buyer.stats.skipped + 1
-      buyer.lastMessage = format("%s 锁价总价已高于预期/卖店价（%s），自动放弃",
+      buyer.lastMessage = format("%s 锁价单价/总价已高于预期或卖店价（%s），自动放弃",
         cur.name, totalPrice and formatFlipCopper(totalPrice) or "无效")
       advanceToNextItem(true)
       return
     end
+    if buyer.phase == "ready_commodity" and plan.quotedTotal ~= totalPrice then
+      buyer.armed = nil
+    end
+    plan.quotedUnit = unitP
     plan.quotedTotal = totalPrice
+    plan.quotedAt = flipNowSeconds()
     buyer.phase = "ready_commodity"
     local estProfit = cur.vendorSell * plan.count - totalPrice
     buyer.lastMessage = format("[%d/%d] %s 已锁价 ×%d（实付 %s，赚 %s），再次点击/上滚付款",
@@ -3783,8 +3927,11 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
     return
   end
 
-  if event == "COMMODITY_PRICE_UNAVAILABLE" and buyer.phase == "quoting_commodity" and cur then
+  if event == "COMMODITY_PRICE_UNAVAILABLE"
+    and (buyer.phase == "quoting_commodity" or buyer.phase == "ready_commodity") and cur then
     cancelPendingCommodityQuote()
+    buyer.commodityPlan = nil
+    buyer.armed = nil
     buyer.stats.skipped = buyer.stats.skipped + 1
     buyer.lastMessage = format("%s 堆叠库存已被人买光，切换下一件", cur.name)
     advanceToNextItem(true)

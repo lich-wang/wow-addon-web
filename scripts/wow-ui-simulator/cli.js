@@ -2952,6 +2952,215 @@ async function main() {
       && edgeParts[9] === '7' && edgeParts[10] === '332'
       && edgeParts[11] === 'true' && edgeParts[12] === '7' && edgeParts[13] === '299']);
 
+    // 场景 L：连续扫货高价拦截回归（防买到超过卖店价的商品）
+    btRt.execLua(`
+      local moneyL = 500000
+      function GetMoney() return moneyL end
+      local clockL = 1000
+      function GetTime() return clockL end
+      local callsL = {}
+      local searchItemsL = {}
+      local commRowsL = {}
+      _G.C_TooltipInfo = {
+        GetItemByID = function(id)
+          if id == 97001 or id == 97002 or id == 97003 or id == 97008 then
+            return { lines = { { type = 0, leftText = "装备" }, { type = 11, price = 333 } } }
+          elseif id == 97004 or id == 97005 or id == 97006 or id == 97007 then
+            return { lines = { { type = 0, leftText = "材料" }, { type = 11, price = 100 } } }
+          elseif id == 20744 then
+            return { lines = { { type = 0, leftText = "初级巫师之油" }, { type = 11, price = 500 } } }
+          end
+          return nil
+        end,
+        GetHyperlink = function(link)
+          if type(link) == "string" and link:find("97003:1", 1, true) then
+            return { lines = { { type = 0, leftText = "低卖价变体" }, { type = 11, price = 200 } } }
+          end
+          return nil
+        end,
+      }
+      _G.C_AuctionHouse = {
+        MakeItemKey = function(id) return { itemID = id } end,
+        SendSearchQuery = function(key)
+          callsL[#callsL + 1] = "search:" .. tostring(key.itemID)
+          return true
+        end,
+        GetNumItemSearchResults = function(key)
+          local list = searchItemsL[key.itemID]
+          return type(list) == "table" and #list or 0
+        end,
+        GetItemSearchResultInfo = function(key, i)
+          local list = searchItemsL[key.itemID]
+          return type(list) == "table" and list[i] or nil
+        end,
+        PlaceBid = function(aid, copper)
+          callsL[#callsL + 1] = "bid:" .. tostring(aid) .. ":" .. tostring(copper)
+          return true
+        end,
+        GetNumCommoditySearchResults = function(id)
+          local list = commRowsL[id]
+          return type(list) == "table" and #list or 0
+        end,
+        GetCommoditySearchResultInfo = function(id, i)
+          local list = commRowsL[id]
+          return type(list) == "table" and list[i] or nil
+        end,
+        StartCommoditiesPurchase = function(id, count)
+          callsL[#callsL + 1] = "start:" .. tostring(id) .. ":" .. tostring(count)
+          return true
+        end,
+        ConfirmCommoditiesPurchase = function(id, count)
+          callsL[#callsL + 1] = "confirm:" .. tostring(id) .. ":" .. tostring(count)
+          return true
+        end,
+        CancelCommoditiesPurchase = function()
+          callsL[#callsL + 1] = "cancel"
+        end,
+      }
+
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_SHOW")
+
+      -- 1) 非堆叠物品 quantity=5 但 buyoutAmount=500 >= vendorSell(333)，不得误按 500 < 333*5 下单
+      searchItemsL[97001] = {
+        { auctionID = 9001, buyoutAmount = 500, quantity = 5, containsOwnerItem = false },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97001, name = "虚高分组包", vendorSell = 333, vendorSellSource = "tooltip", profit = 33 },
+      })
+      __WOW_DISPATCH_EVENT__("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 97001 })
+      local st1 = WoWF_CraftArb.FlipBuyer.Status()
+
+      -- 2) 非堆叠物品 quantity=5 且 buyoutAmount=300 < vendorSell(333)，每次仅按 1 件计费与计利
+      searchItemsL[97002] = {
+        { auctionID = 9002, buyoutAmount = 300, quantity = 5, containsOwnerItem = false },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97002, name = "分组低价包", vendorSell = 333, vendorSellSource = "tooltip", profit = 33 },
+      })
+      __WOW_DISPATCH_EVENT__("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 97002 })
+      WoWF_CraftArb.FlipBuyer.Step()
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED", 9002)
+      local st2 = WoWF_CraftArb.FlipBuyer.Status()
+      WoWF_CraftArb.FlipBuyer.Stop()
+
+      -- 3) itemLink 提示卖价低于基础 itemID 卖价（200 < 333），一口价 250 必须拦截
+      searchItemsL[97003] = {
+        { auctionID = 9003, buyoutAmount = 250, quantity = 1, containsOwnerItem = false, itemLink = "|Hitem:97003:1|h[低卖价变体]|h" },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97003, name = "变体装备", vendorSell = 333, vendorSellSource = "tooltip", profit = 83 },
+      })
+      __WOW_DISPATCH_EVENT__("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 97003 })
+      local st3 = WoWF_CraftArb.FlipBuyer.Status()
+
+      -- 4) 堆叠锁价总价虽低于预期但 updatedUnitPrice >= vendorSell（150 >= 100），必须放弃并取消
+      commRowsL[97004] = {
+        { unitPrice = 80, quantity = 10, numOwnerItems = 0 },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97004, name = "混档材料", vendorSell = 100, vendorSellSource = "tooltip", profit = 20 },
+      })
+      __WOW_DISPATCH_EVENT__("COMMODITY_SEARCH_RESULTS_UPDATED", 97004)
+      WoWF_CraftArb.FlipBuyer.Step()
+      __WOW_DISPATCH_EVENT__("COMMODITY_PRICE_UPDATED", 150, 650)
+      local st4 = WoWF_CraftArb.FlipBuyer.Status()
+
+      -- 5) ready_commodity 期间再次收到涨价 COMMODITY_PRICE_UPDATED，必须立即取消且后续 Step 不付款
+      commRowsL[97005] = {
+        { unitPrice = 80, quantity = 4, numOwnerItems = 0 },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97005, name = "二次涨价材料", vendorSell = 100, vendorSellSource = "tooltip", profit = 20 },
+      })
+      __WOW_DISPATCH_EVENT__("COMMODITY_SEARCH_RESULTS_UPDATED", 97005)
+      WoWF_CraftArb.FlipBuyer.Step()
+      __WOW_DISPATCH_EVENT__("COMMODITY_PRICE_UPDATED", 80, 320)
+      __WOW_DISPATCH_EVENT__("COMMODITY_PRICE_UPDATED", 120, 480)
+      local r5After = WoWF_CraftArb.FlipBuyer.Step()
+      local st5 = WoWF_CraftArb.FlipBuyer.Status()
+
+      -- 6) containsOwnerItem=true 且 numOwnerItems=nil 时全部视作自己挂单
+      commRowsL[97006] = {
+        { unitPrice = 50, quantity = 10, numOwnerItems = nil, containsOwnerItem = true },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97006, name = "自己堆叠", vendorSell = 100, vendorSellSource = "tooltip", profit = 50 },
+      })
+      __WOW_DISPATCH_EVENT__("COMMODITY_SEARCH_RESULTS_UPDATED", 97006)
+      local st6 = WoWF_CraftArb.FlipBuyer.Status()
+
+      -- 7) 无限服 reported 修正价（20744 => 100 铜）不得被较高 Tooltip（500 铜）抬高，200 铜挂单必须被跳过
+      commRowsL[20744] = {
+        { unitPrice = 200, quantity = 3, numOwnerItems = 0 },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 20744, name = "初级巫师之油", vendorSell = 100, vendorSellSource = "reported", profit = 20 },
+      })
+      __WOW_DISPATCH_EVENT__("COMMODITY_SEARCH_RESULTS_UPDATED", 20744)
+      local st7 = WoWF_CraftArb.FlipBuyer.Status()
+
+      -- 8) 锁价超过 FLIP_QUOTE_TTL（推进 20 秒）再点 Step() 必须取消旧锁价并重新检索，不得 Confirm
+      commRowsL[97007] = {
+        { unitPrice = 80, quantity = 3, numOwnerItems = 0 },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97007, name = "过期锁价材料", vendorSell = 100, vendorSellSource = "tooltip", profit = 20 },
+      })
+      __WOW_DISPATCH_EVENT__("COMMODITY_SEARCH_RESULTS_UPDATED", 97007)
+      WoWF_CraftArb.FlipBuyer.Step()
+      __WOW_DISPATCH_EVENT__("COMMODITY_PRICE_UPDATED", 80, 240)
+      clockL = clockL + 20
+      local r8 = WoWF_CraftArb.FlipBuyer.Step()
+      local st8 = WoWF_CraftArb.FlipBuyer.Status()
+      WoWF_CraftArb.FlipBuyer.Stop()
+
+      -- 9) info.itemKey.itemID 与当前队列物品不匹配时必须忽略，不得误买
+      searchItemsL[97008] = {
+        { auctionID = 9008, buyoutAmount = 100, quantity = 1, containsOwnerItem = false, itemKey = { itemID = 99999 } },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97008, name = "跨物品防串台", vendorSell = 333, vendorSellSource = "tooltip", profit = 233 },
+      })
+      __WOW_DISPATCH_EVENT__("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 97008 })
+      local st9 = WoWF_CraftArb.FlipBuyer.Status()
+
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_CLOSED")
+      local callsJoined = table.concat(callsL, ",")
+      __WOW_BRIDGE__:emitString(table.concat({
+        tostring(st1.phase), tostring(st1.stats.skipped),
+        tostring(st2.stats.boughtCount), tostring(st2.stats.boughtUnits), tostring(st2.stats.estProfit),
+        tostring(st3.phase), tostring(st3.stats.skipped),
+        tostring(st4.phase), tostring(st4.stats.skipped),
+        tostring(r5After), tostring(st5.phase),
+        tostring(st6.phase), tostring(st6.stats.skipped),
+        tostring(st7.phase), tostring(st7.stats.skipped),
+        tostring(r8), tostring(st8.phase),
+        tostring(st9.phase), tostring(st9.stats.skipped),
+        callsJoined,
+      }, "|"))
+    `, 'BtFlipOverpricedGuardVerify.lua');
+    const [ovOut] = btRt.takeEmittedStrings();
+    const ovParts = String(ovOut || '').split('|');
+    const ovCalls = String(ovParts[19] || '');
+    btChecks.push(['高价拦截-非堆叠quantity>1且buyout>=vendorSell不被误判购买',
+      ovParts[0] === 'done' && ovParts[1] === '1' && !ovCalls.includes('bid:9001')]);
+    btChecks.push(['高价拦截-非堆叠quantity>1低价挂单仅按1件下单与计利',
+      ovParts[2] === '1' && ovParts[3] === '1' && ovParts[4] === '33' && ovCalls.includes('bid:9002:300')]);
+    btChecks.push(['高价拦截-itemLink变体卖价低于基础itemID卖价时拦截超价挂单',
+      ovParts[5] === 'done' && ovParts[6] === '1' && !ovCalls.includes('bid:9003')]);
+    btChecks.push(['高价拦截-堆叠锁价updatedUnitPrice>=vendorSell即使总价较低也取消',
+      ovParts[7] === 'done' && ovParts[8] === '1' && !ovCalls.includes('confirm:97004')]);
+    btChecks.push(['高价拦截-ready_commodity期间再次涨价立即取消且不确认付款',
+      ovParts[9] === 'false' && ovParts[10] === 'done' && !ovCalls.includes('confirm:97005')]);
+    btChecks.push(['高价拦截-堆叠containsOwnerItem无numOwnerItems时全部跳过',
+      ovParts[11] === 'done' && ovParts[12] === '1' && !ovCalls.includes('start:97006')]);
+    btChecks.push(['高价拦截-无限服reported修正价不被较高Tooltip抬高而买入高价油',
+      ovParts[13] === 'done' && ovParts[14] === '1' && !ovCalls.includes('start:20744')]);
+    btChecks.push(['高价拦截-堆叠锁价超时TTL后强制取消并重新检索不直接Confirm',
+      ovParts[15] === 'searching' && ovParts[16] === 'searching' && !ovCalls.includes('confirm:97007')]);
+    btChecks.push(['高价拦截-跨物品itemKey不匹配挂单被忽略不下单',
+      ovParts[17] === 'done' && ovParts[18] === '1' && !ovCalls.includes('bid:9008')]);
+
     const btFailed = btChecks.filter(([, ok]) => !ok);
     const btSnapFinal = btRt.getSnapshot();
     if (btSnapFinal.luaErrors.length > 0 || btFailed.length > 0) {
