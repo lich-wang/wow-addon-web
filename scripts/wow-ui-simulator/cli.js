@@ -2970,7 +2970,7 @@ async function main() {
       local commRowsL = {}
       _G.C_TooltipInfo = {
         GetItemByID = function(id)
-          if id == 97001 or id == 97002 or id == 97003 or id == 97008 or id == 97009 or id == 97010 then
+          if id == 97001 or id == 97002 or id == 97003 or id == 97008 or id == 97009 or id == 97010 or id == 97011 then
             return { lines = { { type = 0, leftText = "装备" }, { type = 11, price = 333 } } }
           elseif id == 97004 or id == 97005 or id == 97006 or id == 97007 then
             return { lines = { { type = 0, leftText = "材料" }, { type = 11, price = 100 } } }
@@ -3002,6 +3002,7 @@ async function main() {
         end,
         PlaceBid = function(aid, copper)
           callsL[#callsL + 1] = "bid:" .. tostring(aid) .. ":" .. tostring(copper)
+          if aid == 9013 then return false end
           return true
         end,
         GetNumCommoditySearchResults = function(id)
@@ -3165,6 +3166,23 @@ async function main() {
       local st11 = WoWF_CraftArb.FlipBuyer.Status()
       WoWF_CraftArb.FlipBuyer.Stop()
 
+      -- 12) 混合列表中先买 groupQty=3，随后最后一笔单挂 PlaceBid 立即失败，仍应复查同价分组
+      searchItemsL[97011] = {
+        { auctionID = 9012, buyoutAmount = 250, quantity = 3, containsOwnerItem = false },
+        { auctionID = 9013, buyoutAmount = 300, quantity = 1, containsOwnerItem = false },
+      }
+      WoWF_CraftArb.FlipBuyer.Start({
+        { kind = "flip", outputID = 97011, name = "尾单失败混合分组", vendorSell = 333, vendorSellSource = "tooltip", profit = 83 },
+      })
+      __WOW_DISPATCH_EVENT__("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 97011 })
+      WoWF_CraftArb.FlipBuyer.Step()
+      __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_PURCHASE_COMPLETED", 9012)
+      local c12Before = #callsL
+      local r12 = WoWF_CraftArb.FlipBuyer.Step()
+      local c12Win = sliceCalls(c12Before, #callsL)
+      local st12 = WoWF_CraftArb.FlipBuyer.Status()
+      WoWF_CraftArb.FlipBuyer.Stop()
+
       __WOW_DISPATCH_EVENT__("AUCTION_HOUSE_CLOSED")
       local callsJoined = table.concat(callsL, ",")
       __WOW_BRIDGE__:emitString(table.concat({
@@ -3181,6 +3199,7 @@ async function main() {
         c4Win, c5Win, c8Win,
         tostring(st10.phase), tostring(st10.stats.skipped),
         c11Win, tostring(st11.phase),
+        tostring(r12), c12Win, tostring(st12.phase),
       }, "|"))
     `, 'BtFlipOverpricedGuardVerify.lua');
     const [ovOut] = btRt.takeEmittedStrings();
@@ -3190,6 +3209,7 @@ async function main() {
     const c5Win = String(ovParts[21] || '');
     const c8Win = String(ovParts[22] || '');
     const c11Win = String(ovParts[25] || '');
+    const c12Win = String(ovParts[28] || '');
     btChecks.push(['高价拦截-非堆叠quantity>1且buyout>=vendorSell不被误判购买',
       ovParts[0] === 'done' && ovParts[1] === '1' && !ovCalls.includes('bid:9001')]);
     btChecks.push(['高价拦截-非堆叠quantity>1低价挂单仅按1件下单与计利',
@@ -3212,6 +3232,8 @@ async function main() {
       ovParts[23] === 'done' && ovParts[24] === '1' && !ovCalls.includes('bid:9009')]);
     btChecks.push(['高价拦截-混合列表groupQty>1后买单挂单仍保留同价分组复查',
       c11Win === 'search:97010' && ovParts[26] === 'searching']);
+    btChecks.push(['高价拦截-混合列表尾单PlaceBid失败耗尽时仍保留同价分组复查',
+      ovParts[27] === 'false' && c12Win === 'bid:9013:300,search:97011' && ovParts[29] === 'searching']);
 
     const btFailed = btChecks.filter(([, ok]) => !ok);
     const btSnapFinal = btRt.getSnapshot();

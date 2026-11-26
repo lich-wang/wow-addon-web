@@ -3043,6 +3043,17 @@ end
 
 local searchCurrentItem
 
+local function tryResearchSameItemGroup(cur, reasonMsg)
+  if buyer.itemGroupNeedsResearch and (buyer.itemGroupResearches or 0) < MAX_ITEM_GROUP_RESEARCHES then
+    buyer.itemGroupNeedsResearch = false
+    buyer.itemGroupResearches = (buyer.itemGroupResearches or 0) + 1
+    buyer.lastMessage = reasonMsg or format("复查 %s 同价剩余挂单...", cur and cur.name or "当前物品")
+    searchCurrentItem()
+    return true
+  end
+  return false
+end
+
 local function canAuthorizeFlipPurchase(cur)
   if type(cur) ~= "table" then return false end
   return cur.vendorSellSource == "sold" or cur.vendorSellSource == "tooltip"
@@ -3453,6 +3464,9 @@ function FlipBuyer.Step()
         buyerNotify()
         return FlipBuyer.Step()
       end
+      if tryResearchSameItemGroup(cur, format("%s 余下挂单不再划算，复查同价分组...", cur.name)) then
+        return "searching"
+      end
       buyer.stats.skipped = buyer.stats.skipped + 1
       buyer.lastMessage = format("%s 实时一口价已不再低于商人收购价，跳过", cur.name)
       advanceToNextItem(true)
@@ -3477,7 +3491,7 @@ function FlipBuyer.Step()
       if #buyer.liveAuctions > 0 then
         buyer.lastMessage = format("%s 该挂单已被买走，尝试下一口低价...", cur.name)
         buyerNotify()
-      else
+      elseif not tryResearchSameItemGroup(cur, format("%s 该挂单下单失败，复查同价剩余挂单...", cur.name)) then
         buyer.stats.skipped = buyer.stats.skipped + 1
         buyer.lastMessage = format("%s 下单失败（可能已售出），切换下一件", cur.name)
         advanceToNextItem(true)
@@ -3518,7 +3532,7 @@ function FlipBuyer.Step()
           buyer.phase = "ready_item"
           buyer.lastMessage = format("%s 购买超时未回报，可点击继续或跳过", cur.name)
           buyerNotify()
-        else
+        elseif not tryResearchSameItemGroup(cur, format("%s 购买超时，复查同价剩余挂单...", cur.name)) then
           buyer.stats.skipped = buyer.stats.skipped + 1
           buyer.lastMessage = format("%s 购买确认超时，自动切换下一件", cur.name)
           advanceToNextItem(true)
@@ -3713,11 +3727,7 @@ local function finishSuccessfulPurchase()
       buyerNotify()
       return
     end
-    if buyer.itemGroupNeedsResearch and (buyer.itemGroupResearches or 0) < MAX_ITEM_GROUP_RESEARCHES then
-      buyer.itemGroupNeedsResearch = false
-      buyer.itemGroupResearches = (buyer.itemGroupResearches or 0) + 1
-      buyer.lastMessage = format("已买 %s，复查同价剩余挂单...", cur.name)
-      searchCurrentItem()
+    if tryResearchSameItemGroup(cur, format("已买 %s，复查同价剩余挂单...", cur.name)) then
       return
     end
     buyer.lastMessage = format("已扫完 %s，切下一件...", cur.name)
@@ -3978,7 +3988,7 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
           buyer.phase = "ready_item"
           buyer.lastMessage = format("%s 该挂单购买失败，已切到下一口挂单（可继续买入）", cur and cur.name or "")
           buyerNotify()
-        else
+        elseif not tryResearchSameItemGroup(cur, format("%s 该挂单购买失败，复查同价剩余挂单...", cur and cur.name or "")) then
           buyer.stats.skipped = buyer.stats.skipped + 1
           buyer.lastMessage = format("%s 购买失败（可能已被买走或金币不足），切下一件", cur and cur.name or "")
           advanceToNextItem(true)
