@@ -3016,6 +3016,7 @@ local buyer = {
   searchRetried = false,
   boughtAuctionIDs = {},
   itemGroupResearches = 0,
+  itemGroupNeedsResearch = false,
   stats = { boughtCount = 0, boughtUnits = 0, spent = 0, estProfit = 0, skipped = 0 },
   lastMessage = "待命中：在拍卖行打开本页后点击「开始连续扫货」",
   onChanged = nil,
@@ -3121,6 +3122,7 @@ local function advanceToNextItem(immediate)
   buyer.searchSent = false
   buyer.boughtAuctionIDs = {}
   buyer.itemGroupResearches = 0
+  buyer.itemGroupNeedsResearch = false
   buyer.index = (buyer.index or 0) + 1
   if buyer.index > #buyer.queue then
     buyer.active = false
@@ -3179,6 +3181,7 @@ searchCurrentItem = function()
   buyer.searchItemID = cur.itemID
   buyer.searchSent = true
   buyer.searchRetried = false
+  buyer.itemGroupNeedsResearch = false
   buyer.searchToken = buyer.searchToken + 1
   buyer.phase = "searching"
   buyer.lastMessage = format("[%d/%d] 正在实时检索 %s（商人收 %s/件）...",
@@ -3322,6 +3325,7 @@ function FlipBuyer.Start(flipRows)
   buyer.searchSent = false
   buyer.boughtAuctionIDs = {}
   buyer.itemGroupResearches = 0
+  buyer.itemGroupNeedsResearch = false
   searchCurrentItem()
   return true
 end
@@ -3346,6 +3350,7 @@ function FlipBuyer.Stop(reason)
   buyer.searchSent = false
   buyer.boughtAuctionIDs = {}
   buyer.itemGroupResearches = 0
+  buyer.itemGroupNeedsResearch = false
   buyer.lastMessage = reason or format(
     "已停止扫货（本轮买入 %d 笔 / %d 件，花费 %s，预计净赚 %s）",
     buyer.stats.boughtCount, buyer.stats.boughtUnits,
@@ -3690,6 +3695,9 @@ local function finishSuccessfulPurchase()
       buyer.boughtAuctionIDs = buyer.boughtAuctionIDs or {}
       buyer.boughtAuctionIDs[buying.auctionID] = true
     end
+    if (buying.groupQty or 1) > 1 then
+      buyer.itemGroupNeedsResearch = true
+    end
     if buyer.liveAuctions and buyer.liveAuctions[1] and buyer.liveAuctions[1].auctionID == buying.auctionID then
       table.remove(buyer.liveAuctions, 1)
     elseif buyer.liveAuctions and #buyer.liveAuctions > 0 then
@@ -3705,7 +3713,8 @@ local function finishSuccessfulPurchase()
       buyerNotify()
       return
     end
-    if (buying.groupQty or 1) > 1 and (buyer.itemGroupResearches or 0) < MAX_ITEM_GROUP_RESEARCHES then
+    if buyer.itemGroupNeedsResearch and (buyer.itemGroupResearches or 0) < MAX_ITEM_GROUP_RESEARCHES then
+      buyer.itemGroupNeedsResearch = false
       buyer.itemGroupResearches = (buyer.itemGroupResearches or 0) + 1
       buyer.lastMessage = format("已买 %s，复查同价剩余挂单...", cur.name)
       searchCurrentItem()
@@ -3780,12 +3789,10 @@ function FlipBuyer.OnEvent(event, arg1, arg2)
           local linkBlocked = false
           if type(info.itemLink) == "string" and info.itemLink ~= "" then
             local linkPrice, linkRead, linkUnsellable, linkCharges = inspectTooltipLinkSellPrice(info.itemLink)
-            if linkRead then
-              if linkUnsellable or linkCharges or not linkPrice or linkPrice <= 0 then
-                linkBlocked = true
-              elseif linkPrice < effectiveSell then
-                effectiveSell = linkPrice
-              end
+            if not linkRead or linkUnsellable or linkCharges or not linkPrice or linkPrice <= 0 then
+              linkBlocked = true
+            elseif linkPrice < effectiveSell then
+              effectiveSell = linkPrice
             end
           end
           if not linkBlocked then
