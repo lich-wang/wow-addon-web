@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { AddonInfo } from '../types/addon';
+import {
+  buildZipBatch,
+  CURRENT_AGENT_BODY_LIMIT_BYTES,
+  DEFAULT_ZIP_BATCH_MAX_BYTES,
+  LEGACY_AGENT_BODY_LIMIT_BYTES,
+  planZipBatches,
+} from './zipSplitter';
 
 const AGENT_BASE = 'http://127.0.0.1:24642';
 
@@ -14,8 +21,43 @@ export interface WowInstallation {
 export interface AgentStatus {
   status: 'ok';
   version: string;
+  mode?: string;
+  maxBodyBytes?: number;
   platform: string;
   installations: WowInstallation[];
+}
+
+let lastAgentMeta: { version: string; mode?: string; maxBodyBytes?: number } | null = null;
+
+function isVersionAtLeast(version: string, minParts: [number, number, number]): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version.trim());
+  if (!match) return false;
+  const parts: [number, number, number] = [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  ];
+  for (let i = 0; i < 3; i++) {
+    if (parts[i] > minParts[i]) return true;
+    if (parts[i] < minParts[i]) return false;
+  }
+  return true;
+}
+
+function resolveAgentBodyLimitBytes(
+  meta: { version?: string; mode?: string; maxBodyBytes?: number } | null
+): number {
+  if (
+    typeof meta?.maxBodyBytes === 'number' &&
+    Number.isFinite(meta.maxBodyBytes) &&
+    meta.maxBodyBytes > 0
+  ) {
+    return meta.maxBodyBytes;
+  }
+  if (meta?.version && isVersionAtLeast(meta.version, [1, 0, 9])) {
+    return CURRENT_AGENT_BODY_LIMIT_BYTES;
+  }
+  return LEGACY_AGENT_BODY_LIMIT_BYTES;
 }
 
 export interface ClientReleaseInfo {
@@ -155,6 +197,14 @@ export async function checkAgentStatus(): Promise<AgentStatus | null> {
     } catch {
       // Agent is not active or blocked by browser
     }
+  }
+
+  if (status) {
+    lastAgentMeta = {
+      version: status.version,
+      mode: status.mode,
+      maxBodyBytes: status.maxBodyBytes,
+    };
   }
 
   // Restore and verify recently used custom path if available
@@ -305,17 +355,88 @@ export async function agentDeleteAddon(addonsPath: string, folderName: string): 
   }
 }
 
+export interface AgentInstallZipOptions {
+  onBatchProgress?: (currentBatch: number, totalBatches: number, batchBytes: number) => void;
+  maxBatchBytes?: number;
+  maxSingleRequestBytes?: number;
+}
+
+async function probeAgentPingMeta(
+  timeoutMs = 1200
+): Promise<{ version?: string; mode?: string; maxBodyBytes?: number } | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${AGENT_BASE}/api/ping`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Partial<AgentStatus>;
+    if (data?.version) {
+      lastAgentMeta = {
+        version: data.version,
+        mode: data.mode,
+        maxBodyBytes: data.maxBodyBytes,
+      };
+    }
+    return data;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const inProcessInstallLocks = new Map<string, Promise<void>>();
+
+function normalizeInstallLockPath(addonsPath: string): string {
+  return addonsPath.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+async function withInProcessLock<T>(lockKey: string, task: () => Promise<T>): Promise<T> {
+  const previous = inProcessInstallLocks.get(lockKey) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(() => current);
+  inProcessInstallLocks.set(lockKey, chained);
+
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (inProcessInstallLocks.get(lockKey) === chained) {
+      inProcessInstallLocks.delete(lockKey);
+    }
+  }
+}
+
 /**
- * Install addon ZIP directly via agent or Tauri IPC
- *
- * 大包（OpenMap 约 198 MB / 3593 个文件）必须走本地 bridge 的 HTTP 直传：
- * Tauri 的 `invoke` 会把 `Vec<u8>` 序列化成「每个字节一个数字」的 JSON 数组，
- * 198 MB 会膨胀成 2 亿多个数字（>2 GB 内存 + 数百 MB JSON），WebView 直接卡死。
- * 因此这里优先 POST 二进制到 bridge，只有 bridge 不可用且包很小时才回退到 invoke。
+ * 针对目标 AddOns 目录加排他锁，确保分批安装的多轮请求在多标签页/多窗口间也不交错。
+ * 优先使用浏览器原生的 Web Locks API（异常或页面关闭时自动释放），不可用时回退进程内串行锁。
  */
-export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promise<number> {
+async function withAddonsInstallLock<T>(addonsPath: string, task: () => Promise<T>): Promise<T> {
+  const lockKey = `wow-addon-install:${normalizeInstallLockPath(addonsPath)}`;
+  if (typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function') {
+    return navigator.locks.request(lockKey, { mode: 'exclusive' }, () => task());
+  }
+  return withInProcessLock(lockKey, task);
+}
+
+async function isAgentBridgeReachable(timeoutMs = 1200): Promise<boolean> {
+  return (await probeAgentPingMeta(timeoutMs)) !== null;
+}
+
+async function postZipToAgent(
+  addonsPath: string,
+  zipBlob: Blob,
+  isAsciiOnly: boolean
+): Promise<number> {
   const encodedPath = encodeURIComponent(addonsPath);
-  const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
   const headers: Record<string, string> = {
     'Content-Type': 'application/zip',
   };
@@ -351,7 +472,18 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
         throw new Error(String(invokeError) || '安装插件失败');
       }
     }
-    throw error instanceof Error ? error : new Error(String(error) || '本地助手安装插件失败');
+
+    // 区分“本地助手根本没连上”与“传到一半被对端重置（例如旧版助手超限）”
+    const reachable = await isAgentBridgeReachable();
+    if (!reachable) {
+      throw new Error(
+        '无法连接到本地助手 (127.0.0.1:24642)，请确认本地助手或桌面客户端仍在运行后重试。'
+      );
+    }
+    const rawMsg = error instanceof Error ? error.message : String(error || '');
+    throw new Error(
+      `上传安装包到本地助手时连接中断（可能是安装包超过旧版助手单次上限或被安全软件拦截），请重试或升级至最新版桌面客户端${rawMsg ? `：${rawMsg}` : ''}`
+    );
   }
 
   if (!res.ok) {
@@ -373,6 +505,65 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
 
   const data = await res.json();
   return data.fileCount || 0;
+}
+
+/**
+ * Install addon ZIP directly via agent or Tauri IPC.
+ *
+ * 超过 96 MiB 的大包（如 OpenMap v0.8.14 已达 227.4 MiB）会自动零重压缩拆分为多个小包分批上传：
+ * - 兼容所有历史版本本地助手（包括仅支持 200 MiB 上限的旧版）；
+ * - 避免浏览器与 Rust 进程同时持有超大型请求体缓冲；
+ * - 所有 *.toc 文件放在最后一批，确保中途失败不提前改写本地版本号。
+ */
+export async function agentInstallZip(
+  addonsPath: string,
+  zipData: Blob | ArrayBuffer | Uint8Array,
+  options: AgentInstallZipOptions = {}
+): Promise<number> {
+  return withAddonsInstallLock(addonsPath, async () => {
+    const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
+    const totalSize = zipData instanceof Blob ? zipData.size : zipData.byteLength;
+    const maxBatchBytes = options.maxBatchBytes ?? DEFAULT_ZIP_BATCH_MAX_BYTES;
+    const knownLimit =
+      options.maxSingleRequestBytes ??
+      (lastAgentMeta ? resolveAgentBodyLimitBytes(lastAgentMeta) : undefined);
+    const shouldProbeLimit =
+      knownLimit === undefined &&
+      totalSize > Math.min(maxBatchBytes, LEGACY_AGENT_BODY_LIMIT_BYTES);
+    const agentMeta = shouldProbeLimit ? await probeAgentPingMeta() : lastAgentMeta;
+    const maxSingleRequestBytes = knownLimit ?? resolveAgentBodyLimitBytes(agentMeta);
+
+    if (totalSize > maxBatchBytes || totalSize > maxSingleRequestBytes) {
+      const zipBytes =
+        zipData instanceof Uint8Array
+          ? zipData
+          : zipData instanceof ArrayBuffer
+          ? new Uint8Array(zipData)
+          : new Uint8Array(await zipData.arrayBuffer());
+
+      const plan = planZipBatches(zipBytes, maxBatchBytes, maxSingleRequestBytes);
+      if (plan && plan.batches.length > 1) {
+        let totalFileCount = 0;
+        for (let i = 0; i < plan.batches.length; i++) {
+          const batch = plan.batches[i];
+          options.onBatchProgress?.(i + 1, plan.batches.length, batch.estimatedBytes);
+          const batchBytes = buildZipBatch(zipBytes, batch);
+          const batchBlob = new Blob([batchBytes], { type: 'application/zip' });
+          totalFileCount += await postZipToAgent(addonsPath, batchBlob, isAsciiOnly);
+        }
+        return totalFileCount;
+      }
+    }
+
+    const zipBlob =
+      zipData instanceof Blob
+        ? zipData
+        : zipData instanceof ArrayBuffer
+        ? new Blob([zipData], { type: 'application/zip' })
+        : new Blob([new Uint8Array(zipData)], { type: 'application/zip' });
+
+    return postZipToAgent(addonsPath, zipBlob, isAsciiOnly);
+  });
 }
 
 /**

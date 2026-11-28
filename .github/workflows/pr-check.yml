@@ -184,3 +184,23 @@ jobs:
       - name: Run CDC chunk tests
         run: npm run test:chunks
 
+  zip-splitter:
+    name: ZIP 分批拆分校验
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      # 保障：大包零重压缩分批拆分逐字节一致且 *.toc 置于末批
+      - name: Run ZIP splitter tests
+        run: npm run test:zip
+

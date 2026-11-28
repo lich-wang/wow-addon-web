@@ -357,8 +357,12 @@ export async function fetchCuratedAddonZip(
           buffer = await downloadParts(url, manifest, partsDownloadOptions);
         } catch (partsError) {
           const message = partsError instanceof Error ? partsError.message : String(partsError);
-          if (!/HTTP 404/.test(message)) throw partsError;
-          // CDN 缓存了旧清单时可能指向已替换的分块，绕过缓存重拉一次清单再试
+          if (!/HTTP 404|收到 HTML 页面/.test(message)) throw partsError;
+          // CDN 缓存了旧清单时可能指向已替换的分块（Cloudflare Pages SPA 模式对缺失分块返回 200 HTML），
+          // 绕过缓存重拉一次清单再试
+          progressFloor = DOWNLOAD_PERCENT_START;
+          lastPercent = -1;
+          lastEmit = 0;
           const parsed = new URL(url, baseOrigin);
           parsed.searchParams.set('_t', String(Date.now()));
           const bustUrl = url.startsWith('/') ? `${parsed.pathname}${parsed.search}${parsed.hash}` : parsed.href;

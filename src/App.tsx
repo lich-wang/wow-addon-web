@@ -433,17 +433,29 @@ export function App() {
         const arrayBuffer = await fetchCuratedAddonZip(addon, (p: InstallProgress) => {
           setInstallProgress(p);
         });
-        const blob = new Blob([arrayBuffer], { type: 'application/zip' });
+        const totalMb = (arrayBuffer.byteLength / (1024 * 1024)).toFixed(1);
 
         setInstallProgress({
           status: 'extracting',
           addonName: addon.name,
           percent: 65,
           indeterminate: true,
-          message: `正在解压到本地 AddOns 目录（${(blob.size / (1024 * 1024)).toFixed(1)} MB，大包约需数秒）...`,
+          message: `正在解压到本地 AddOns 目录（${totalMb} MB，大包约需数秒）...`,
         });
 
-        await agentInstallZip(directoryState.agentPath, blob);
+        await agentInstallZip(directoryState.agentPath, arrayBuffer, {
+          onBatchProgress: (current, total, batchBytes) => {
+            const batchMb = (batchBytes / (1024 * 1024)).toFixed(1);
+            const percent = 65 + Math.floor(((current - 1) / total) * 30);
+            setInstallProgress({
+              status: 'writing',
+              addonName: addon.name,
+              percent,
+              indeterminate: false,
+              message: `正在分批解压写入本地 AddOns 目录（第 ${current}/${total} 批，约 ${batchMb} MB）...`,
+            });
+          },
+        });
         // 装完才整理缓存：解压失败时保留，重试不必重下 198 MB。
         // 分块按内容寻址，旧版本的块就是新版本的块，因此这里只按预算淘汰、不整体清空。
         await releaseDownloadCache();
@@ -510,7 +522,6 @@ export function App() {
               message: `[${i + 1}/${outdatedItems.length}] ${p.message}`,
             });
           });
-          const blob = new Blob([arrayBuffer], { type: 'application/zip' });
           setInstallProgress({
             status: 'extracting',
             addonName: curated.name,
@@ -518,7 +529,19 @@ export function App() {
             indeterminate: true,
             message: `[${i + 1}/${outdatedItems.length}] 正在解压写入: ${curated.name}...`,
           });
-          await agentInstallZip(directoryState.agentPath, blob);
+          await agentInstallZip(directoryState.agentPath, arrayBuffer, {
+            onBatchProgress: (current, total, batchBytes) => {
+              const batchMb = (batchBytes / (1024 * 1024)).toFixed(1);
+              const percent = 65 + Math.floor(((current - 1) / total) * 30);
+              setInstallProgress({
+                status: 'writing',
+                addonName: curated.name,
+                percent,
+                indeterminate: false,
+                message: `[${i + 1}/${outdatedItems.length}] 正在分批解压写入: ${curated.name}（第 ${current}/${total} 批，约 ${batchMb} MB）...`,
+              });
+            },
+          });
           await releaseDownloadCache();
         } else if (directoryState.handle) {
           await downloadAndInstallAddon(curated, directoryState.handle, (p) => {
@@ -572,7 +595,19 @@ export function App() {
           message: `本地助手正在解压写入 ${file.name}（${(file.size / (1024 * 1024)).toFixed(1)} MB）...`,
         });
 
-        await agentInstallZip(directoryState.agentPath, file);
+        await agentInstallZip(directoryState.agentPath, file, {
+          onBatchProgress: (current, total, batchBytes) => {
+            const batchMb = (batchBytes / (1024 * 1024)).toFixed(1);
+            const percent = Math.round(((current - 1) / total) * 95);
+            setInstallProgress({
+              status: 'writing',
+              addonName: file.name,
+              percent,
+              indeterminate: false,
+              message: `本地助手正在分批解压写入 ${file.name}（第 ${current}/${total} 批，约 ${batchMb} MB）...`,
+            });
+          },
+        });
 
         setInstallProgress({
           status: 'completed',

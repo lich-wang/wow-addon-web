@@ -9,6 +9,7 @@ fn ping() -> Result<Value, String> {
     Ok(json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
+        "maxBodyBytes": bridge::MAX_INSTALL_BODY_BYTES,
         "platform": std::env::consts::OS,
         "installations": installs
     }))

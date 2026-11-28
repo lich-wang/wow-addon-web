@@ -18,6 +18,7 @@ use sysinfo::System;
 use tower_http::cors::{Any, CorsLayer};
 
 const PORT: u16 = 24642;
+pub const MAX_INSTALL_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 /// 同一时间只允许一个 zip 安装任务解压，避免两个请求交错写同一个 AddOns 目录、
 /// 留下「半个旧版 + 半个新版」的混合目录。请求体仍会先各自缓冲，
@@ -382,6 +383,7 @@ pub fn start_bridge_server() {
                             "status": "ok",
                             "version": env!("CARGO_PKG_VERSION"),
                             "mode": "tauri-embedded",
+                            "maxBodyBytes": MAX_INSTALL_BODY_BYTES,
                             "platform": std::env::consts::OS,
                             "installations": dynamic_installs
                         }))
@@ -549,7 +551,7 @@ pub fn start_bridge_server() {
                     tower::ServiceBuilder::new()
                         // OpenMap Forever 压缩包已 198 MB（208,253,793 B），200 MiB 上限只剩 1.4 MB 余量，
                         // 抬高到 256 MiB 留出增长空间；请求体是先整块缓冲的，这个值即单请求内存上限。
-                        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
+                        .layer(DefaultBodyLimit::max(MAX_INSTALL_BODY_BYTES))
                         .layer(
                             CorsLayer::new()
                                 .allow_origin(Any)
