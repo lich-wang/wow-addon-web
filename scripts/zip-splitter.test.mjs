@@ -196,13 +196,19 @@ test('planZipBatches 对单个超大条目、小包、ZIP64 与损坏输入表�
   zip.file('Big/Big.toc', '## Version: 1.0\n');
   const fullZip = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' });
 
-  // maxBatchBytes 小于单个 Big/big.bin 时，单个超大条目仍应独立成批而不死循环
+  // maxBatchBytes 小于单个 Big/big.bin 时，单个超大条目仍应独立成批而不死循环（只要未超过单请求硬上限）
   // JSZip 默认会生成目录条目 "Big/"，因此共 3 批：Big/ -> Big/big.bin -> Big/Big.toc
-  const oversizedPlan = planZipBatches(fullZip, 4096);
+  const oversizedPlan = planZipBatches(fullZip, 4096, 16384);
   assert.ok(oversizedPlan);
   const allBatchNames = oversizedPlan.batches.map((b) => b.entries.map((e) => e.fileName));
   assert.ok(oversizedPlan.batches.some((b) => b.entries.length === 1 && b.entries[0].fileName === 'Big/big.bin'));
   assert.deepEqual(allBatchNames[allBatchNames.length - 1], ['Big/Big.toc']);
+
+  // 单个条目超出目标助手单请求硬上限时，必须在规划阶段直接抛错拒绝（避免前序批次写入后才失败）
+  assert.throws(
+    () => planZipBatches(fullZip, 4096, 8192),
+    /Big\/big\.bin.*单次请求上限/
+  );
 
   // 无效输入返回 null
   assert.equal(planZipBatches(new Uint8Array(0)), null);
@@ -231,10 +237,17 @@ test('planZipBatches 在最后一个普通批次仅能容纳部分 .toc 时将�
   const toc2 = entries.find((e) => e.fileName === 'Multi/Multi_Camelot.toc');
   assert.ok(dataEntry && toc1 && toc2);
 
-  const dataOnlyBatchBytes = 22 + dataEntry.lfhSize + dataEntry.compressedSize + dataEntry.cdSize;
+  const regularBytes =
+    22 +
+    entries
+      .filter((e) => !e.fileName.toLowerCase().endsWith('.toc'))
+      .reduce((sum, e) => sum + e.lfhSize + e.compressedSize + e.cdSize, 0);
   const toc1Bytes = toc1.lfhSize + toc1.compressedSize + toc1.cdSize;
-  // 上限足够放 data + 第一个 .toc，但放不下 data + 两个 .toc
-  const tightLimit = dataOnlyBatchBytes + toc1Bytes + 10;
+  const toc2Bytes = toc2.lfhSize + toc2.compressedSize + toc2.cdSize;
+  // 上限足够放全部普通条目 + 第一个 .toc，但放不下全部普通条目 + 两个 .toc
+  const tightLimit = regularBytes + toc1Bytes + 10;
+  assert.ok(regularBytes + toc1Bytes <= tightLimit);
+  assert.ok(regularBytes + toc1Bytes + toc2Bytes > tightLimit);
 
   const tightPlan = planZipBatches(fullZip, tightLimit);
   assert.ok(tightPlan);

@@ -9,6 +9,10 @@
 
 /** 默认单批上限：96 MiB，远低于旧版 200 MiB / 新版 256 MiB 限制，也大幅降低峰值拷贝内存 */
 export const DEFAULT_ZIP_BATCH_MAX_BYTES = 96 * 1024 * 1024;
+/** 旧版桌面端/本地助手单次请求硬上限（200 MiB） */
+export const LEGACY_AGENT_BODY_LIMIT_BYTES = 200 * 1024 * 1024;
+/** 新版桌面端/本地助手（v1.0.9+）单次请求硬上限（256 MiB） */
+export const CURRENT_AGENT_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 
 const EOCD_SIGNATURE = 0x06054b50;
 const ZIP64_EOCD_LOCATOR_SIGNATURE = 0x07064b50;
@@ -68,11 +72,14 @@ function findEocdOffset(zipBytes: Uint8Array, view: DataView): number {
  *
  * - 所有 `*.toc` 文件统一放到最后一批（若放不下则单独追加在末尾），确保只有全部数据文件
  *   成功解压写入后才更新本地版本号，避免中途中断留下「新版本号 + 半套旧文件」。
+ * - 若提供了 `maxSingleBatchBytes`（如目标助手单请求硬上限 200 MiB / 256 MiB），
+ *   当单个条目加上 EOCD 已超过该硬上限时在上传任何批次前直接抛错，避免前序批次写入后才失败。
  * - 多分卷、ZIP64、空包或结构异常时返回 `null`，由调用方安全回退单包上传。
  */
 export function planZipBatches(
   zipBytes: Uint8Array,
-  maxBatchBytes: number = DEFAULT_ZIP_BATCH_MAX_BYTES
+  maxBatchBytes: number = DEFAULT_ZIP_BATCH_MAX_BYTES,
+  maxSingleBatchBytes?: number
 ): ZipSplitPlan | null {
   if (!(zipBytes instanceof Uint8Array) || zipBytes.byteLength < EOCD_MIN_SIZE) {
     return null;
@@ -174,6 +181,19 @@ export function planZipBatches(
 
   if (cursor !== cdEnd) {
     return null;
+  }
+
+  if (maxSingleBatchBytes !== undefined && Number.isFinite(maxSingleBatchBytes) && maxSingleBatchBytes > 0) {
+    for (const entry of [...regularEntries, ...tocEntries]) {
+      const singleBatchBytes = EOCD_MIN_SIZE + getEntryBatchBytes(entry);
+      if (singleBatchBytes > maxSingleBatchBytes) {
+        const entryMb = (singleBatchBytes / (1024 * 1024)).toFixed(1);
+        const limitMb = Math.round(maxSingleBatchBytes / (1024 * 1024));
+        throw new Error(
+          `单个文件 "${entry.fileName}"（约 ${entryMb} MB）超过了当前本地助手的单次请求上限（${limitMb} MB），无法分批上传，请升级至最新版桌面客户端后重试。`
+        );
+      }
+    }
   }
 
   const batches: ZipBatchPlan[] = [];

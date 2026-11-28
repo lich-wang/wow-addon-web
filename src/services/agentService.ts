@@ -2,7 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AddonInfo } from '../types/addon';
 import {
   buildZipBatch,
+  CURRENT_AGENT_BODY_LIMIT_BYTES,
   DEFAULT_ZIP_BATCH_MAX_BYTES,
+  LEGACY_AGENT_BODY_LIMIT_BYTES,
   planZipBatches,
 } from './zipSplitter';
 
@@ -19,8 +21,33 @@ export interface WowInstallation {
 export interface AgentStatus {
   status: 'ok';
   version: string;
+  mode?: string;
   platform: string;
   installations: WowInstallation[];
+}
+
+let lastAgentMeta: { version: string; mode?: string } | null = null;
+
+function isVersionAtLeast(version: string, minParts: [number, number, number]): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version.trim());
+  if (!match) return false;
+  const parts: [number, number, number] = [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  ];
+  for (let i = 0; i < 3; i++) {
+    if (parts[i] > minParts[i]) return true;
+    if (parts[i] < minParts[i]) return false;
+  }
+  return true;
+}
+
+function resolveAgentBodyLimitBytes(meta: { version?: string; mode?: string } | null): number {
+  if (meta?.version && isVersionAtLeast(meta.version, [1, 0, 9])) {
+    return CURRENT_AGENT_BODY_LIMIT_BYTES;
+  }
+  return LEGACY_AGENT_BODY_LIMIT_BYTES;
 }
 
 export interface ClientReleaseInfo {
@@ -160,6 +187,10 @@ export async function checkAgentStatus(): Promise<AgentStatus | null> {
     } catch {
       // Agent is not active or blocked by browser
     }
+  }
+
+  if (status) {
+    lastAgentMeta = { version: status.version, mode: status.mode };
   }
 
   // Restore and verify recently used custom path if available
@@ -313,9 +344,10 @@ export async function agentDeleteAddon(addonsPath: string, folderName: string): 
 export interface AgentInstallZipOptions {
   onBatchProgress?: (currentBatch: number, totalBatches: number, batchBytes: number) => void;
   maxBatchBytes?: number;
+  maxSingleRequestBytes?: number;
 }
 
-async function isAgentBridgeReachable(timeoutMs = 1200): Promise<boolean> {
+async function probeAgentPingMeta(timeoutMs = 1200): Promise<{ version?: string; mode?: string } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -324,12 +356,21 @@ async function isAgentBridgeReachable(timeoutMs = 1200): Promise<boolean> {
       headers: { Accept: 'application/json' },
       signal: controller.signal,
     });
-    return res.ok;
+    if (!res.ok) return null;
+    const data = (await res.json()) as Partial<AgentStatus>;
+    if (data?.version) {
+      lastAgentMeta = { version: data.version, mode: data.mode };
+    }
+    return data;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function isAgentBridgeReachable(timeoutMs = 1200): Promise<boolean> {
+  return (await probeAgentPingMeta(timeoutMs)) !== null;
 }
 
 async function postZipToAgent(
@@ -433,7 +474,10 @@ export async function agentInstallZip(
         ? new Uint8Array(zipData)
         : new Uint8Array(await zipData.arrayBuffer());
 
-    const plan = planZipBatches(zipBytes, maxBatchBytes);
+    const agentMeta = lastAgentMeta ?? (await probeAgentPingMeta());
+    const maxSingleRequestBytes =
+      options.maxSingleRequestBytes ?? resolveAgentBodyLimitBytes(agentMeta);
+    const plan = planZipBatches(zipBytes, maxBatchBytes, maxSingleRequestBytes);
     if (plan && plan.batches.length > 1) {
       let totalFileCount = 0;
       for (let i = 0; i < plan.batches.length; i++) {
