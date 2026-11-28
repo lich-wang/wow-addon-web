@@ -206,7 +206,15 @@ export function planZipBatches(
   };
 
   appendEntries(regularEntries, false);
-  appendEntries(tocEntries, true);
+  if (tocEntries.length > 0) {
+    const tocTotalBytes = tocEntries.reduce((sum, entry) => sum + getEntryBatchBytes(entry), 0);
+    const lastBatch = batches[batches.length - 1];
+    const canShareLastBatch =
+      lastBatch !== undefined &&
+      lastBatch.estimatedBytes + tocTotalBytes <= maxBatchBytes &&
+      lastBatch.entries.length + tocEntries.length <= MAX_BATCH_ENTRIES;
+    appendEntries(tocEntries, canShareLastBatch);
+  }
 
   if (batches.length === 0) return null;
   return { batches, totalEntries };

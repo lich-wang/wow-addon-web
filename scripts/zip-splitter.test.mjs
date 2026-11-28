@@ -215,3 +215,32 @@ test('planZipBatches 对单个超大条目、小包、ZIP64 与损坏输入表�
   view.setUint16(zip64Mock.byteLength - 12, 0xffff, true);
   assert.equal(planZipBatches(zip64Mock, 4096), null);
 });
+
+test('planZipBatches 在最后一个普通批次仅能容纳部分 .toc 时将全部 .toc 整体置入独立末批', async () => {
+  const zip = new JSZip();
+  zip.file('Multi/data.bin', makeBytes(3500, 3), { compression: 'STORE' });
+  zip.file('Multi/Multi_Forever.toc', '## Version: 1.0\n' + '#'.repeat(300));
+  zip.file('Multi/Multi_Camelot.toc', '## Version: 1.0\n' + '#'.repeat(300));
+
+  const fullZip = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' });
+  const planAll = planZipBatches(fullZip, 100000);
+  assert.ok(planAll);
+  const entries = planAll.batches[0].entries;
+  const dataEntry = entries.find((e) => e.fileName === 'Multi/data.bin');
+  const toc1 = entries.find((e) => e.fileName === 'Multi/Multi_Forever.toc');
+  const toc2 = entries.find((e) => e.fileName === 'Multi/Multi_Camelot.toc');
+  assert.ok(dataEntry && toc1 && toc2);
+
+  const dataOnlyBatchBytes = 22 + dataEntry.lfhSize + dataEntry.compressedSize + dataEntry.cdSize;
+  const toc1Bytes = toc1.lfhSize + toc1.compressedSize + toc1.cdSize;
+  // 上限足够放 data + 第一个 .toc，但放不下 data + 两个 .toc
+  const tightLimit = dataOnlyBatchBytes + toc1Bytes + 10;
+
+  const tightPlan = planZipBatches(fullZip, tightLimit);
+  assert.ok(tightPlan);
+  assert.equal(tightPlan.batches.length, 2);
+  assert.deepEqual(
+    tightPlan.batches[1].entries.map((e) => e.fileName).sort(),
+    ['Multi/Multi_Camelot.toc', 'Multi/Multi_Forever.toc']
+  );
+});
