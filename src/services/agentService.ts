@@ -524,8 +524,16 @@ export async function agentInstallZip(
     const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
     const totalSize = zipData instanceof Blob ? zipData.size : zipData.byteLength;
     const maxBatchBytes = options.maxBatchBytes ?? DEFAULT_ZIP_BATCH_MAX_BYTES;
+    const knownLimit =
+      options.maxSingleRequestBytes ??
+      (lastAgentMeta ? resolveAgentBodyLimitBytes(lastAgentMeta) : undefined);
+    const shouldProbeLimit =
+      knownLimit === undefined &&
+      totalSize > Math.min(maxBatchBytes, LEGACY_AGENT_BODY_LIMIT_BYTES);
+    const agentMeta = shouldProbeLimit ? await probeAgentPingMeta() : lastAgentMeta;
+    const maxSingleRequestBytes = knownLimit ?? resolveAgentBodyLimitBytes(agentMeta);
 
-    if (totalSize > maxBatchBytes) {
+    if (totalSize > maxBatchBytes || totalSize > maxSingleRequestBytes) {
       const zipBytes =
         zipData instanceof Uint8Array
           ? zipData
@@ -533,9 +541,6 @@ export async function agentInstallZip(
           ? new Uint8Array(zipData)
           : new Uint8Array(await zipData.arrayBuffer());
 
-      const agentMeta = lastAgentMeta ?? (await probeAgentPingMeta());
-      const maxSingleRequestBytes =
-        options.maxSingleRequestBytes ?? resolveAgentBodyLimitBytes(agentMeta);
       const plan = planZipBatches(zipBytes, maxBatchBytes, maxSingleRequestBytes);
       if (plan && plan.batches.length > 1) {
         let totalFileCount = 0;
