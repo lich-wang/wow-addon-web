@@ -18,6 +18,7 @@ concurrency:
 jobs:
   check-and-update:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout Repository
@@ -51,9 +52,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.AUTO_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Create or Update Auto-Sync PR if Updated
+        id: sync_pr
         env:
           GH_TOKEN: ${{ secrets.AUTO_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -62,15 +65,28 @@ jobs:
           git add scripts/locales src/generated/addon-versions.json
           if git diff --staged --quiet; then
             echo "No upstream addon updates detected."
+            echo "updated=false" >> "${GITHUB_OUTPUT}"
           else
-            echo "Updates detected! Pushing to chore/auto-sync-addons..."
+            STAGED_FILES=$(git diff --staged --name-only)
+            ONLY_VERSION_MANIFEST=true
+            while IFS= read -r file; do
+              [ -z "${file}" ] && continue
+              if [ "${file}" != "src/generated/addon-versions.json" ]; then
+                ONLY_VERSION_MANIFEST=false
+                break
+              fi
+            done <<< "${STAGED_FILES}"
+
+            echo "Updates detected! Pushing to chore/auto-sync-addons (only_version_manifest=${ONLY_VERSION_MANIFEST})..."
             SYNC_BRANCH="chore/auto-sync-addons"
             git commit -m "chore(auto-sync): update addons from upstream with zhCN patches"
+            HEAD_SHA=$(git rev-parse HEAD)
             git push --force origin "HEAD:${SYNC_BRANCH}"
 
             EXISTING_PR=$(gh pr list --head "${SYNC_BRANCH}" --state open --json number --jq '.[0].number // empty')
             if [ -n "${EXISTING_PR}" ]; then
-              echo "Updated existing auto-sync PR #${EXISTING_PR}."
+              PR_NUM="${EXISTING_PR}"
+              echo "Updated existing auto-sync PR #${PR_NUM}."
             else
               ISSUE_URL=$(gh issue create \
                 --title "chore(auto-sync): 上游插件自动同步更新" \
@@ -81,6 +97,166 @@ jobs:
                 --base main \
                 --title "chore(auto-sync): update addons from upstream with zhCN patches" \
                 --body "$(printf 'Fixes #%s\n\n由 `auto-sync.yml` 自动拉取上游最新插件并同步本地化补丁与版本清单。' "${ISSUE_NUM}")")
-              echo "Created auto-sync PR: ${PR_URL}"
+              PR_NUM=$(gh pr view "${PR_URL}" --json number --jq '.number')
+              echo "Created auto-sync PR #${PR_NUM}: ${PR_URL}"
             fi
+
+            {
+              echo "updated=true"
+              echo "pr_number=${PR_NUM}"
+              echo "head_sha=${HEAD_SHA}"
+              echo "only_version_manifest=${ONLY_VERSION_MANIFEST}"
+            } >> "${GITHUB_OUTPUT}"
           fi
+
+      - name: Wait for Checks and Auto-Merge PR
+        if: steps.sync_pr.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          HAS_AUTO_SYNC_TOKEN: ${{ secrets.AUTO_SYNC_TOKEN != '' }}
+          PR_NUM: ${{ steps.sync_pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.sync_pr.outputs.head_sha }}
+          ONLY_VERSION_MANIFEST: ${{ steps.sync_pr.outputs.only_version_manifest }}
+        run: |
+          set -euo pipefail
+
+          if [ "${HAS_AUTO_SYNC_TOKEN}" != "true" ]; then
+            echo "::warning::未配置 AUTO_SYNC_TOKEN，跳过自动合并（使用 GITHUB_TOKEN 无法触发 PR 检查与部署流水线），请人工合并 PR #${PR_NUM}。"
+            exit 0
+          fi
+
+          MAX_ATTEMPTS=48
+          BLOCKED_GRACE=0
+          GATE_GRACE=0
+
+          for attempt in $(seq 1 "${MAX_ATTEMPTS}"); do
+            sleep 15
+
+            PR_JSON=$(gh pr view "${PR_NUM}" --json state,headRefOid,mergeStateStatus,reviewDecision,statusCheckRollup)
+            PR_STATE=$(echo "${PR_JSON}" | jq -r '.state')
+            PR_HEAD_SHA=$(echo "${PR_JSON}" | jq -r '.headRefOid')
+            MERGE_STATE=$(echo "${PR_JSON}" | jq -r '.mergeStateStatus')
+            REVIEW_DECISION=$(echo "${PR_JSON}" | jq -r '.reviewDecision // ""')
+
+            if [ "${PR_STATE}" != "OPEN" ]; then
+              echo "PR #${PR_NUM} is no longer open (state=${PR_STATE}), nothing to merge."
+              exit 0
+            fi
+
+            if [ "${PR_HEAD_SHA}" != "${HEAD_SHA}" ]; then
+              echo "[${attempt}/${MAX_ATTEMPTS}] Waiting for PR #${PR_NUM} head to update to ${HEAD_SHA} (current=${PR_HEAD_SHA})..."
+              continue
+            fi
+
+            if [ "${REVIEW_DECISION}" = "CHANGES_REQUESTED" ]; then
+              echo "::error::PR #${PR_NUM} has CHANGES_REQUESTED; refusing to auto-merge."
+              exit 1
+            fi
+
+            FAILED_CHECKS=$(echo "${PR_JSON}" | jq -r '
+              [
+                (.statusCheckRollup // [])[]
+                | select(
+                    ((.status // "") == "COMPLETED" and ((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")))
+                    or
+                    ((.state // "") | IN("FAILURE", "ERROR"))
+                  )
+                | (.name // .context // "unknown")
+              ] | join(", ")
+            ')
+
+            if [ -n "${FAILED_CHECKS}" ]; then
+              echo "::error::PR #${PR_NUM} checks failed: ${FAILED_CHECKS}"
+              exit 1
+            fi
+
+            PENDING_COUNT=$(echo "${PR_JSON}" | jq -r '
+              [
+                (.statusCheckRollup // [])[]
+                | select(
+                    ((.status != null) and (.status != "COMPLETED"))
+                    or
+                    ((.state != null) and ((.state | IN("PENDING", "EXPECTED"))))
+                  )
+              ] | length
+            ')
+
+            ISSUE_CHECK_OK=$(echo "${PR_JSON}" | jq -r '
+              any(
+                (.statusCheckRollup // [])[];
+                ((.name // .context // "") == "检查是否关联 Issue")
+                and (((.status // "") == "COMPLETED" and (.conclusion // "") == "SUCCESS") or ((.state // "") == "SUCCESS"))
+              )
+            ')
+
+            CODERABBIT_CONCLUSION=$(echo "${PR_JSON}" | jq -r '
+              [
+                (.statusCheckRollup // [])[]
+                | select((.name // .context // "") == "CodeRabbit")
+              ] as $cr
+              | if ($cr | length) == 0 then
+                  "MISSING"
+                else
+                  ($cr[-1]) as $item
+                  | if ($item.status != null and $item.status != "COMPLETED") or (($item.state // "") | IN("PENDING", "EXPECTED")) then
+                      "PENDING"
+                    else
+                      ($item.conclusion // $item.state // "UNKNOWN")
+                    end
+                end
+            ')
+
+            echo "[${attempt}/${MAX_ATTEMPTS}] state=${PR_STATE} mergeState=${MERGE_STATE} review=${REVIEW_DECISION:-NONE} pending=${PENDING_COUNT} issueCheck=${ISSUE_CHECK_OK} codeRabbit=${CODERABBIT_CONCLUSION}"
+
+            if [ "${MERGE_STATE}" = "DIRTY" ]; then
+              echo "::error::PR #${PR_NUM} has merge conflicts (mergeStateStatus=DIRTY)."
+              exit 1
+            fi
+
+            if [ "${MERGE_STATE}" = "BEHIND" ]; then
+              echo "::notice::PR #${PR_NUM} is behind main (concurrent merge detected); leaving open for next scheduled sync."
+              exit 0
+            fi
+
+            if [ "${ISSUE_CHECK_OK}" = "true" ] && [ "${PENDING_COUNT}" = "0" ] && [ "${CODERABBIT_CONCLUSION}" != "MISSING" ] && [ "${CODERABBIT_CONCLUSION}" != "PENDING" ]; then
+              GATE_OK=false
+              if [ "${ONLY_VERSION_MANIFEST}" = "true" ]; then
+                if [ "${CODERABBIT_CONCLUSION}" = "SUCCESS" ] || [ "${CODERABBIT_CONCLUSION}" = "SKIPPED" ]; then
+                  GATE_OK=true
+                fi
+              else
+                if [ "${CODERABBIT_CONCLUSION}" = "SUCCESS" ] && [ "${REVIEW_DECISION}" = "APPROVED" ]; then
+                  GATE_OK=true
+                fi
+              fi
+
+              if [ "${GATE_OK}" != "true" ]; then
+                GATE_GRACE=$((GATE_GRACE + 1))
+                if [ "${GATE_GRACE}" -ge 4 ]; then
+                  echo "::warning::PR #${PR_NUM} 未满足审查门禁（only_version_manifest=${ONLY_VERSION_MANIFEST}, codeRabbit=${CODERABBIT_CONCLUSION}, review=${REVIEW_DECISION:-NONE}），保留 PR 供人工审查。"
+                  exit 0
+                fi
+                continue
+              fi
+
+              if [ "${MERGE_STATE}" = "CLEAN" ]; then
+                gh pr merge "${PR_NUM}" --squash --delete-branch --match-head-commit "${HEAD_SHA}"
+                echo "Successfully auto-merged PR #${PR_NUM} (${HEAD_SHA})."
+                exit 0
+              fi
+
+              if [ "${MERGE_STATE}" = "BLOCKED" ]; then
+                BLOCKED_GRACE=$((BLOCKED_GRACE + 1))
+                if [ "${BLOCKED_GRACE}" -ge 4 ]; then
+                  echo "::warning::PR #${PR_NUM} 持续处于 BLOCKED 状态，跳过自动合并并保留 PR 供人工排查。"
+                  exit 0
+                fi
+              fi
+            else
+              BLOCKED_GRACE=0
+              GATE_GRACE=0
+            fi
+          done
+
+          echo "::warning::Timed out waiting for PR #${PR_NUM} checks to complete within $((MAX_ATTEMPTS * 15))s."
+          exit 1
