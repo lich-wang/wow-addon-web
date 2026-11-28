@@ -1,15 +1,15 @@
 {
   "bagnon": {
-    "version": "v12.1.13",
-    "source": "https://edge.forgecdn.net/files/9811/157/Bagnon-12.1.13.zip"
+    "version": "v12.1.14",
+    "source": "https://edge.forgecdn.net/files/9848/799/Bagnon-12.1.14.zip"
   },
   "blackthornes-tradeskills": {
-    "version": "v1.47.0",
-    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.47.0/Blackthornes_TS-v1.47.0-forever.zip"
+    "version": "v1.50.1",
+    "source": "https://github.com/Blackthornes/Blackthornes_Tradeskills/releases/download/v1.50.1/Blackthornes_TS-v1.50.1-forever.zip"
   },
   "dungeonsforever": {
-    "version": "v2.1.136",
-    "source": "https://edge.forgecdn.net/files/9815/755/DungeonsForever2.1.136.zip"
+    "version": "v2.1.139",
+    "source": "https://edge.forgecdn.net/files/9851/419/DungeonsForever2.1.139.zip"
   },
   "forever-mouse-tooltip": {
     "version": "v0.2.0",
@@ -24,23 +24,23 @@
     "source": "https://edge.forgecdn.net/files/9661/950/Lueur-2.0.0.zip"
   },
   "openmap": {
-    "version": "v0.8.13",
+    "version": "v0.8.14",
     "source": "/addons/openmap/parts.json"
   },
   "questie-forever": {
-    "version": "v12.14.0 + DB v1.1.6",
-    "source": "https://edge.forgecdn.net/files/9794/640/Questie-v12.14.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.6/QuestieDB-1.1.6-Forever.zip"
+    "version": "v12.16.0 + DB v1.1.7",
+    "source": "https://edge.forgecdn.net/files/9866/11/Questie-v12.16.0.zip + https://github.com/Questie/QuestieDB/releases/download/v1.1.7/QuestieDB-1.1.7-Forever.zip"
   },
   "sbf": {
     "version": "2026.11.19.3",
     "source": "https://github.com/Goblin-Engineering-Company/SBF/releases/download/2026.11.19.3/SBF-2026.11.19.3.zip"
   },
   "spellactivationoverlay": {
-    "version": "v3.0.0",
-    "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v3.0.0/SpellActivationOverlay-3.0.0-universal.zip"
+    "version": "v3.1.1",
+    "source": "https://github.com/ennvina/spellactivationoverlay/releases/download/v3.1.1/SpellActivationOverlay-3.1.1-universal.zip"
   },
   "wowf": {
-    "version": "v1.2.66 + DB v2026.11.20",
+    "version": "v1.2.68 + DB v2026.11.20",
     "source": "local-snapshot (DB v2026.11.20)"
   }
 }
