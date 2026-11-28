@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { AddonInfo } from '../types/addon';
+import {
+  buildZipBatch,
+  DEFAULT_ZIP_BATCH_MAX_BYTES,
+  planZipBatches,
+} from './zipSplitter';
 
 const AGENT_BASE = 'http://127.0.0.1:24642';
 
@@ -305,17 +310,34 @@ export async function agentDeleteAddon(addonsPath: string, folderName: string): 
   }
 }
 
-/**
- * Install addon ZIP directly via agent or Tauri IPC
- *
- * 大包（OpenMap 约 198 MB / 3593 个文件）必须走本地 bridge 的 HTTP 直传：
- * Tauri 的 `invoke` 会把 `Vec<u8>` 序列化成「每个字节一个数字」的 JSON 数组，
- * 198 MB 会膨胀成 2 亿多个数字（>2 GB 内存 + 数百 MB JSON），WebView 直接卡死。
- * 因此这里优先 POST 二进制到 bridge，只有 bridge 不可用且包很小时才回退到 invoke。
- */
-export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promise<number> {
+export interface AgentInstallZipOptions {
+  onBatchProgress?: (currentBatch: number, totalBatches: number, batchBytes: number) => void;
+  maxBatchBytes?: number;
+}
+
+async function isAgentBridgeReachable(timeoutMs = 1200): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${AGENT_BASE}/api/ping`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postZipToAgent(
+  addonsPath: string,
+  zipBlob: Blob,
+  isAsciiOnly: boolean
+): Promise<number> {
   const encodedPath = encodeURIComponent(addonsPath);
-  const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
   const headers: Record<string, string> = {
     'Content-Type': 'application/zip',
   };
@@ -351,7 +373,18 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
         throw new Error(String(invokeError) || '安装插件失败');
       }
     }
-    throw error instanceof Error ? error : new Error(String(error) || '本地助手安装插件失败');
+
+    // 区分“本地助手根本没连上”与“传到一半被对端重置（例如旧版助手超限）”
+    const reachable = await isAgentBridgeReachable();
+    if (!reachable) {
+      throw new Error(
+        '无法连接到本地助手 (127.0.0.1:24642)，请确认本地助手或桌面客户端仍在运行后重试。'
+      );
+    }
+    const rawMsg = error instanceof Error ? error.message : String(error || '');
+    throw new Error(
+      `上传安装包到本地助手时连接中断（可能是安装包超过旧版助手单次上限或被安全软件拦截），请重试或升级至最新版桌面客户端${rawMsg ? `：${rawMsg}` : ''}`
+    );
   }
 
   if (!res.ok) {
@@ -373,6 +406,55 @@ export async function agentInstallZip(addonsPath: string, zipBlob: Blob): Promis
 
   const data = await res.json();
   return data.fileCount || 0;
+}
+
+/**
+ * Install addon ZIP directly via agent or Tauri IPC.
+ *
+ * 超过 96 MiB 的大包（如 OpenMap v0.8.14 已达 227.4 MiB）会自动零重压缩拆分为多个小包分批上传：
+ * - 兼容所有历史版本本地助手（包括仅支持 200 MiB 上限的旧版）；
+ * - 避免浏览器与 Rust 进程同时持有超大型请求体缓冲；
+ * - 所有 *.toc 文件放在最后一批，确保中途失败不提前改写本地版本号。
+ */
+export async function agentInstallZip(
+  addonsPath: string,
+  zipData: Blob | ArrayBuffer | Uint8Array,
+  options: AgentInstallZipOptions = {}
+): Promise<number> {
+  const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
+  const totalSize = zipData instanceof Blob ? zipData.size : zipData.byteLength;
+  const maxBatchBytes = options.maxBatchBytes ?? DEFAULT_ZIP_BATCH_MAX_BYTES;
+
+  if (totalSize > maxBatchBytes) {
+    const zipBytes =
+      zipData instanceof Uint8Array
+        ? zipData
+        : zipData instanceof ArrayBuffer
+        ? new Uint8Array(zipData)
+        : new Uint8Array(await zipData.arrayBuffer());
+
+    const plan = planZipBatches(zipBytes, maxBatchBytes);
+    if (plan && plan.batches.length > 1) {
+      let totalFileCount = 0;
+      for (let i = 0; i < plan.batches.length; i++) {
+        const batch = plan.batches[i];
+        options.onBatchProgress?.(i + 1, plan.batches.length, batch.estimatedBytes);
+        const batchBytes = buildZipBatch(zipBytes, batch);
+        const batchBlob = new Blob([batchBytes], { type: 'application/zip' });
+        totalFileCount += await postZipToAgent(addonsPath, batchBlob, isAsciiOnly);
+      }
+      return totalFileCount;
+    }
+  }
+
+  const zipBlob =
+    zipData instanceof Blob
+      ? zipData
+      : zipData instanceof ArrayBuffer
+      ? new Blob([zipData], { type: 'application/zip' })
+      : new Blob([new Uint8Array(zipData)], { type: 'application/zip' });
+
+  return postZipToAgent(addonsPath, zipBlob, isAsciiOnly);
 }
 
 /**
