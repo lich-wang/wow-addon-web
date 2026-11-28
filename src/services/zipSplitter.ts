@@ -183,7 +183,11 @@ export function planZipBatches(
     return null;
   }
 
-  if (maxSingleBatchBytes !== undefined && Number.isFinite(maxSingleBatchBytes) && maxSingleBatchBytes > 0) {
+  const hasHardLimit =
+    maxSingleBatchBytes !== undefined &&
+    Number.isFinite(maxSingleBatchBytes) &&
+    maxSingleBatchBytes > 0;
+  if (hasHardLimit) {
     for (const entry of [...regularEntries, ...tocEntries]) {
       const singleBatchBytes = EOCD_MIN_SIZE + getEntryBatchBytes(entry);
       if (singleBatchBytes > maxSingleBatchBytes) {
@@ -195,6 +199,10 @@ export function planZipBatches(
       }
     }
   }
+
+  const effectiveMaxBatchBytes = hasHardLimit
+    ? Math.min(maxBatchBytes, maxSingleBatchBytes)
+    : maxBatchBytes;
 
   const batches: ZipBatchPlan[] = [];
   const appendEntries = (entries: ZipEntrySlice[], tryReuseLastBatch: boolean) => {
@@ -209,7 +217,7 @@ export function planZipBatches(
 
     for (const entry of entries) {
       const entryBytes = getEntryBatchBytes(entry);
-      const wouldExceedSize = currentBytes + entryBytes > maxBatchBytes;
+      const wouldExceedSize = currentBytes + entryBytes > effectiveMaxBatchBytes;
       const wouldExceedCount = currentEntries.length >= MAX_BATCH_ENTRIES;
       if (currentEntries.length > 0 && (wouldExceedSize || wouldExceedCount)) {
         batches.push({ entries: currentEntries, estimatedBytes: currentBytes });
@@ -231,7 +239,7 @@ export function planZipBatches(
     const lastBatch = batches[batches.length - 1];
     const canShareLastBatch =
       lastBatch !== undefined &&
-      lastBatch.estimatedBytes + tocTotalBytes <= maxBatchBytes &&
+      lastBatch.estimatedBytes + tocTotalBytes <= effectiveMaxBatchBytes &&
       lastBatch.entries.length + tocEntries.length <= MAX_BATCH_ENTRIES;
     appendEntries(tocEntries, canShareLastBatch);
   }

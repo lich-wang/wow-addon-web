@@ -257,3 +257,27 @@ test('planZipBatches 在最后一个普通批次仅能容纳部分 .toc 时将�
     ['Multi/Multi_Camelot.toc', 'Multi/Multi_Forever.toc']
   );
 });
+
+test('planZipBatches 在 maxBatchBytes 高于 maxSingleBatchBytes 时按较小的硬上限拆批并控制 TOC 合并', async () => {
+  const zip = new JSZip();
+  zip.file('Cap/partA.bin', makeBytes(3000, 17), { compression: 'STORE' });
+  zip.file('Cap/partB.bin', makeBytes(3000, 23), { compression: 'STORE' });
+  zip.file('Cap/Cap.toc', '## Version: 1.0\n' + '#'.repeat(1600));
+
+  const fullZip = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' });
+  const hardLimit = 4500;
+  // 故意传入高于 hardLimit 的 maxBatchBytes (10000)，确保累计大小与 TOC 合并均受 hardLimit 约束
+  const plan = planZipBatches(fullZip, 10000, hardLimit);
+  assert.ok(plan);
+  assert.equal(plan.batches.length, 3);
+  for (const batch of plan.batches) {
+    assert.ok(
+      batch.estimatedBytes <= hardLimit,
+      `批次大小 ${batch.estimatedBytes} 不应超过硬上限 ${hardLimit}`
+    );
+  }
+  assert.deepEqual(
+    plan.batches[plan.batches.length - 1].entries.map((e) => e.fileName),
+    ['Cap/Cap.toc']
+  );
+});
