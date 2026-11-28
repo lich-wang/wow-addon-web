@@ -22,11 +22,12 @@ export interface AgentStatus {
   status: 'ok';
   version: string;
   mode?: string;
+  maxBodyBytes?: number;
   platform: string;
   installations: WowInstallation[];
 }
 
-let lastAgentMeta: { version: string; mode?: string } | null = null;
+let lastAgentMeta: { version: string; mode?: string; maxBodyBytes?: number } | null = null;
 
 function isVersionAtLeast(version: string, minParts: [number, number, number]): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version.trim());
@@ -43,7 +44,16 @@ function isVersionAtLeast(version: string, minParts: [number, number, number]): 
   return true;
 }
 
-function resolveAgentBodyLimitBytes(meta: { version?: string; mode?: string } | null): number {
+function resolveAgentBodyLimitBytes(
+  meta: { version?: string; mode?: string; maxBodyBytes?: number } | null
+): number {
+  if (
+    typeof meta?.maxBodyBytes === 'number' &&
+    Number.isFinite(meta.maxBodyBytes) &&
+    meta.maxBodyBytes > 0
+  ) {
+    return meta.maxBodyBytes;
+  }
   if (meta?.version && isVersionAtLeast(meta.version, [1, 0, 9])) {
     return CURRENT_AGENT_BODY_LIMIT_BYTES;
   }
@@ -190,7 +200,11 @@ export async function checkAgentStatus(): Promise<AgentStatus | null> {
   }
 
   if (status) {
-    lastAgentMeta = { version: status.version, mode: status.mode };
+    lastAgentMeta = {
+      version: status.version,
+      mode: status.mode,
+      maxBodyBytes: status.maxBodyBytes,
+    };
   }
 
   // Restore and verify recently used custom path if available
@@ -347,7 +361,9 @@ export interface AgentInstallZipOptions {
   maxSingleRequestBytes?: number;
 }
 
-async function probeAgentPingMeta(timeoutMs = 1200): Promise<{ version?: string; mode?: string } | null> {
+async function probeAgentPingMeta(
+  timeoutMs = 1200
+): Promise<{ version?: string; mode?: string; maxBodyBytes?: number } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -359,7 +375,11 @@ async function probeAgentPingMeta(timeoutMs = 1200): Promise<{ version?: string;
     if (!res.ok) return null;
     const data = (await res.json()) as Partial<AgentStatus>;
     if (data?.version) {
-      lastAgentMeta = { version: data.version, mode: data.mode };
+      lastAgentMeta = {
+        version: data.version,
+        mode: data.mode,
+        maxBodyBytes: data.maxBodyBytes,
+      };
     }
     return data;
   } catch {
@@ -367,6 +387,44 @@ async function probeAgentPingMeta(timeoutMs = 1200): Promise<{ version?: string;
   } finally {
     clearTimeout(timer);
   }
+}
+
+const inProcessInstallLocks = new Map<string, Promise<void>>();
+
+function normalizeInstallLockPath(addonsPath: string): string {
+  return addonsPath.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+async function withInProcessLock<T>(lockKey: string, task: () => Promise<T>): Promise<T> {
+  const previous = inProcessInstallLocks.get(lockKey) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(() => current);
+  inProcessInstallLocks.set(lockKey, chained);
+
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (inProcessInstallLocks.get(lockKey) === chained) {
+      inProcessInstallLocks.delete(lockKey);
+    }
+  }
+}
+
+/**
+ * 针对目标 AddOns 目录加排他锁，确保分批安装的多轮请求在多标签页/多窗口间也不交错。
+ * 优先使用浏览器原生的 Web Locks API（异常或页面关闭时自动释放），不可用时回退进程内串行锁。
+ */
+async function withAddonsInstallLock<T>(addonsPath: string, task: () => Promise<T>): Promise<T> {
+  const lockKey = `wow-addon-install:${normalizeInstallLockPath(addonsPath)}`;
+  if (typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function') {
+    return navigator.locks.request(lockKey, { mode: 'exclusive' }, () => task());
+  }
+  return withInProcessLock(lockKey, task);
 }
 
 async function isAgentBridgeReachable(timeoutMs = 1200): Promise<boolean> {
@@ -462,43 +520,45 @@ export async function agentInstallZip(
   zipData: Blob | ArrayBuffer | Uint8Array,
   options: AgentInstallZipOptions = {}
 ): Promise<number> {
-  const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
-  const totalSize = zipData instanceof Blob ? zipData.size : zipData.byteLength;
-  const maxBatchBytes = options.maxBatchBytes ?? DEFAULT_ZIP_BATCH_MAX_BYTES;
+  return withAddonsInstallLock(addonsPath, async () => {
+    const isAsciiOnly = /^[\x20-\x7E]*$/.test(addonsPath);
+    const totalSize = zipData instanceof Blob ? zipData.size : zipData.byteLength;
+    const maxBatchBytes = options.maxBatchBytes ?? DEFAULT_ZIP_BATCH_MAX_BYTES;
 
-  if (totalSize > maxBatchBytes) {
-    const zipBytes =
-      zipData instanceof Uint8Array
+    if (totalSize > maxBatchBytes) {
+      const zipBytes =
+        zipData instanceof Uint8Array
+          ? zipData
+          : zipData instanceof ArrayBuffer
+          ? new Uint8Array(zipData)
+          : new Uint8Array(await zipData.arrayBuffer());
+
+      const agentMeta = lastAgentMeta ?? (await probeAgentPingMeta());
+      const maxSingleRequestBytes =
+        options.maxSingleRequestBytes ?? resolveAgentBodyLimitBytes(agentMeta);
+      const plan = planZipBatches(zipBytes, maxBatchBytes, maxSingleRequestBytes);
+      if (plan && plan.batches.length > 1) {
+        let totalFileCount = 0;
+        for (let i = 0; i < plan.batches.length; i++) {
+          const batch = plan.batches[i];
+          options.onBatchProgress?.(i + 1, plan.batches.length, batch.estimatedBytes);
+          const batchBytes = buildZipBatch(zipBytes, batch);
+          const batchBlob = new Blob([batchBytes], { type: 'application/zip' });
+          totalFileCount += await postZipToAgent(addonsPath, batchBlob, isAsciiOnly);
+        }
+        return totalFileCount;
+      }
+    }
+
+    const zipBlob =
+      zipData instanceof Blob
         ? zipData
         : zipData instanceof ArrayBuffer
-        ? new Uint8Array(zipData)
-        : new Uint8Array(await zipData.arrayBuffer());
+        ? new Blob([zipData], { type: 'application/zip' })
+        : new Blob([new Uint8Array(zipData)], { type: 'application/zip' });
 
-    const agentMeta = lastAgentMeta ?? (await probeAgentPingMeta());
-    const maxSingleRequestBytes =
-      options.maxSingleRequestBytes ?? resolveAgentBodyLimitBytes(agentMeta);
-    const plan = planZipBatches(zipBytes, maxBatchBytes, maxSingleRequestBytes);
-    if (plan && plan.batches.length > 1) {
-      let totalFileCount = 0;
-      for (let i = 0; i < plan.batches.length; i++) {
-        const batch = plan.batches[i];
-        options.onBatchProgress?.(i + 1, plan.batches.length, batch.estimatedBytes);
-        const batchBytes = buildZipBatch(zipBytes, batch);
-        const batchBlob = new Blob([batchBytes], { type: 'application/zip' });
-        totalFileCount += await postZipToAgent(addonsPath, batchBlob, isAsciiOnly);
-      }
-      return totalFileCount;
-    }
-  }
-
-  const zipBlob =
-    zipData instanceof Blob
-      ? zipData
-      : zipData instanceof ArrayBuffer
-      ? new Blob([zipData], { type: 'application/zip' })
-      : new Blob([new Uint8Array(zipData)], { type: 'application/zip' });
-
-  return postZipToAgent(addonsPath, zipBlob, isAsciiOnly);
+    return postZipToAgent(addonsPath, zipBlob, isAsciiOnly);
+  });
 }
 
 /**

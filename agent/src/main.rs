@@ -20,6 +20,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 const PORT: u16 = 24642;
 const WEB_URL: &str = "https://wow.lich.tech";
+const MAX_INSTALL_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 /// 同一时间只允许一个 zip 安装任务解压，避免两个请求交错写同一个 AddOns 目录、
 /// 留下「半个旧版 + 半个新版」的混合目录；锁在 spawn_blocking 内获取。
@@ -420,7 +421,8 @@ async fn main() {
                 let dynamic_installs = find_wow_installations();
                 Json(serde_json::json!({
                     "status": "ok",
-                    "version": "1.0.0",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "maxBodyBytes": MAX_INSTALL_BODY_BYTES,
                     "platform": std::env::consts::OS,
                     "installations": dynamic_installs
                 }))
@@ -576,7 +578,7 @@ async fn main() {
                 // OpenMap 的 Forever 包含整套地图贴图，压缩包已达 198 MB（208,253,793 B）。
                 // 原来的 200 MiB 上限只剩 1.4 MB 余量，抬高到 256 MiB 留出增长空间；
                 // 注意请求体是先整块缓冲再交给处理函数的，所以这个值同时也是单请求的内存上限。
-                .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
+                .layer(DefaultBodyLimit::max(MAX_INSTALL_BODY_BYTES))
                 .layer(
                     CorsLayer::new()
                         .allow_origin(Any)
